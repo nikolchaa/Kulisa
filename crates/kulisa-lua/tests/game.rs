@@ -460,6 +460,247 @@ fn alpha_hit_testing_and_picking() {
     assert!(err.contains("between 0 and 1"), "{err}");
 }
 
+fn v2(x: f32, y: f32) -> kulisa_core::Vec2 {
+    kulisa_core::Vec2::new(x, y)
+}
+
+/// Presses pointer `id` at `from`, drags through `to` (several steps) and releases.
+fn drag(g: &mut Game, id: u32, from: (f32, f32), to: (f32, f32)) {
+    let button = if id == 0 { "left" } else { "touch" };
+    g.pointer_moved_id(id, Some(v2(from.0, from.1)));
+    g.pressed_id(id, button);
+    for i in 1..=4 {
+        let t = i as f32 / 4.0;
+        g.pointer_moved_id(id, Some(v2(from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)));
+    }
+    g.released_id(id, button);
+}
+
+fn settle(g: &mut Game) {
+    for _ in 0..30 {
+        g.frame(0.016);
+    }
+}
+
+#[test]
+fn drag_and_drop_with_zones() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        log = {}
+        local function note(what) return function(i) table.insert(log, what .. ":" .. (i.zone and "zone" or "-")) end end
+        coin = kulisa.sprite{ width = 8, height = 8, x = 4, y = 4 }
+        gem = kulisa.sprite{ width = 8, height = 8, x = 20, y = 4 }
+        slot = kulisa.sprite{ width = 16, height = 16, x = 40, y = 40, tint = "#333333" }
+        cd = kulisa.drag(coin, { tag = "coin", on_start = note("start"), on_drop = note("drop"), on_reject = note("reject"), on_end = note("end"), on_click = note("click") })
+        gd = kulisa.drag(gem, { tag = "gem", on_reject = note("gem_reject"), on_drop = note("gem_drop") })
+        zone = kulisa.drop_zone(slot, { accept = "coin", capacity = 1, on_enter = note("enter"), on_leave = note("leave"), on_drop = note("zone_drop") })
+    "##);
+    let pos = |g: &Game, n: &str| -> (f32, f32) { g.eval("t", &format!("return {n}.x, {n}.y")).unwrap() };
+
+    // Dropped on its zone: it snaps so its center sits on the zone's center (48, 48).
+    drag(&mut g, 0, (8.0, 8.0), (44.0, 44.0));
+    settle(&mut g);
+    assert_eq!(pos(&g, "coin"), (44.0, 44.0));
+    let log: Vec<String> = g.eval("t", "return log").unwrap();
+    assert_eq!(
+        log,
+        ["start:-", "enter:zone", "leave:zone", "drop:zone", "zone_drop:zone", "end:zone"].map(String::from)
+    );
+    assert_eq!(g.eval::<f32>("t", "return #zone.occupants").unwrap(), 1.0);
+
+    // The wrong tag is refused and returns home; the full zone refuses too.
+    g.eval::<()>("t", "log = {}").unwrap();
+    drag(&mut g, 0, (24.0, 8.0), (48.0, 48.0));
+    settle(&mut g);
+    assert_eq!(pos(&g, "gem"), (20.0, 4.0), "back where it started");
+    assert_eq!(
+        g.eval::<Vec<String>>("t", "return log").unwrap(),
+        ["enter:zone", "leave:zone", "gem_reject:zone"],
+        "zones report hovering whether or not they would accept"
+    );
+
+    // Picking the coin up again frees the slot; an unaccepted drop elsewhere stays put.
+    drag(&mut g, 0, (48.0, 48.0), (10.0, 30.0));
+    settle(&mut g);
+    assert_eq!(g.eval::<f32>("t", "return #zone.occupants").unwrap(), 0.0);
+    assert_eq!(pos(&g, "coin"), (6.0, 26.0), "dropped in the open: stays where released (offset kept)");
+
+    // A press and release without moving is a click, not a drop.
+    g.eval::<()>("t", "log = {}").unwrap();
+    g.pointer_moved_id(0, Some(v2(8.0, 30.0)));
+    g.pressed_id(0, "left");
+    g.released_id(0, "left");
+    assert_eq!(g.eval::<Vec<String>>("t", "return log").unwrap(), ["start:-", "click:-", "end:-"]);
+
+    // Presses on draggables do not reach `press`, presses elsewhere do.
+    g.eval::<()>("t", "presses = 0; kulisa.on('press', function() presses += 1 end)").unwrap();
+    g.pointer_moved_id(0, Some(v2(8.0, 30.0)));
+    g.pressed_id(0, "left");
+    g.released_id(0, "left");
+    g.pointer_moved_id(0, Some(v2(60.0, 10.0)));
+    g.pressed_id(0, "left");
+    g.released_id(0, "left");
+    assert_eq!(g.eval::<f32>("t", "return presses").unwrap(), 1.0);
+
+    // Disabled and removed draggables let go of their nodes.
+    g.eval::<()>("t", "cd.enabled = false").unwrap();
+    drag(&mut g, 0, (8.0, 30.0), (30.0, 30.0));
+    assert_eq!(pos(&g, "coin"), (6.0, 26.0));
+    g.eval::<()>("t", "cd.enabled = true; gd:remove()").unwrap();
+    drag(&mut g, 0, (24.0, 8.0), (30.0, 12.0));
+    assert_eq!(pos(&g, "gem"), (20.0, 4.0));
+}
+
+#[test]
+fn drop_zone_accept_functions_bounds_and_axis() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        item = kulisa.sprite{ width = 8, height = 8, x = 4, y = 4 }
+        box = kulisa.sprite{ width = 16, height = 16, x = 40, y = 4 }
+        asked = 0
+        kulisa.drop_zone(box, { accept = function(i) asked += 1 return i.node == item and asked > 1 end, snap = "none" })
+        kulisa.drag(item, { bounds = { 0, 0, 30, 30 }, home = "never", axis = "y" })
+    "##);
+    let pos = |g: &Game| -> (f32, f32) { g.eval("t", "return item.x, item.y").unwrap() };
+    // Vertical only and clamped: x stays, y stops at 30 although the pointer went to 50.
+    drag(&mut g, 0, (8.0, 8.0), (46.0, 50.0));
+    assert_eq!(pos(&g), (4.0, 30.0));
+    // Over the zone with the pointer: the function is asked (and says no the first time).
+    g.eval::<()>("t", "item.y = 4").unwrap();
+    g.pointer_moved_id(0, Some(v2(8.0, 8.0)));
+    g.pressed_id(0, "left");
+    g.pointer_moved_id(0, Some(v2(46.0, 10.0)));
+    g.pointer_moved_id(0, Some(v2(48.0, 10.0)));
+    g.released_id(0, "left");
+    assert_eq!(g.eval::<f32>("t", "return asked").unwrap(), 1.0);
+    g.pointer_moved_id(0, Some(v2(8.0, 8.0)));
+    g.pressed_id(0, "left");
+    g.pointer_moved_id(0, Some(v2(46.0, 10.0)));
+    g.pointer_moved_id(0, Some(v2(48.0, 10.0)));
+    g.released_id(0, "left");
+    assert_eq!(g.eval::<f32>("t", "return asked").unwrap(), 2.0);
+    let err = g.eval::<()>("t", "kulisa.drag(item, { axis = 'diagonal' })").unwrap_err();
+    assert!(err.contains("`axis` must be one of: both, x, y"), "{err}");
+    let err = g
+        .eval::<()>("t", "kulisa.drop_zone(item, { rect = {0,0,1,1}, polygon = {0,0,1,0,0,1} })")
+        .unwrap_err();
+    assert!(err.contains("at most one of"), "{err}");
+}
+
+#[test]
+fn hotspots_hover_click_and_see_through_pixels() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        log = {}
+        local function note(what) return function() table.insert(log, what) end end
+        art = kulisa.sprite{ image = "half.png", width = 64, height = 32 }
+        spot = kulisa.hotspot(art, { alpha = true, on_enter = note("enter"), on_leave = note("leave"), on_click = note("click"), on_press = note("press") })
+        region = kulisa.group{ x = 0, y = 0 }
+        gate = kulisa.hotspot(region, { rect = { 40, 8, 12, 12 }, priority = 5, on_click = note("gate") })
+        presses = 0
+        tri_log = {}
+        tri = kulisa.hotspot(region, { polygon = { 0, 40, 16, 40, 8, 56 }, on_click = function() table.insert(tri_log, 'tri') end })
+        kulisa.on("press", function() presses += 1 end)
+    "##,
+    "half.png" => half_png(16, 8));
+    // Hover follows the mouse and respects transparent pixels (the right half).
+    g.pointer_moved_id(0, Some(v2(10.0, 10.0)));
+    assert!(g.eval::<bool>("t", "return spot.hovered").unwrap());
+    g.pointer_moved_id(0, Some(v2(50.0, 25.0)));
+    assert!(!g.eval::<bool>("t", "return spot.hovered").unwrap());
+    // Click on the opaque half: a hotspot click that `press` never sees.
+    g.pointer_moved_id(0, Some(v2(10.0, 10.0)));
+    g.pressed_id(0, "left");
+    g.released_id(0, "left");
+    // Click on the see-through half: nothing is there, so the game gets `press`.
+    g.pointer_moved_id(0, Some(v2(50.0, 25.0)));
+    g.pressed_id(0, "left");
+    g.released_id(0, "left");
+    // The shaped hotspot sits at (40..52, 8..20) in the group's space; higher priority wins
+    // even where `art` is also hit (nothing opaque there, but priority is checked anyway).
+    g.pointer_moved_id(0, Some(v2(46.0, 14.0)));
+    g.pressed_id(0, "left");
+    g.released_id(0, "left");
+    let log: Vec<String> = g.eval("t", "return log").unwrap();
+    assert_eq!(log, ["enter", "leave", "enter", "press", "click", "leave", "gate"].map(String::from));
+    assert_eq!(g.eval::<f32>("t", "return presses").unwrap(), 1.0, "only the see-through press");
+
+    // A polygon hotspot (a triangle in the group's space): inside clicks, outside presses.
+    for (x, y) in [(8.0, 44.0), (1.0, 55.0)] {
+        g.pointer_moved_id(0, Some(v2(x, y)));
+        g.pressed_id(0, "left");
+        g.released_id(0, "left");
+    }
+    assert_eq!(g.eval::<Vec<String>>("t", "return tri_log").unwrap(), ["tri"], "inside once, outside once");
+}
+
+#[test]
+fn multi_touch_reports_ids_pinch_and_rotate() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        got = {}
+        kulisa.on("press", function(x, y, button, id) table.insert(got, "press" .. id .. button) end)
+        kulisa.on("release", function(x, y, button, id) table.insert(got, "release" .. id) end)
+        kulisa.on("pinch", function(f, x, y, total) pinch = { f, x, y, total } end)
+        kulisa.on("rotate", function(d, x, y, total) rot = { d, total } end)
+    "##);
+    g.pointer_moved_id(1, Some(v2(19.0, 32.0)));
+    g.pressed_id(1, "touch");
+    g.pointer_moved_id(2, Some(v2(45.0, 32.0)));
+    g.pressed_id(2, "touch");
+    assert_eq!(g.eval::<f32>("t", "return #kulisa.input.pointers()").unwrap(), 2.0);
+    // Spread the fingers apart to twice the distance, then turn them a quarter circle.
+    g.pointer_moved_id(1, Some(v2(6.0, 32.0)));
+    g.pointer_moved_id(2, Some(v2(58.0, 32.0)));
+    let (factor, cx, total): (f32, f32, f32) = g.eval("t", "return pinch[1], pinch[2], pinch[4]").unwrap();
+    assert!(factor > 1.0 && (cx - 32.0).abs() < 1e-3 && (total - 2.0).abs() < 1e-3, "{factor} {cx} {total}");
+    g.pointer_moved_id(1, Some(v2(32.0, 6.0)));
+    g.pointer_moved_id(2, Some(v2(32.0, 58.0)));
+    let turned: f32 = g.eval("t", "return rot[2]").unwrap();
+    assert!((turned.abs() - std::f32::consts::FRAC_PI_2).abs() < 0.05, "{turned}");
+    g.released_id(2, "touch");
+    g.released_id(1, "touch");
+    assert_eq!(
+        g.eval::<Vec<String>>("t", "return got").unwrap(),
+        ["press1touch", "press2touch", "release2", "release1"].map(String::from)
+    );
+    assert_eq!(
+        g.eval::<f32>("t", "return #kulisa.input.pointers()").unwrap(),
+        0.0,
+        "touches are forgotten once up"
+    );
+    g.pointer_moved(Some(v2(5.0, 5.0)));
+    assert_eq!(g.eval::<f32>("t", "return #kulisa.input.pointers()").unwrap(), 1.0, "the mouse");
+}
+
+#[test]
+fn timers_run_in_game_time() {
+    let mut g = game!("main.luau" => r##"
+        log = {}
+        once = kulisa.after(0.5, function() table.insert(log, "once") end)
+        tick = kulisa.every(0.2, function() table.insert(log, "tick") end)
+        gone = kulisa.after(0.3, function() table.insert(log, "never") end)
+        gone.cancel()
+        kulisa.spawn(function() kulisa.await(once) table.insert(log, "awaited") end)
+    "##);
+    for _ in 0..30 {
+        g.frame(0.05);
+    }
+    let log: Vec<String> = g.eval("t", "return log").unwrap();
+    let ticks = log.iter().filter(|l| *l == "tick").count();
+    assert!((6..=8).contains(&ticks), "{ticks} ticks in 1.5 s at 0.2 s: {log:?}");
+    assert_eq!(log.iter().filter(|l| *l == "once").count(), 1);
+    assert!(log.contains(&"awaited".to_string()) && !log.contains(&"never".to_string()), "{log:?}");
+    g.eval::<()>("t", "tick.cancel()").unwrap();
+    let before = log.len();
+    for _ in 0..10 {
+        g.frame(0.05);
+    }
+    assert_eq!(g.eval::<Vec<String>>("t", "return log").unwrap().len(), before);
+    let err = g.eval::<()>("t", "kulisa.after(-1, function() end)").unwrap_err();
+    assert!(err.contains("the delay must be a number of seconds"), "{err}");
+}
+
 const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
 }";

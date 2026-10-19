@@ -476,6 +476,35 @@ impl Scene {
         self.pick_node(start, p, model, parallax, alpha, out);
     }
 
+    /// Where each node is in draw order (higher paints later, i.e. on top). Hidden and fully
+    /// transparent subtrees and render targets are left out.
+    pub fn paint_order(&self) -> std::collections::HashMap<NodeId, usize> {
+        let mut order = std::collections::HashMap::new();
+        self.paint_node(self.root, &mut order);
+        order
+    }
+
+    fn paint_node(&self, id: NodeId, order: &mut std::collections::HashMap<NodeId, usize>) {
+        let node = &self[id];
+        if !node.visible || node.opacity <= 0.0 || matches!(node.kind, NodeKind::Target(_)) {
+            return;
+        }
+        let mut kids: Vec<NodeId> = node.children.clone();
+        kids.sort_by_key(|&c| self[c].z);
+        let split = if matches!(node.kind, NodeKind::Sprite(_)) {
+            kids.partition_point(|&c| self[c].z < 0)
+        } else {
+            0
+        };
+        for &c in &kids[..split] {
+            self.paint_node(c, order);
+        }
+        order.insert(id, order.len());
+        for &c in &kids[split..] {
+            self.paint_node(c, order);
+        }
+    }
+
     fn pick_node(
         &self,
         id: NodeId,

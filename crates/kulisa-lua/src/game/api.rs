@@ -46,6 +46,8 @@ const EVENTS: &[&str] = &[
     "tap",
     "long_press",
     "swipe",
+    "pinch",
+    "rotate",
     "display",
 ];
 
@@ -349,7 +351,7 @@ fn kind_name(kind: &NodeKind, is_text: bool) -> &'static str {
     }
 }
 
-fn node_size(st: &State, id: NodeId) -> mlua::Result<Vec2> {
+pub(crate) fn node_size(st: &State, id: NodeId) -> mlua::Result<Vec2> {
     Ok(match &node_of(st, id)?.kind {
         NodeKind::Sprite(s) => s.size,
         NodeKind::Target(t) => t.size.as_vec2(),
@@ -1750,7 +1752,32 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| with(lua, |st| Ok(st.pointer.map(|p| (p.x, p.y)).unzip())))?,
     )?;
     input.set("down", lua.create_function(|lua, key: String| with(lua, |st| Ok(st.keys.contains(&key))))?)?;
+    // kulisa.input.pointers() -> { { id, x, y, touch, down }, ... }: the mouse and every touch.
+    input.set(
+        "pointers",
+        lua.create_function(|lua, ()| {
+            let list = with(lua, |st| {
+                Ok(st
+                    .pointers
+                    .iter()
+                    .filter_map(|(id, p)| p.pos.map(|pos| (*id, pos, p.touch, p.down)))
+                    .collect::<Vec<_>>())
+            })?;
+            let out = lua.create_table()?;
+            for (id, pos, touch, down) in list {
+                let t = lua.create_table()?;
+                t.set("id", id)?;
+                t.set("x", pos.x)?;
+                t.set("y", pos.y)?;
+                t.set("touch", touch)?;
+                t.set("down", down)?;
+                out.push(t)?;
+            }
+            Ok(out)
+        })?,
+    )?;
     k.set("input", input)?;
+    super::interact::install(lua, &k)?;
 
     k.set("audio", audio_api(lua)?)?;
     k.set("story", story_api(lua)?)?;

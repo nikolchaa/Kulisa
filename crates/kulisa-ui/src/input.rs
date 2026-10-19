@@ -261,6 +261,11 @@ impl<N: Default> Ui<N> {
         blocked
     }
 
+    /// Whether a press at `p` would be taken by the UI (a widget under it, or a modal screen).
+    pub fn covers(&self, p: Vec2) -> bool {
+        self.pick(p).2
+    }
+
     /// The pointer left the window.
     pub fn pointer_left(&mut self) {
         self.set_hover(None);

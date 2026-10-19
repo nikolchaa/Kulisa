@@ -354,10 +354,12 @@ impl App {
             }
             WindowEvent::Touch(touch) => {
                 let Some(game) = self.input() else { return };
-                game.pointer_moved(Some(Vec2::new(touch.location.x as f32, touch.location.y as f32)));
+                // Pointer 0 is the mouse; each finger gets its own id from 1.
+                let id = (touch.id as u32).wrapping_add(1).max(1);
+                game.pointer_moved_id(id, Some(Vec2::new(touch.location.x as f32, touch.location.y as f32)));
                 match touch.phase {
-                    TouchPhase::Started => game.pressed("touch"),
-                    TouchPhase::Ended | TouchPhase::Cancelled => game.released("touch"),
+                    TouchPhase::Started => game.pressed_id(id, "touch"),
+                    TouchPhase::Ended | TouchPhase::Cancelled => game.released_id(id, "touch"),
                     TouchPhase::Moved => {}
                 }
             }

@@ -209,22 +209,82 @@ end)
 | Event | Arguments |
 |---|---|
 | `update` | `dt` |
-| `press`, `release` | `x, y, button` (`left`, `right`, `middle`, `touch`), design units |
-| `move` | `x, y` |
+| `press`, `release` | `x, y, button, id` (`left`, `right`, `middle`, `touch`), design units; `id` is the pointer (0 is the mouse, each finger has its own from 1) |
+| `move` | `x, y, id` |
 | `key`, `key_up` | name: `space`, `enter`, `escape`, `left`, `right`, `up`, `down`, `pageup`, `pagedown`, `f1`…`f12`, `back`, or the character (`a`, `1`) |
 | `tap`, `long_press` | `x, y`: a short press without moving (also a mouse click), or a press held for half a second |
 | `swipe` | `direction` (`left`, `right`, `up`, `down`), `x, y` where it started |
+| `pinch` | `factor, x, y, total`: two fingers moved; `factor` is the distance now over the distance at the last event, `total` over the distance when the second finger landed, `x, y` the midpoint |
+| `rotate` | `delta, x, y, total`: radians the line between two fingers turned (positive is clockwise on screen) since the last event, and since the second finger landed |
 | `wheel` | lines; positive is up |
 | `resize` | window `width, height` in pixels |
 | `error` | message |
 | `display` | `{ profile, orientation, mismatch }`, see Display |
 | `say`, `menu`, `pause`, `end`, `stage`, `restore` | see Story |
 
-`kulisa.input.pointer()` → `x, y` or nil; `kulisa.input.down(key)` → whether a key is held.
+`kulisa.input.pointer()` → `x, y` or nil (the primary pointer); `kulisa.input.pointers()` →
+`{ { id, x, y, touch, down }, ... }`, the mouse and every finger; `kulisa.input.down(key)` →
+whether a key is held.
 
-Shown screens see the left button and touches first (topmost first). What a button, slider or
-scroll takes, and anything over a modal screen, does not reach `press`, `release`, gestures
-or `wheel`. Other buttons and keys always reach the handlers.
+The primary pointer is the first finger down, or the mouse when none is. It drives hover, the
+UI and the `tap`/`long_press`/`swipe` gestures; other fingers only produce `press`, `move`,
+`release` (with their `id`) and join `pinch`/`rotate`. Two fingers that landed on the game
+(not on a button, draggable or hotspot) make a pinch; a second finger cancels a tap in progress.
+
+Shown screens see the left button and touches first (topmost first), then draggables and
+hotspots (see Interaction). What a button, slider or scroll takes, what a draggable or a
+blocking hotspot takes, and anything over a modal screen, does not reach `press`, `release`,
+gestures or `wheel`. Other buttons and keys always reach the handlers.
+
+## Timers
+
+- `kulisa.after(secs, fn)` runs `fn` once after `secs` seconds of game time; `kulisa.every(secs,
+  fn)` runs it every `secs` (at most once per frame). Both return a handle with `cancel()` and
+  `done` (true once cancelled, or after an `after` fired), so tasks can `kulisa.await(handle)`.
+  Errors in callbacks are reported like handler errors.
+
+## Interaction
+
+Dragging, dropping and clickable areas in the scene (the UI has its own buttons). Each takes the
+node it is about, and options. Areas are the node's drawn area (a sprite, mesh or text, or any
+descendant's, so a group of parts works); `rect = { x, y, width, height }` or `polygon = { x1,
+y1, x2, y2, ... }` give a shape in the node's own space instead (an empty group can be a hit
+area); `alpha` (a number 0 to 1 or `true`) makes see-through pixels not count, as in `contains`.
+Overlapping things are resolved by what is drawn on top. All of them have `enabled` (read and
+write) and `remove()`; they go away on their own when their node is removed.
+
+```lua
+local coin = kulisa.sprite{ image = "coin.png", x = 100, y = 100 }
+local slot = kulisa.sprite{ image = "slot.png", x = 600, y = 300 }
+
+kulisa.drag(coin, { tag = "coin", alpha = 0.1, on_drop = function(i) print("landed in", i.zone) end })
+kulisa.drop_zone(slot, { accept = "coin", capacity = 1, on_reject = function() shake(slot) end })
+```
+
+Callbacks get one table: `node` (the dragged node, or the hotspot's), `zone` (the zone's node,
+when there is one), `x`, `y` (design units), `pointer` (id), `from_x`, `from_y` (where the node
+started), `moved` (it traveled beyond a few units) and `accepted`.
+
+- `kulisa.drag(node, opts)` → handle (`dragging`, `cancel()`). The node follows the pointer.
+  Options: `tag` (a string zones can ask for), `bounds = { x, y, width, height }` (limits the
+  node's position in its parent), `axis = "x" | "y" | "both"`, `lift` (default true: draw on top
+  while dragged), `home = "rejected"` (default: return after a zone refused it) `| "always"
+  | "never"`, `snap_time` (seconds, default 0.15), and callbacks `on_start`, `on_move`,
+  `on_drop` (released and staying: accepted by a zone, or let go in the open), `on_reject`
+  (refused by a zone, or returned because `home = "always"`), `on_click` (released without
+  moving; no `on_drop`) and `on_end` (always last; `accepted`, `zone`). A press on a draggable
+  does not reach `press`. Several fingers can drag different nodes at once.
+- `kulisa.drop_zone(node, opts)` → handle (`occupants`, `clear()`). Options: `accept` (a tag,
+  a list of tags, or `function(info) -> boolean` called with `info.node` and `info.zone`; default
+  anything), `capacity` (how many it holds at once), `snap = "center"` (default) `| "none" |
+  { x, y }` (an offset from the center): an accepted node slides so its center is on the zone's
+  center, `by = "pointer"` (default) or `"center"`: whether the pointer or the node's center
+  must be over the zone, and callbacks `on_enter`/`on_leave` (while a dragged node is over it,
+  accepted or not), `on_drop` (accepted), `on_reject`.
+- `kulisa.hotspot(node, opts)` → handle (`hovered`): a clickable area. Callbacks `on_click`
+  (pressed and released on it), `on_press`, `on_release`, `on_enter`, `on_leave` (the mouse; the
+  UI and drags hide it). Options: `priority` (higher wins over what is drawn on top; default 0)
+  and `block` (default true: its presses do not reach `press`).
 
 ## UI
 

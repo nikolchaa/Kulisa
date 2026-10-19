@@ -44,6 +44,60 @@ function kulisa.await(handle)
     end
 end
 
+-- Timers: run `f` once after `secs` (kulisa.after) or every `secs` (kulisa.every). The handle
+-- has `cancel()` and `done` (true once cancelled, or after an `after` fired), so tasks can
+-- `kulisa.await` it. Callbacks run once per frame at most; time is game time.
+local timers = {}
+
+local function timer(secs, f, repeating)
+    if type(secs) ~= "number" or secs < 0 then
+        error("the delay must be a number of seconds, 0 or more", 3)
+    end
+    if type(f) ~= "function" then
+        error("the second argument must be a function", 3)
+    end
+    local t = { due = kulisa.now() + secs, secs = secs, f = f, repeating = repeating }
+    local handle = { done = false }
+    function handle.cancel()
+        handle.done = true
+    end
+    t.handle = handle
+    table.insert(timers, t)
+    return handle
+end
+
+function kulisa.after(secs, f)
+    return timer(secs, f, false)
+end
+
+function kulisa.every(secs, f)
+    return timer(math.max(secs, 0.001), f, true)
+end
+
+local function run_timers()
+    local now = kulisa.now()
+    local i = 1
+    while i <= #timers do
+        local t = timers[i]
+        if not t.handle.done and now >= t.due then
+            if t.repeating then
+                repeat t.due += t.secs until t.due > now
+            else
+                t.handle.done = true
+            end
+            local ok, err = xpcall(t.f, debug.traceback)
+            if not ok then
+                kulisa._report(tostring(err))
+            end
+        end
+        if t.handle.done then
+            table.remove(timers, i)
+        else
+            i += 1
+        end
+    end
+end
+
 -- Called by the engine once per frame.
 function kulisa._tick(dt)
     local i = 1
@@ -58,6 +112,7 @@ function kulisa._tick(dt)
             i += 1
         end
     end
+    run_timers()
 end
 
 -- UI widget constructors: plain tables tagged with their kind. Children go in the list part.

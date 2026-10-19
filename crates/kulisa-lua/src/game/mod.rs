@@ -7,8 +7,10 @@
 mod api;
 mod display;
 mod hit;
+mod interact;
 mod media;
 mod mesh;
+mod pointer;
 mod ui;
 
 use std::cell::RefCell;
@@ -109,6 +111,10 @@ pub(crate) struct State {
     pub ui: ui::UiState,
     pub display: display::DisplayState,
     pub alpha_masks: hit::Masks,
+    pub interact: interact::Interact,
+    /// Every pointer: the mouse (id 0) and the touches that are down (ids from 1).
+    pub pointers: BTreeMap<u32, pointer::Pointer>,
+    pub pinch: Option<pointer::Pinch>,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -491,6 +497,9 @@ impl Game {
             ui: Default::default(),
             display: Default::default(),
             alpha_masks: Default::default(),
+            interact: Default::default(),
+            pointers: BTreeMap::new(),
+            pinch: None,
         };
         state.display.device = device;
         let shared = Rc::new(RefCell::new(state));
@@ -577,6 +586,8 @@ impl Game {
         if let Some(Gesture::LongPress(p)) = long_press {
             emit(&self.state, "long_press", (p.x, p.y));
         }
+        let mouse = self.state.borrow().pointers.get(&0).and_then(|p| p.pos);
+        interact::hover(&self.lua, &self.state, mouse);
         ui::update(&self.lua, &self.state);
         self.report_display();
 
@@ -704,78 +715,186 @@ impl Game {
         st.viewport.layout(st.renderer.size()).to_pixels.inverse().transform_point2(window)
     }
 
-    /// Pointer position in window pixels (`None` when it left the window).
+    /// Mouse position in window pixels (`None` when it left the window).
     pub fn pointer_moved(&mut self, window: Option<Vec2>) {
+        self.pointer_moved_id(0, window);
+    }
+
+    /// Pointer `id` (0 is the mouse, touches count from 1) moved. The first touch down (or the
+    /// mouse when none is) is the primary pointer: it drives hover, UI and the gestures.
+    pub fn pointer_moved_id(&mut self, id: u32, window: Option<Vec2>) {
         let p = window.map(|w| self.to_design(w));
         let events = {
             let mut st = self.state.borrow_mut();
-            st.pointer = p;
-            match p {
-                Some(p) => {
-                    st.ui.gestures.moved(p);
-                    st.ui.ui.pointer_move(p)
+            st.pointers.entry(id).or_insert_with(|| pointer::Pointer::new(id != 0)).pos = p;
+            if is_primary(&st, id) {
+                st.pointer = p;
+                match p {
+                    Some(p) => {
+                        st.ui.gestures.moved(p);
+                        st.ui.ui.pointer_move(p)
+                    }
+                    None => {
+                        st.ui.ui.pointer_left();
+                        Vec::new()
+                    }
                 }
-                None => {
-                    st.ui.ui.pointer_left();
-                    Vec::new()
-                }
+            } else {
+                Vec::new()
             }
         };
         ui::run_events(&self.state, events);
-        if let Some(p) = p {
-            emit(&self.state, "move", (p.x, p.y));
+        match p {
+            Some(p) => {
+                interact::moved(&self.lua, &self.state, id, p);
+                if id == 0 {
+                    interact::hover(&self.lua, &self.state, Some(p));
+                }
+                emit(&self.state, "move", (p.x, p.y, id));
+                self.update_pinch(true);
+            }
+            None if id == 0 => interact::hover(&self.lua, &self.state, None),
+            None => {}
         }
     }
 
-    /// A pointer button or touch went down: "left", "right", "middle" or "touch". Screens
-    /// get the left button and touches first; what they take does not reach `press`.
+    /// A button of the mouse went down: "left", "right" or "middle".
     pub fn pressed(&mut self, button: &str) {
-        let p = self.state.borrow().pointer.unwrap_or_default();
-        if matches!(button, "left" | "touch") {
-            let (taken, events) = {
-                let mut st = self.state.borrow_mut();
-                let (taken, events) = st.ui.ui.pointer_down(p);
-                st.ui.pressed_by_ui = taken;
-                let t = st.time;
-                if taken {
-                    st.ui.gestures.cancel();
-                } else {
-                    st.ui.gestures.down(p, t);
-                }
-                (taken, events)
-            };
-            ui::run_events(&self.state, events);
+        self.pressed_id(0, button);
+    }
+
+    /// Pointer `id` went down: a mouse button, or "touch". Screens get the left button and
+    /// touches first, then draggables and hotspots; what they take does not reach `press`.
+    pub fn pressed_id(&mut self, id: u32, button: &str) {
+        let left = matches!(button, "left" | "touch");
+        let (p, primary) = {
+            let mut st = self.state.borrow_mut();
+            let ptr = st.pointers.entry(id).or_insert_with(|| pointer::Pointer::new(id != 0));
+            let p = ptr.pos.unwrap_or_default();
+            if left {
+                ptr.down = true;
+                ptr.captured = false;
+            }
+            let primary = is_primary(&st, id);
+            // A second finger turns a tap or long press into a multi-touch gesture.
+            if id != 0 && !primary {
+                st.ui.gestures.cancel();
+            }
+            (p, primary)
+        };
+        if left {
+            let mut taken = false;
+            if primary {
+                let (by_ui, events) = {
+                    let mut st = self.state.borrow_mut();
+                    let (taken, events) = st.ui.ui.pointer_down(p);
+                    st.ui.pressed_by_ui = taken;
+                    (taken, events)
+                };
+                ui::run_events(&self.state, events);
+                taken = by_ui;
+            }
+            if !taken {
+                taken = interact::down(&self.lua, &self.state, id, p);
+            }
+            let mut st = self.state.borrow_mut();
             if taken {
+                if let Some(ptr) = st.pointers.get_mut(&id) {
+                    ptr.captured = true;
+                }
+                if primary {
+                    st.ui.gestures.cancel();
+                }
+            } else if primary {
+                let t = st.time;
+                st.ui.gestures.down(p, t);
+            }
+            drop(st);
+            if taken {
+                self.update_pinch(false);
                 return;
             }
         }
-        emit(&self.state, "press", (p.x, p.y, button.to_string()));
+        emit(&self.state, "press", (p.x, p.y, button.to_string(), id));
+        self.update_pinch(false);
     }
 
+    /// A button of the mouse went up.
     pub fn released(&mut self, button: &str) {
-        let p = self.state.borrow().pointer.unwrap_or_default();
-        if matches!(button, "left" | "touch") {
+        self.released_id(0, button);
+    }
+
+    pub fn released_id(&mut self, id: u32, button: &str) {
+        let left = matches!(button, "left" | "touch");
+        let (p, primary) = {
+            let st = self.state.borrow();
+            (st.pointers.get(&id).and_then(|p| p.pos).unwrap_or_default(), is_primary(&st, id))
+        };
+        let finished = |g: &mut Game| {
+            if id != 0 {
+                g.state.borrow_mut().pointers.remove(&id);
+            } else if let Some(ptr) = g.state.borrow_mut().pointers.get_mut(&0) {
+                ptr.down = false;
+            }
+            g.update_pinch(false);
+        };
+        if left {
+            if let Some(ptr) = self.state.borrow_mut().pointers.get_mut(&id) {
+                ptr.down = false;
+            }
+            if interact::up(&self.lua, &self.state, id, p) {
+                self.state.borrow_mut().ui.pressed_by_ui = false;
+                return finished(self);
+            }
             let (taken, events, gesture) = {
                 let mut st = self.state.borrow_mut();
-                let by_ui = std::mem::take(&mut st.ui.pressed_by_ui);
-                let (taken, events) = st.ui.ui.pointer_up(p);
-                let t = st.time;
-                let gesture = if taken || by_ui { None } else { st.ui.gestures.up(p, t) };
-                (taken || by_ui, events, gesture)
+                if primary {
+                    let by_ui = std::mem::take(&mut st.ui.pressed_by_ui);
+                    let (taken, events) = st.ui.ui.pointer_up(p);
+                    let t = st.time;
+                    let gesture = if taken || by_ui { None } else { st.ui.gestures.up(p, t) };
+                    (taken || by_ui, events, gesture)
+                } else {
+                    (false, Vec::new(), None)
+                }
             };
             ui::run_events(&self.state, events);
             if taken {
-                return;
+                return finished(self);
             }
-            emit(&self.state, "release", (p.x, p.y, button.to_string()));
+            emit(&self.state, "release", (p.x, p.y, button.to_string(), id));
             match gesture {
                 Some(Gesture::Tap(p)) => emit(&self.state, "tap", (p.x, p.y)),
                 Some(Gesture::Swipe(dir, p)) => emit(&self.state, "swipe", (dir.name(), p.x, p.y)),
                 _ => {}
             }
-            return;
+            return finished(self);
         }
-        emit(&self.state, "release", (p.x, p.y, button.to_string()));
+        emit(&self.state, "release", (p.x, p.y, button.to_string(), id));
+    }
+
+    /// Reports pinch and rotate while exactly two uncaptured touches are down.
+    fn update_pinch(&mut self, report_steps: bool) {
+        let step = {
+            let mut st = self.state.borrow_mut();
+            let touches: Vec<(u32, Vec2)> = st
+                .pointers
+                .iter()
+                .filter(|(_, p)| p.touch && p.down && !p.captured)
+                .filter_map(|(id, p)| p.pos.map(|pos| (*id, pos)))
+                .collect();
+            let mut pinch = st.pinch.take();
+            let step = pointer::Pinch::track(&touches, &mut pinch);
+            st.pinch = pinch;
+            step
+        };
+        let Some(s) = step.filter(|_| report_steps) else { return };
+        if (s.factor - 1.0).abs() > 1e-6 {
+            emit(&self.state, "pinch", (s.factor, s.center.x, s.center.y, s.total));
+        }
+        if s.delta.abs() > 1e-6 {
+            emit(&self.state, "rotate", (s.delta, s.center.x, s.center.y, s.total_angle));
+        }
     }
 
     /// A key by name ("space", "enter", "left", "f5", "a", ...).
@@ -814,5 +933,14 @@ impl Drop for Game {
             st.migrations.clear();
         }
         self.lua.remove_app_data::<Shared>();
+    }
+}
+
+/// Whether pointer `id` drives the UI and gestures: the lowest touch that is down, or the
+/// mouse (and any touch not yet down) when no touch is.
+fn is_primary(st: &State, id: u32) -> bool {
+    match st.pointers.iter().find(|(_, p)| p.touch && p.down) {
+        Some((first, _)) => *first == id,
+        None => true,
     }
 }
