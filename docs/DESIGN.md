@@ -22,17 +22,18 @@ Building blocks we depend on: `winit`, `wgpu`, `cosmic-text`, `kira`, `mlua`
 ## 2. Crate map
 
 ```
-                         kulisa-player   (entry points: main, android_main, wasm start)
-                               |
-                         kulisa-runtime  (frame loop, owns all subsystems)
-             ______________/  |   |   \______________
-            /           /     |   |     \            \
-   kulisa-story  kulisa-lua  kulisa-ui  kulisa-audio  kulisa-text
-        |            |  \______|___________|______________|
-        |            |         |
-        +------> kulisa-core <-+--- kulisa-render
-                     |
-               kulisa-platform  (fs, paths, haptics, gyro, logging; no engine deps)
+                kulisa-player   (entry points: main, android_main, wasm start)
+                      |
+                kulisa-runtime  (window, frame loop, finds the game)
+                      |
+                kulisa-lua      (Luau sandbox, kulisa API, the scripted Game)
+     _________/     /   |   \     \_________
+    /              /    |    \              \
+kulisa-story  kulisa-ui  kulisa-audio  kulisa-text --> kulisa-render
+    |              |                        |               |
+    +--------------+------> kulisa-core <---+---------------+
+                                |
+                          kulisa-platform  (files, packs, save paths, logging; no engine deps)
 
    kulisa-cli  (new | run | build <target>; host-only tool, not shipped in games)
 ```
@@ -45,9 +46,9 @@ Building blocks we depend on: `winit`, `wgpu`, `cosmic-text`, `kira`, `mlua`
 | `kulisa-text` | Markup, cosmic-text shaping, glyph cache in the sprite atlas, typewriter, effects, ruby | `cosmic-text`, `kulisa-core`, `kulisa-render` |
 | `kulisa-audio` | Channels (music/sound/voice/custom), crossfades, per-channel volume, placeholder synthesis | `kira` |
 | `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM with rollback and update-safe saves | `kulisa-core` |
-| `kulisa-lua` | Luau VM, sandbox, the `kulisa.*` API binding | `mlua`, engine crates |
+| `kulisa-lua` | Luau VM, sandbox, the `kulisa.*` API (docs/API.md), the scripted `Game` (scene, assets, story, saves, audio) | `mlua`, engine crates |
 | `kulisa-ui` | Reactive declarative screens, layout, widgets | `kulisa-core`, `kulisa-text` |
-| `kulisa-runtime` | Frame loop, event dispatch, live reload, wiring | all of the above |
+| `kulisa-runtime` | Window, frame loop, finding the game, forwarding input; later live reload | `kulisa-lua`, `winit` |
 | `kulisa-player` | Per-target entry points, `cdylib` for Android/web | `kulisa-runtime` |
 | `kulisa-cli` | `kulisa new/run/build`, packaging (APK, web bundle, .app) | host-only |
 
@@ -63,7 +64,15 @@ Rules:
 
 ## 3. Runtime and frame loop
 
-One `winit` event loop on the main thread. Per frame:
+One `winit` event loop on the main thread. The runtime finds the game (a folder or
+`.kpak`: the first argument, `KULISA_GAME`, or `game/`/`game.kpak` next to the
+executable; the APK's `assets/game.kpak` on Android; `game.kpak` fetched next to the
+page on the web), creates the renderer, and hands both to `kulisa_lua::Game`, which
+runs the game's `main.luau`. The engine has no built-in scene: if a game fails to
+start, the error is logged (an on-screen error view arrives with live reload, M9).
+
+Per frame (implemented as of M4: input events, then `Game::frame`: tweens, Luau
+tasks, `update` handlers, timed story pauses, text animation; then render):
 
 1. **Input** — winit + gilrs events are normalized into `kulisa_core::input`
    (unified pointer for mouse/touch, keys, gamepad, gyro), hit tested against
@@ -178,7 +187,7 @@ Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame
 - **Camera and parallax.** `Camera { position, zoom, rotation, shake }`. A
   layer's `parallax` factor scales how much of the camera's movement, zoom and
   rotation applies: 1 = world, 0 = fixed to the screen. Pointer/gyro follow are
-  behaviours written against public API (see the runtime smoke scene).
+  behaviours written against public API (see `demos/smoke`).
 - **Shaders.** User WGSL defines `fn fragment(in: VertexOut) -> vec4<f32>`
   (premultiplied linear color) and optionally `fn vertex(in: VertexIn) ->
   VertexOut`. Kulisa appends a prelude (after the user code, so naga's
@@ -219,7 +228,7 @@ Implemented in M2 (`kulisa-text`).
   every glyph maps back to its style without a second pass.
 - **No bundled engine fonts.** `TextSystem::load_font` takes TTF/OTF bytes;
   `load_system_fonts` is an opt-in desktop fallback for development. The smoke
-  scene ships Inter (SIL OFL 1.1, license next to the files).
+  demo ships Inter (SIL OFL 1.1, license next to the files).
 - **Glyphs live in the sprite atlas.** Glyphs are rasterized (swash) at physical
   pixel size (design size × window scale, so text stays sharp) and uploaded with
   `Renderer::create_texture`, i.e. into the same atlas pages as small sprites. A
@@ -337,9 +346,11 @@ layers: **story variables** (saved; written by `$` lines and label-level
 helpers). Lookups chain variables, constants, globals. Snapshots accept only
 plain data and name the variable that breaks the rule.
 
-The engine never draws dialogue itself. Until Luau handlers (M4) and the
-classic-vn template (M5) exist, the runtime's smoke scene plays that part.
-Transitions (`with`) are parsed and reported but not animated yet (M5).
+The engine never draws dialogue itself. `kulisa-lua::Game` runs the VM and
+passes its events to Luau handlers (`say`, `menu`, `stage`, `restore`, ...);
+`play`/`stop` lines go straight to audio. While the VM runs, its state is taken
+out of the shared game state, so `$` lines can call the whole API. Transitions
+(`with`) are reported to handlers but not animated yet (M5).
 
 ### Positions that survive updates
 
@@ -355,27 +366,40 @@ fill in for old saves.
 Luau via `mlua` with the `luau` feature. Chosen over Rhai for speed, coroutines,
 gradual typing, sandboxing and no-JIT operation on iOS.
 
-- **Sandboxed.** No `io`/`os`/`loadfile`; files go through `kulisa.assets`.
-  Each game script runs in its own environment. Mod loading (desktop only) uses
-  the same sandbox.
-- **Coroutines for sequencing.** Waits (`kulisa.wait(secs)`, `tween:await()`,
-  `kulisa.input.await_click()`) yield the current coroutine; the runtime
-  resumes it when due.
-- **API outline** (all under the `kulisa` global):
+Implemented in M4; the reference is [API.md](API.md).
+
+- **Sandboxed.** `Lua::sandbox` (Luau's `luaL_sandbox`): no `io`/`os`/`loadfile`,
+  library tables and the `kulisa` table read-only, game globals in a per-game
+  table. Files go through `kulisa.read_text`/`require` from the game's assets.
+  Mod loading (desktop only) will use the same sandbox.
+- **No borrow across calls.** Engine state lives in one `Rc<RefCell<State>>`
+  (Lua app data). Bindings borrow it briefly and never call Luau while holding
+  it; handlers are collected first, then called. Re-entrant calls therefore work
+  (a `say` handler can call `kulisa.story.next()`).
+- **Handles, not tables.** Nodes, images, shaders and tweens are userdata
+  wrapping ids; properties go through `__index`/`__newindex` and fail loudly on
+  unknown names. A removed node's handle errors on use.
+- **Coroutines for sequencing.** A Luau prelude implements `kulisa.spawn`,
+  `kulisa.wait` and `kulisa.await`; the engine resumes tasks once per frame.
+  `main.luau` runs as a task.
+- **Errors** in handlers and tasks are logged with a traceback and passed to
+  `error` handlers; the game keeps running.
+- **API outline** (all under the `kulisa` global; rows without an M4 note are
+  planned):
 
 | Namespace | Purpose |
 |---|---|
-| `node`, `sprite`, `layer`, `group` | Create and modify scene nodes; transforms, opacity, tint, blend, clip, z |
+| `group`, `sprite`, `text`, `layer`, `target` | Scene nodes: transforms, opacity, tint, blend, clip, z, shaders (M4) |
 | `mesh` | Vertex grids: positions, UVs, colors, indices editable per frame |
-| `shader`, `postfx`, `target` | WGSL shaders, uniforms, post-fx chains, render targets |
-| `camera` | Pan, zoom, rotate, shake, follow pointer/gyro |
-| `tween`, `timeline` | Easing, sequences, parallel tracks, loops, callbacks |
-| `text` | Rich text nodes, typewriter, effects, fonts |
-| `audio` | Channels, play/stop/fade, volumes |
-| `input` | Pointer, keys, gamepad, gyro; hit testing, drag and drop |
+| `load_shader`, `effects`, `target` | WGSL shaders, params, effect chains, render targets (M4) |
+| `camera`, `screen` | Pan, zoom, rotate, shake; design size, clear color, screen effects (M4) |
+| `node:tween`, `spawn`/`wait`/`await` | Easing, delay, repeat, yoyo, coroutine tasks (M4); timelines later |
+| `text`, `load_font` | Rich text nodes, typewriter, effects, fonts (M4) |
+| `audio` | Channels, play/stop/fade, volumes (M4) |
+| `on`, `input`, `node:contains` | Pointer, keys, wheel, hit testing (M4); gamepad, gyro, drag and drop later |
 | `ui` | Reactive screens, layout, widgets, bindings |
-| `story` | Event handlers, jump/call, story variables |
-| `state`, `save` | Registered state, save/load slots, migrations |
+| `story` | Load, start, next, choose, rollback, variables; events via `on` (M4) |
+| `state`, `save` | Registered state, save/load slots, migrations (M4) |
 | `platform` | Haptics, safe areas, OS info, quality tier |
 
 - **Custom displayables** are Luau tables with `update(dt)`/`draw`
@@ -406,7 +430,8 @@ Everything that survives save and rollback is **plain data** in a `Value` tree
   position (`at left`), and looping tracks per channel. The runtime rebuilds
   visuals and music from it; named positions keep saves portable across display
   profiles (see Coordinate system).
-- Registered Luau state (`kulisa.state.*`) arrives with the Luau API (M4).
+- Registered Luau state (`kulisa.state.register(name, { save, load })`), stored
+  next to the story variables in every checkpoint and save.
 
 ### Rollback
 
@@ -434,7 +459,7 @@ body:   the VM's save: frames, stage, story variables
 - Unknown fields are ignored and missing ones default.
 - **Migrations**: games set `save_version` and register steps (`from` to
   `from + 1`) that transform the body; saves from a newer game are refused with
-  a clear message. The Luau side (`kulisa.save.migrate`) arrives with M4.
+  a clear message. Luau games register steps with `kulisa.save.migrate`.
 - Engine format changes bump `format_version`; files from a newer Kulisa are
   refused.
 - **Storage** (`kulisa_platform::Storage`): atomic file writes under
@@ -459,8 +484,10 @@ body:   the VM's save: frames, stage, story variables
 - Engine-developer builds go through `cargo xtask` (`web`, `apk`, `ios-app`), so CI and
   local builds run the same steps. Game-creator builds (`kulisa build <target>`)
   arrive with `kulisa-cli` in M9 and will reuse this logic.
-- Games ship scripts and assets inside the build (App Store safe). Release
-  builds pack assets into a single archive (`.kpak`: index + blobs).
+- Games ship scripts and assets inside the build (App Store safe), packed into
+  a single archive (`.kpak`: index + blobs). `cargo xtask` bundles a game
+  (`--game DIR`, default `demos/smoke`) into web, APK and iOS builds;
+  `cargo xtask pack` writes a `.kpak`. Desktop runs a folder directly.
 - Mod loading is desktop only.
 
 ## 12. Risks
@@ -531,4 +558,7 @@ body:   the VM's save: frames, stage, story variables
 | 2026-10-19 | M3: the VM talks to Luau only through a `Host` trait; tests use a fake host, so the VM is tested without Luau. |
 | 2026-10-19 | M3: story variables and constants are separate Luau tables; `define` and top-level `lua:` write constants, so helper functions never end up in saves. |
 | 2026-10-19 | M3: full-snapshot checkpoints instead of diffs, until story state is large enough to matter. |
+| 2026-10-19 | M4: the engine owns no scene; `kulisa-lua::Game` runs a game folder or `.kpak` and the runtime only forwards window events. The old Rust smoke scene became `demos/smoke`, written only against the public Luau API. |
+| 2026-10-19 | M4: Luau API handles are userdata with strict property access instead of plain tables, so typos fail loudly and node state lives in one place (the scene). |
+| 2026-10-19 | M4: tasks (`spawn`/`wait`/`await`) are a small Luau prelude over coroutines rather than Rust-side scheduling. |
 | 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |

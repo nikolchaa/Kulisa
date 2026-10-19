@@ -18,9 +18,16 @@ look like anything.
 - **Six platforms.** Windows, Linux, macOS, Web, Android, iOS.
 - **Fast and lean.** Batched GPU rendering via wgpu, instant startup, small builds.
 
-> Status: early development. Nothing is usable yet.
+> Status: early development. Not ready for making games yet.
 
-See [docs/DESIGN.md](docs/DESIGN.md) for the architecture.
+Run the smoke demo (a game written only against the public Luau API):
+
+```sh
+cargo run -p kulisa-player -- demos/smoke
+```
+
+See [docs/DESIGN.md](docs/DESIGN.md) for the architecture and
+[docs/API.md](docs/API.md) for the Luau API.
 
 ## License
 
