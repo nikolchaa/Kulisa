@@ -5,6 +5,8 @@ mod storage;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use assets::build_pack;
+#[cfg(target_arch = "wasm32")]
+pub use assets::fetch;
 pub use assets::{Assets, Pack, normalize};
 pub use storage::Storage;
 #[cfg(not(target_arch = "wasm32"))]

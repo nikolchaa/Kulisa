@@ -137,6 +137,22 @@ pub fn build_pack(dir: &Path) -> Result<Vec<u8>, String> {
     Ok(header)
 }
 
+/// Downloads `url` (relative to the page). Web only; games ship as a `.kpak` there.
+#[cfg(target_arch = "wasm32")]
+pub async fn fetch(url: &str) -> Result<Vec<u8>, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    let fail = |e: wasm_bindgen::JsValue| format!("fetching `{url}`: {e:?}");
+    let window = web_sys::window().ok_or("no browser window")?;
+    let response: web_sys::Response =
+        JsFuture::from(window.fetch_with_str(url)).await.map_err(fail)?.dyn_into().map_err(fail)?;
+    if !response.ok() {
+        return Err(format!("fetching `{url}`: HTTP {}", response.status()));
+    }
+    let buffer = JsFuture::from(response.array_buffer().map_err(fail)?).await.map_err(fail)?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
 impl Assets {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn dir(path: impl Into<PathBuf>) -> Assets {
