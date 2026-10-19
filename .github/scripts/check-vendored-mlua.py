@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Checks that third_party/mlua is exactly the crates.io release plus our patches.
+"""Keeps third_party/mlua equal to a crates.io release plus our patches.
 
-Downloads the published crate, applies third_party/mlua/patches/*.patch, and fails
-if any source file, the license, the readme or the manifest's non-dev sections differ.
+    check-vendored-mlua.py                    verify (CI): fail on any unexpected difference
+    check-vendored-mlua.py --update VERSION   replace the vendored copy with VERSION + patches
+
+Only src/, LICENSE, README.md and the manifest's non-dev sections are vendored.
 """
 
 import io
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -16,9 +19,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 VENDORED = ROOT / "third_party" / "mlua"
+PATCHES = VENDORED / "patches"
+USER_AGENT = "kulisa-vendoring (https://github.com/nikolchaa/Kulisa)"
 
 
-def version() -> str:
+def vendored_version() -> str:
     m = re.search(r'^version = "([^"]+)"', (VENDORED / "Cargo.toml").read_text(), re.M)
     return m.group(1)
 
@@ -30,40 +35,77 @@ def strip_dev_sections(manifest: str) -> str:
     return "".join(p for p in parts if not dev.match(p)).strip()
 
 
-def files(base: Path, rel: str) -> dict[str, bytes]:
-    root = base / rel
-    return {str(p.relative_to(base)).replace("\\", "/"): p.read_bytes().replace(b"\r\n", b"\n")
-            for p in sorted(root.rglob("*")) if p.is_file()}
+def read(path: Path) -> bytes:
+    return path.read_bytes().replace(b"\r\n", b"\n")
 
 
-def main() -> int:
-    ver = version()
-    url = f"https://static.crates.io/crates/mlua/mlua-{ver}.crate"
+def tree(base: Path) -> dict[str, bytes]:
+    return {p.relative_to(base).as_posix(): read(p) for p in sorted(base.rglob("*")) if p.is_file()}
+
+
+def fetch(version: str, dest: Path) -> Path:
+    """Downloads mlua `version` from crates.io, applies our patches, returns its directory."""
+    url = f"https://static.crates.io/crates/mlua/mlua-{version}.crate"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with tarfile.open(fileobj=io.BytesIO(urllib.request.urlopen(req).read())) as tar:
+        tar.extractall(dest, filter="data")
+    upstream = dest / f"mlua-{version}"
+    for patch in sorted(PATCHES.glob("*.patch")):
+        result = subprocess.run(["patch", "-p1", "--forward", "-i", str(patch)], cwd=upstream,
+                                capture_output=True, text=True)
+        if result.returncode != 0:
+            sys.exit(f"error: {patch.name} does not apply to mlua {version}; if upstream fixed it, "
+                     f"delete the patch, otherwise fix and regenerate it.\n{result.stdout}{result.stderr}")
+    return upstream
+
+
+def check() -> int:
+    version = vendored_version()
     with tempfile.TemporaryDirectory() as tmp:
-        data = urllib.request.urlopen(url).read()
-        with tarfile.open(fileobj=io.BytesIO(data)) as tar:
-            tar.extractall(tmp, filter="data")
-        upstream = Path(tmp) / f"mlua-{ver}"
-        for patch in sorted((VENDORED / "patches").glob("*.patch")):
-            subprocess.run(["patch", "-p1", "--quiet", "-i", str(patch)], cwd=upstream, check=True)
-
+        upstream = fetch(version, Path(tmp))
         problems = []
-        ours, theirs = files(VENDORED, "src"), files(upstream, "src")
+        ours, theirs = tree(VENDORED / "src"), tree(upstream / "src")
         for path in sorted(set(ours) | set(theirs)):
             if ours.get(path) != theirs.get(path):
-                problems.append(f"{path} differs from upstream {ver} + patches")
+                problems.append(f"src/{path} differs from upstream {version} + patches")
         for name in ["LICENSE", "README.md"]:
-            if (VENDORED / name).read_bytes().replace(b"\r\n", b"\n") != (upstream / name).read_bytes().replace(b"\r\n", b"\n"):
+            if read(VENDORED / name) != read(upstream / name):
                 problems.append(f"{name} differs from upstream")
-        if strip_dev_sections((VENDORED / "Cargo.toml").read_text()) != strip_dev_sections((upstream / "Cargo.toml").read_text()):
+        if strip_dev_sections((VENDORED / "Cargo.toml").read_text()) != strip_dev_sections(
+            (upstream / "Cargo.toml").read_text()
+        ):
             problems.append("Cargo.toml differs from upstream beyond removed dev sections")
 
     if problems:
         print("\n".join(f"error: third_party/mlua: {p}" for p in problems))
         return 1
-    print(f"third_party/mlua matches mlua {ver} + {len(list((VENDORED / 'patches').glob('*.patch')))} patch(es)")
+    print(f"third_party/mlua matches mlua {version} + {len(list(PATCHES.glob('*.patch')))} patch(es)")
+    return 0
+
+
+def update(version: str) -> int:
+    old = vendored_version()
+    with tempfile.TemporaryDirectory() as tmp:
+        upstream = fetch(version, Path(tmp))
+        shutil.rmtree(VENDORED / "src")
+        shutil.copytree(upstream / "src", VENDORED / "src")
+        for name in ["LICENSE", "README.md"]:
+            shutil.copyfile(upstream / name, VENDORED / name)
+        manifest = strip_dev_sections((upstream / "Cargo.toml").read_text())
+        (VENDORED / "Cargo.toml").write_text(manifest + "\n", newline="\n")
+    (VENDORED / "PATCHES.md").write_text(
+        (VENDORED / "PATCHES.md").read_text().replace(f"mlua {old}", f"mlua {version}"), newline="\n"
+    )
+    print(f"third_party/mlua updated {old} -> {version}. Next:")
+    print("  1. bump `mlua` in the root Cargo.toml if the minor version changed")
+    print("  2. cargo test --workspace && cargo xtask web && cargo xtask apk")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    args = sys.argv[1:]
+    if args[:1] == ["--update"] and len(args) == 2:
+        sys.exit(update(args[1]))
+    if args:
+        sys.exit(__doc__)
+    sys.exit(check())

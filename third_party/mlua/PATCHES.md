@@ -9,6 +9,11 @@ CI (`.github/scripts/check-vendored-mlua.py`, lint job) downloads the published
 crate, applies `patches/*.patch` and fails if this directory differs in any other
 way. To change the vendored code, edit the files here *and* regenerate the patch.
 
+To upgrade: `python3 .github/scripts/check-vendored-mlua.py --update <version>`. It
+downloads that release, re-applies `patches/`, and says what to run next. If a patch
+no longer applies because upstream fixed the issue, delete the patch (and this
+directory plus the `[patch.crates-io]` entry once no patches remain).
+
 ## Patches
 
 1. `patches/0001-heap-dump-wasm32-unknown.patch`, `src/luau/heap_dump.rs`: skip the `tmpfile`-based heap dump on
