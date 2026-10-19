@@ -1,6 +1,7 @@
 //! The `.kulisa` story language: lexer, parser, compiler and VM.
 
 pub mod ast;
+mod compile;
 mod diag;
 mod lex;
 mod parse;
