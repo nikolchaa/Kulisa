@@ -1,14 +1,21 @@
 //! Android motion sensors through the NDK: the gyroscope and the accelerometer (low-pass
 //! filtered into a gravity direction).
+//!
+//! The NDK delivers sensor events through an `ALooper`. The activity's own looper would log
+//! every event as spurious, so a small thread with its own looper owns the queue and shares
+//! the latest reading.
 
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use kulisa_platform::Motion;
 use ndk_sys::{
-    ALooper_forThread, ALooper_prepare, ASensorEvent, ASensorEventQueue, ASensorEventQueue_disableSensor,
+    ALooper_pollOnce, ALooper_prepare, ASensorEvent, ASensorEventQueue_disableSensor,
     ASensorEventQueue_enableSensor, ASensorEventQueue_getEvents, ASensorEventQueue_setEventRate,
-    ASensorManager, ASensorManager_createEventQueue, ASensorManager_destroyEventQueue,
-    ASensorManager_getDefaultSensor, ASensorManager_getInstanceForPackage, ASensorRef,
+    ASensorManager_createEventQueue, ASensorManager_destroyEventQueue, ASensorManager_getDefaultSensor,
+    ASensorManager_getInstanceForPackage,
 };
 
 const TYPE_ACCELEROMETER: i32 = 1;
@@ -17,114 +24,112 @@ const TYPE_GYROSCOPE: i32 = 4;
 const PERIOD_US: i32 = 16_667;
 /// Weight of each new accelerometer reading in the gravity estimate.
 const SMOOTHING: f32 = 0.2;
+/// ALOOPER_PREPARE_ALLOW_NON_CALLBACKS.
+const PREPARE_ALLOW_NON_CALLBACKS: i32 = 1;
 
-pub struct Sensors {
-    manager: *mut ASensorManager,
-    queue: *mut ASensorEventQueue,
-    gyro: ASensorRef,
-    accel: ASensorRef,
-    motion: Motion,
-    seen: bool,
-    on: bool,
+#[derive(Default)]
+struct Shared {
+    stop: AtomicBool,
+    motion: Mutex<Option<Motion>>,
 }
 
-impl Sensors {
-    pub fn new() -> Option<Sensors> {
-        // SAFETY: plain NDK calls; the queue lives as long as this struct. The activity's main
-        // thread already has a looper (android-activity runs one), which the queue needs.
-        unsafe {
-            let manager = ASensorManager_getInstanceForPackage(c"dev.kulisa.player".as_ptr());
-            if manager.is_null() {
-                return None;
-            }
-            let mut looper = ALooper_forThread();
-            if looper.is_null() {
-                looper = ALooper_prepare(0);
-            }
-            let queue = ASensorManager_createEventQueue(manager, looper, 0x4b53, None, ptr::null_mut());
-            if queue.is_null() {
-                return None;
-            }
-            let gyro = ASensorManager_getDefaultSensor(manager, TYPE_GYROSCOPE);
-            let accel = ASensorManager_getDefaultSensor(manager, TYPE_ACCELEROMETER);
-            if gyro.is_null() && accel.is_null() {
-                ASensorManager_destroyEventQueue(manager, queue);
-                return None;
-            }
-            Some(Sensors {
-                manager,
-                queue,
-                gyro,
-                accel,
-                motion: Motion { rate: [0.0; 3], gravity: [0.0, 0.0, -9.80665] },
-                seen: false,
-                on: false,
-            })
-        }
-    }
+pub struct Sensors {
+    shared: Arc<Shared>,
+    thread: Option<JoinHandle<()>>,
+}
 
-    pub fn set(&mut self, on: bool) {
-        if on == self.on {
+fn run(shared: Arc<Shared>) {
+    // SAFETY: plain NDK calls on this thread; the queue and looper belong to it alone and
+    // are released before it returns.
+    unsafe {
+        let manager = ASensorManager_getInstanceForPackage(c"dev.kulisa.player".as_ptr());
+        if manager.is_null() {
             return;
         }
-        self.on = on;
-        // SAFETY: the queue and sensors are valid for the life of `self`.
-        unsafe {
-            for s in [self.gyro, self.accel] {
-                if s.is_null() {
-                    continue;
-                }
-                if on {
-                    ASensorEventQueue_enableSensor(self.queue, s);
-                    ASensorEventQueue_setEventRate(self.queue, s, PERIOD_US);
-                } else {
-                    ASensorEventQueue_disableSensor(self.queue, s);
-                }
-            }
+        let looper = ALooper_prepare(PREPARE_ALLOW_NON_CALLBACKS);
+        let queue = ASensorManager_createEventQueue(manager, looper, 1, None, ptr::null_mut());
+        if queue.is_null() {
+            return log::warn!("motion sensors: no event queue");
         }
-        if !on {
-            self.seen = false;
+        let sensors: Vec<_> = [TYPE_GYROSCOPE, TYPE_ACCELEROMETER]
+            .into_iter()
+            .map(|t| ASensorManager_getDefaultSensor(manager, t))
+            .filter(|s| !s.is_null())
+            .collect();
+        if sensors.is_empty() {
+            log::warn!("motion sensors: none available");
         }
-    }
-
-    /// Reads what arrived since the last call and returns the current estimate.
-    pub fn poll(&mut self) -> Option<Motion> {
-        if !self.on {
-            return None;
+        for &s in &sensors {
+            ASensorEventQueue_enableSensor(queue, s);
+            ASensorEventQueue_setEventRate(queue, s, PERIOD_US);
         }
-        // SAFETY: `events` is plain data the NDK fills; vector members are floats for these
-        // sensor types.
-        unsafe {
-            let mut events: [ASensorEvent; 16] = std::mem::zeroed();
+        let mut motion = Motion { rate: [0.0; 3], gravity: [0.0, 0.0, -9.80665] };
+        let mut events: [ASensorEvent; 16] = std::mem::zeroed();
+        while !shared.stop.load(Ordering::Relaxed) {
+            // Wait for events, waking now and then to notice a stop request.
+            ALooper_pollOnce(100, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
+            let mut seen = false;
             loop {
-                let n = ASensorEventQueue_getEvents(self.queue, events.as_mut_ptr(), events.len());
+                let n = ASensorEventQueue_getEvents(queue, events.as_mut_ptr(), events.len());
                 if n <= 0 {
                     break;
                 }
                 for e in &events[..n as usize] {
+                    // SAFETY: both sensor types report a 3-vector.
                     let v = e.__bindgen_anon_1.__bindgen_anon_1.vector.__bindgen_anon_1.v;
                     match e.type_ {
-                        TYPE_GYROSCOPE => self.motion.rate = v,
+                        TYPE_GYROSCOPE => motion.rate = v,
                         TYPE_ACCELEROMETER => {
                             // The accelerometer reads opposite to gravity (+9.8 on z when flat).
-                            for (g, a) in self.motion.gravity.iter_mut().zip(v) {
+                            for (g, a) in motion.gravity.iter_mut().zip(v) {
                                 *g += (-a - *g) * SMOOTHING;
                             }
                         }
                         _ => continue,
                     }
-                    self.seen = true;
+                    seen = true;
                 }
             }
+            if seen && let Ok(mut m) = shared.motion.lock() {
+                *m = Some(motion);
+            }
         }
-        self.seen.then_some(self.motion)
+        for &s in &sensors {
+            ASensorEventQueue_disableSensor(queue, s);
+        }
+        ASensorManager_destroyEventQueue(manager, queue);
+    }
+}
+
+impl Sensors {
+    pub fn new() -> Option<Sensors> {
+        Some(Sensors { shared: Arc::new(Shared::default()), thread: None })
+    }
+
+    pub fn set(&mut self, on: bool) {
+        if on && self.thread.is_none() {
+            self.shared.stop.store(false, Ordering::Relaxed);
+            let shared = self.shared.clone();
+            self.thread =
+                std::thread::Builder::new().name("kulisa-sensors".into()).spawn(move || run(shared)).ok();
+        } else if !on && let Some(t) = self.thread.take() {
+            self.shared.stop.store(true, Ordering::Relaxed);
+            let _ = t.join();
+            if let Ok(mut m) = self.shared.motion.lock() {
+                *m = None;
+            }
+        }
+    }
+
+    /// The latest reading, once the sensors have produced one.
+    pub fn poll(&mut self) -> Option<Motion> {
+        self.thread.as_ref()?;
+        self.shared.motion.lock().ok().and_then(|m| *m)
     }
 }
 
 impl Drop for Sensors {
     fn drop(&mut self) {
         self.set(false);
-        // SAFETY: the queue was made by this manager and is not used again.
-        unsafe { ASensorManager_destroyEventQueue(self.manager, self.queue) };
     }
 }

@@ -182,7 +182,7 @@ Text markup: `{b}`, `{i}`, `{color=#hex}`, `{size=N}`, `{font=Name}`, `{wave}`, 
 
 `node:tween(props, opts)` animates `x`, `y`, `rotation`, `scale`, `scale_x`, `scale_y`,
 `opacity` and `tint` to the given values. `opts` is a duration in seconds or
-`{ time, ease, delay, repeat, yoyo }`; `repeat = -1` repeats forever. Eases: `linear`,
+`{ time, ease, delay, repeat, yoyo }`; `repeat = -1` repeats forever (`repeat` is a Luau keyword, so write `["repeat"] = -1`). Eases: `linear`,
 `in_quad`, `out_quad`, `in_out_quad`, `in_cubic`, `out_cubic`, `in_out_cubic`, `in_sine`,
 `out_sine`, `in_out_sine`, `in_back`, `out_back`, `in_out_back`, `out_elastic`,
 `out_bounce`. A new tween takes over the properties it animates from older ones. The
