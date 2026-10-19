@@ -4,6 +4,30 @@ Living document. Architecture, crate boundaries and the decisions behind them.
 When a decision changes, update the relevant section and add a line to the
 [decision log](#13-decision-log).
 
+## Milestones
+
+Kulisa is built in milestones M0 to M10; "M3" etc. elsewhere in this document
+refer to this table. Each milestone ends with all six targets compiling in CI,
+tests passing and this document updated.
+
+| | Milestone | Scope | Status |
+|---|---|---|---|
+| M0 | Platform spike | Workspace, CI for all six targets, wgpu window with a textured quad, Luau "hello" on every target (incl. web and iOS) | Done |
+| M1 | Renderer and scene graph | Batching, sprites, layers, camera, parallax, render targets, custom WGSL shaders, post-fx chains (§4) | Done |
+| M2 | Text and audio | Markup, cosmic-text shaping, glyph atlas, typewriter, per-glyph effects, ruby; kira channels (§5, §6) | Done |
+| M3 | Story language and VM | `.kulisa` parser and compiler, bytecode VM, clear errors, rollback, update-safe saves, platform storage, portable stage (§7, §10) | Done |
+| M4 | Luau API | The `kulisa` API over the whole engine, sandbox, tasks, registered state, save slots and migrations; the player runs game folders/`.kpak`s; the smoke scene became `demos/smoke` (§8, [API.md](API.md)) | Done |
+| M5 | UI system and classic-vn template | Reactive declarative screens (`kulisa-ui`), layout, widgets, nine-slice; `templates/classic-vn` (textbox, namebox, choices, history, save/load with thumbnails, settings, quick menu, touch gestures); transitions; display profiles, aspect clamp, anchors and orientation (§3, §9) | Next |
+| M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing, drag and drop with snap zones, multi-touch, gamepad, gyro, haptics, sliders, text input | Planned |
+| M7 | PC unwrap demo | `demos/pc-unwrap`: peeling and applying plastic film (curling mesh, squeegee, bubbles, glossy plastic shading), public API only | Planned |
+| M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT) | Planned |
+| M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`[display]` etc.), quality tiers | Planned |
+| M10 | Ren'Py importer | Basic `.rpy` import: labels, dialogue, menus, jumps, scene/show | Planned |
+
+Not yet placed: story-language animation (an ATL equivalent over tweens and
+timelines), layered sprites, sprite sheets, voice auto-advance. Assign them when
+the milestone that needs them starts.
+
 ## 1. Principles
 
 1. **The engine has no look.** Core provides rendering, text, input, audio,
