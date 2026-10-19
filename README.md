@@ -2,7 +2,7 @@
   <img src="docs/brand/logo.svg" width="96" alt="Kulisa logo">
 </p>
 
-<h1 align="center">kulisa</h1>
+<h1 align="center">Kulisa</h1>
 
 <p align="center">A fast, fully customizable visual novel and narrative game engine, written in Rust.</p>
 

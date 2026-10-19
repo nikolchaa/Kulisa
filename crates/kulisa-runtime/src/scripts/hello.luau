@@ -1,5 +1,5 @@
 -- M0 smoke test: proves Luau runs on every target by driving the quad each frame.
-kulisa.log("hello from " .. _VERSION .. " on kulisa " .. kulisa.version)
+kulisa.log("hello from " .. _VERSION .. " on Kulisa " .. kulisa.version)
 
 local M = {}
 

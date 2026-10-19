@@ -362,4 +362,5 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | Static libc++ on Android (`c++_static` + `c++abi`) so APKs need no extra `.so`. |
 | 2026-10-19 | `cargo xtask` for engine-developer build steps (web, APK, iOS app). |
 | 2026-10-19 | Minimum OS: iOS 15, macOS 11 (Rust's iOS 10 default fails to link Luau's C++ with current Xcode), Android API 26. |
+| 2026-10-19 | The name is written **Kulisa** in prose, titles and UI; code identifiers (crates, CLI, `.kulisa`, the `kulisa` Luau global) stay lowercase per Rust and file-extension conventions. |
 | 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |

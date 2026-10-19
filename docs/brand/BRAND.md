@@ -26,7 +26,9 @@ One accent only. Everything else is Ink, Paper and Haze.
 
 - UI and docs: Inter (fallback: system sans).
 - Code: JetBrains Mono (fallback: system mono).
-- The wordmark is lowercase `kulisa`, Inter SemiBold, tracking -2%.
+- The wordmark is `Kulisa` (capital K), Inter SemiBold, tracking -2%.
+- Prose, titles and UI always write Kulisa. Code identifiers (crates, CLI,
+  `.kulisa` files, the `kulisa` Luau global) stay lowercase by convention.
 
 ## Voice
 
