@@ -295,7 +295,21 @@ impl Compiler<'_> {
                 rest = r;
                 continue;
             }
-            let Some(end) = rest.find(']') else {
+            // The matching `]`, so indexing like `[bag[2]]` works.
+            let mut depth = 0usize;
+            let end = rest.char_indices().find_map(|(i, c)| match c {
+                '[' => {
+                    depth += 1;
+                    None
+                }
+                ']' if depth == 0 => Some(i),
+                ']' => {
+                    depth -= 1;
+                    None
+                }
+                _ => None,
+            });
+            let Some(end) = end else {
                 self.error(loc, "`[` starts an interpolation that is never closed with `]` (write `[[` for a literal bracket)");
                 return parts;
             };
@@ -455,15 +469,17 @@ mod tests {
 
     #[test]
     fn interpolates_text() {
-        let p = compile_one("label s:\n    \"Trust: [trust]. [[not this]] [ a.b ]!\"\n");
+        let p = compile_one("label s:\n    \"Trust: [trust]. [[not this]] [ a.b ]![bag[2]]\"\n");
         let Op::Say(s) = &p.labels["s"].ops[0] else { panic!() };
-        assert_eq!(s.text.len(), 5);
+        assert_eq!(s.text.len(), 6);
         assert_eq!(s.text[0], TextPart::Lit("Trust: ".into()));
         let TextPart::Expr(id) = s.text[1] else { panic!() };
         assert_eq!(p.chunk(id).source, "trust");
         assert_eq!(s.text[2], TextPart::Lit(". [not this]] ".into()));
         let TextPart::Expr(id) = s.text[3] else { panic!() };
         assert_eq!(p.chunk(id).source, "a.b");
+        let TextPart::Expr(id) = s.text[5] else { panic!() };
+        assert_eq!(p.chunk(id).source, "bag[2]", "brackets nest");
     }
 
     #[test]
