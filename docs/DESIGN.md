@@ -44,7 +44,7 @@ Building blocks we depend on: `winit`, `wgpu`, `cosmic-text`, `kira`, `mlua`
 | `kulisa-render` | wgpu device, batcher, textures/atlases, meshes, shaders, render targets, post-fx | `wgpu`, `image`, `kulisa-core` |
 | `kulisa-text` | Markup, cosmic-text shaping, glyph cache in the sprite atlas, typewriter, effects, ruby | `cosmic-text`, `kulisa-core`, `kulisa-render` |
 | `kulisa-audio` | Channels (music/sound/voice/custom), crossfades, per-channel volume, placeholder synthesis | `kira` |
-| `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM | `kulisa-core` |
+| `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM with rollback and update-safe saves | `kulisa-core` |
 | `kulisa-lua` | Luau VM, sandbox, the `kulisa.*` API binding | `mlua`, engine crates |
 | `kulisa-ui` | Reactive declarative screens, layout, widgets | `kulisa-core`, `kulisa-text` |
 | `kulisa-runtime` | Frame loop, event dispatch, live reload, wiring | all of the above |
@@ -264,66 +264,91 @@ Implemented in M2 (`kulisa-audio`) on kira.
 
 ## 7. Story language and VM
 
+Implemented in M3 (`kulisa-story`; Luau host in `kulisa-lua`).
+
 ### Language
 
 ```
-define mila = Character("Mila", color="#e8a0bf")
+define mila = Character("Mila", { color = "#e8a0bf" })
+default trust = 0
 
 label start:
     scene cafe_night with fade
     show mila smile at left
-    mila "You actually came."
+    mila "You actually came. Trust: [trust]."
     menu:
+        mila "So?"
         "Of course.":
             $ trust += 1
             jump cafe_talk
-        "Got lost on the way.":
-            jump lost_route
+        "Got lost on the way." if trust < 2:
+            call lost_route
 ```
 
-Indentation-based, Ren'Py-like. Statements: `label`, `jump`, `call`/`return`,
-`menu` (with optional `if` guards per choice), `if/elif/else`, `define`,
-`default`, `$` (inline Luau), `lua:` blocks, `scene`, `show`, `hide`,
-`with <transition>`, `at <transform>`, `play/stop/queue music|sound|voice|<channel>`,
-`pause`, and say lines (`who "text"` or narration `"text"`).
+Indentation-based (spaces only), Ren'Py-like. Top level: `label name:`,
+`define name = <luau>` (constant), `default name = <luau>` (saved story
+variable), `lua:` (setup code). Inside labels: say lines (`who "text"` or
+narration `"text"`), `menu:` (optional caption line, choices with optional
+`if` guards), `if`/`elif`/`else`, `jump`, `call`/`return`, `$ <luau>`, `lua:`
+blocks, `scene [image...] [with t]`, `show image... [at position] [with t]`,
+`hide tag [with t]`, `with t`, `play <channel> "file" [fadein s] [loop|noloop]`,
+`stop <channel> [fadeout s]`, `pause [s]`.
+
+- Text is the text system's markup (`{b}`, `{wave}`, `{ruby=…}`, …) plus
+  `[expression]` interpolation; `[[` is a literal bracket. Brackets nest
+  (`[bag[2]]`).
+- Full-line comments start with `#`. A `#` inside a statement is never a
+  comment (it is Luau's length operator).
+- Statement keywords are reserved and cannot be character names.
+- Falling off the end of a label returns to the caller, or ends the story.
+- `music` loops by default; other channels play once unless `loop` is given.
 
 ### Pipeline
 
-`lexer → parser → AST → resolver → compiler → bytecode`.
+`lines → parser → AST → compiler (resolve + codegen) → Program`.
 
-- The lexer tracks file, line and column for every token. Errors carry a span
-  and a plain-English message, rendered with the offending line and a caret.
-  The parser recovers at statement boundaries so one run reports many errors.
-- The resolver checks labels, duplicate definitions and unknown characters
-  before compiling.
-- Expressions and `$`/`lua:` code are not parsed by us: they become Luau chunks
-  compiled once at load time and referenced by chunk ID.
+- Every error has file, line, column and a plain-English message, rendered with
+  the source line and a caret. The parser recovers at statement boundaries, so
+  one run reports every error.
+- The compiler resolves labels and characters across all files, with
+  "did you mean" suggestions, and reports duplicate labels and names with the
+  location of the first definition.
+- Luau parts (conditions, `$` lines, `lua:` blocks, `define`/`default` values,
+  `[interpolation]`, character references) become **chunks** compiled by the
+  host once at load time; Luau syntax errors are reported at the story's file
+  and line.
 
-### Bytecode
+### Bytecode and VM
 
-Compact ops, one stream per label:
+One flat op list per label: `Say`, `Menu` (choices with guard chunk and target),
+`Exec`, `JumpIfNot`, `Goto`, `Jump`, `Call`, `Return`, `Scene`, `Show`, `Hide`,
+`With`, `Play`, `Stop`, `Pause`. Menus and `if` chains compile to jumps.
 
-```
-Say { who, text }        Menu { choices: [(text, guard_chunk?, target)] }
-Scene/Show/Hide { .. }   With { transition }       Play/Stop { channel, .. }
-Pause { secs? }          Jump { label }            Call { label } / Return
-JumpIfNot { chunk, off } Lua { chunk }             Checkpoint
-```
+The VM is a call stack of `(label, pc)` frames. `next()` runs until something
+the runtime must handle: stage and audio events (`Scene`, `Show`, `Hide`,
+`With`, `Play`, `Stop`) are returned without blocking; `Say`, `Menu`, `Pause`
+and `End` block. Menus continue with `choose(index)`; choices whose guard is
+false are left out.
 
-The VM is a small state machine: a call stack of `(label, pc)` frames. It runs
-until an op **blocks** and returns an event to the runtime. The engine never
-draws dialogue itself: `Say` and `Menu` events call handlers that the game
-registers from Luau (`kulisa.story.on_say`, `kulisa.story.on_menu`). The
-classic-vn template registers handlers that drive its textbox and choice
-screen. No handler is an error, not a fallback UI.
+The VM never runs Luau itself: it calls a `Host` (`define`, `set_default`,
+`eval`, `exec`, `snapshot`, `restore`). `kulisa-lua::StoryHost` keeps two
+layers: **story variables** (saved; written by `$` lines and label-level
+`lua:` blocks) and **constants** (not saved; `define` and top-level `lua:`
+helpers). Lookups chain variables, constants, globals. Snapshots accept only
+plain data and name the variable that breaks the rule.
+
+The engine never draws dialogue itself. Until Luau handlers (M4) and the
+classic-vn template (M5) exist, the runtime's smoke scene plays that part.
+Transitions (`with`) are parsed and reported but not animated yet (M5).
 
 ### Positions that survive updates
 
-A story position is saved as `(label, statement_index, statement_hash)`, not as
-a raw program counter. On load, if the hash at that index still matches, resume
-there; otherwise resume at the nearest earlier statement in that label whose
-hash matches, falling back to the label start. This keeps saves working when
-writers edit scripts.
+A frame is saved as `(label, statement index, statement hash, resume_after)`.
+Statement hashes are FNV-1a of the statement's first line. On load: if the hash
+at the saved index matches, resume there; otherwise use the nearest statement in
+the label with the same hash; otherwise the label start. Moves are reported as
+warnings. Call frames resume after their `call`. `default`s added in an update
+fill in for old saves.
 
 ## 8. Luau
 
@@ -367,43 +392,57 @@ through the same batcher. Templates are built only from this system.
 
 ## 10. Saves and rollback
 
+Implemented in M3 (`kulisa-core::{Value, SaveFile}`, `kulisa-story::Vm`,
+`kulisa-platform::Storage`).
+
 ### State model
 
-Everything that must survive save/rollback is **plain data** in a `Value` tree
+Everything that survives save and rollback is **plain data** in a `Value` tree
 (`nil, bool, int, float, string, bytes, list, map`). Never live objects:
 
-- VM call stack (as update-safe positions, see §7).
+- The VM call stack, as update-safe positions (§7).
 - Story variables (a Luau table restricted to plain data).
-- **Scene description**: what is shown, where, with which transforms; music
-  per channel and position. Not GPU objects; the scene is rebuilt from it.
-- Registered Luau state: `kulisa.state.register(name, { save = fn, load = fn })`
-  or the shortcut `kulisa.state.table(name, defaults)` which tracks a plain table.
+- **Stage**: the scene image, shown images in draw order with their *named*
+  position (`at left`), and looping tracks per channel. The runtime rebuilds
+  visuals and music from it; named positions keep saves portable across display
+  profiles (see Coordinate system).
+- Registered Luau state (`kulisa.state.*`) arrives with the Luau API (M4).
 
 ### Rollback
 
-At every blocking interaction (`Say`, `Menu`, `Pause`) the VM records a
-**checkpoint**: the state above, encoded. Checkpoints form a ring buffer with
-configurable depth (default 100). Story variables and registered state are
-diffed against the previous checkpoint and only changes are stored, so deep
-history is cheap. Rolling back restores a checkpoint and rebuilds the scene
-from its description; rolling forward replays recorded menu choices.
+On arriving at every `Say`, `Menu` and `Pause`, the VM records a **checkpoint**:
+frames, stage and a snapshot of story variables. Checkpoints form a bounded
+history (default 100). `rollback()` restores the previous checkpoint;
+`roll_forward()` restores the next one again. Continuing exactly along the
+recorded path keeps the redo list; any divergence (e.g. a different menu choice)
+drops it. After either, the runtime rebuilds the stage, and `next()` shows that
+line again. Snapshots are full copies for now; diffing is a later optimization
+if story state grows.
 
 ### Save format
 
 ```
-"KSAV" | format_version u16 | header len u32 | header | body
-header: game id, game version, timestamp, slot name, playtime, thumbnail (PNG)
-body:   self-describing tagged Value tree (current state + optional rollback log)
+"KSAV" | format_version u16 LE | header Value | body Value
+header: game_id, game_version, save_version, timestamp, slot, playtime, title, thumbnail (PNG)
+body:   the VM's save: frames, stage, story variables
 ```
 
-- Self-describing encoding (type tag + length per value, string-keyed maps), so
-  unknown fields are skipped and missing fields fall back to defaults. No
-  type-name serialization, no pickling, no code in saves.
-- **Migrations**: games declare a save version and register
-  `kulisa.save.migrate(from, fn)` hooks that transform the `Value` tree.
-- Engine format changes bump `format_version` with Rust-side migrations.
-- Platform-correct paths from `kulisa-platform` (AppData, XDG, Application
-  Support, app sandbox, IndexedDB/OPFS on web).
+- `Value` encoding: one tag byte per value, LEB128 lengths, zigzag ints,
+  string-keyed ordered maps. Decoding checks lengths and nesting depth, so
+  damaged or hostile files fail cleanly. No type names, no code in saves.
+- The header decodes on its own, so slot lists don't load bodies.
+- Unknown fields are ignored and missing ones default.
+- **Migrations**: games set `save_version` and register steps (`from` to
+  `from + 1`) that transform the body; saves from a newer game are refused with
+  a clear message. The Luau side (`kulisa.save.migrate`) arrives with M4.
+- Engine format changes bump `format_version`; files from a newer Kulisa are
+  refused.
+- **Storage** (`kulisa_platform::Storage`): atomic file writes under
+  `%APPDATA%`, `~/Library/Application Support` or `$XDG_DATA_HOME` (desktop and
+  iOS), the app's internal storage on Android, base64 in `localStorage` on the
+  web. Names are restricted to `[A-Za-z0-9_-]` and exclude Windows device names.
+- Thumbnails are supported by the format; capturing them arrives with the
+  save/load screens (M5).
 
 ## 11. Platforms and builds
 
@@ -489,4 +528,7 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | M2: glyphs go into the sprite atlas (RGBA) instead of a separate R8 glyph atlas: text batches with sprites and there is one texture path. Costs 4x memory per glyph; revisit if CJK-heavy games hit atlas limits. |
 | 2026-10-19 | M2: audio channels are kira sub-tracks; music streams on native but decodes up front on web (no threads). Web audio starts on first user gesture. |
 | 2026-10-19 | Display profiles: one design by default; opt-in `phone`/`tablet`/`desktop` overrides, aspect clamp, orientation lock. Placed in M3 (portable saves), M5 (clamp, anchors, profiles, orientation), M8 (demo), M9 (config). |
+| 2026-10-19 | M3: the VM talks to Luau only through a `Host` trait; tests use a fake host, so the VM is tested without Luau. |
+| 2026-10-19 | M3: story variables and constants are separate Luau tables; `define` and top-level `lua:` write constants, so helper functions never end up in saves. |
+| 2026-10-19 | M3: full-snapshot checkpoints instead of diffs, until story state is large enough to matter. |
 | 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |
