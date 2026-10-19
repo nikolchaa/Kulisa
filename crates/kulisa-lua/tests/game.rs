@@ -701,6 +701,132 @@ fn timers_run_in_game_time() {
     assert!(err.contains("the delay must be a number of seconds"), "{err}");
 }
 
+const NAV_MENU: &str = r##"
+    kulisa.display(64, 64, "fit")
+    log = {}
+    local ui = kulisa.ui
+    local function note(what) return function() table.insert(log, what) end end
+    ui.screen("menu", function()
+        return ui.column{ gap = 4,
+            ui.button{ id = "play", width = 40, height = 10, on_click = note("play"), background = "#222222", hover_background = "#ff0000" },
+            ui.button{ id = "load", width = 40, height = 10, on_click = note("load"), background = "#222222", hover_background = "#ff0000" },
+            ui.slider{ id = "vol", width = 40, height = 8, value = 0.5, step = 0.25, on_change = function(v) table.insert(log, "vol" .. v) end },
+        }
+    end, { nav = true, area = "screen" })
+    ui.show("menu")
+    kulisa.on("key", function(k) table.insert(log, "key:" .. k) end)
+    kulisa.on("pad_press", function(b, pad) table.insert(log, "pad:" .. b) end)
+"##;
+
+#[test]
+fn keyboard_and_gamepad_navigate_ui_screens() {
+    let mut g = game!("main.luau" => NAV_MENU);
+    g.frame(0.016);
+    let focus =
+        |g: &Game| -> Option<String> { g.eval("t", "return (select(2, kulisa.ui.focused()))").unwrap() };
+    let log = |g: &Game| -> Vec<String> { g.eval("t", "return log").unwrap() };
+    assert_eq!(focus(&g), None);
+
+    // Arrows move focus and never reach `key`; letters still do.
+    g.key("down", true);
+    g.key("down", false);
+    assert_eq!(focus(&g).as_deref(), Some("play"));
+    g.key("down", true);
+    g.key("down", false);
+    assert_eq!(focus(&g).as_deref(), Some("load"));
+    g.key("x", true);
+    g.key("x", false);
+    assert_eq!(log(&g), ["key:x"]);
+
+    // Enter clicks the focused button, and it does not reach `key`.
+    g.key("enter", true);
+    g.key("enter", false);
+    assert_eq!(log(&g), ["key:x", "load"]);
+
+    // Down to the slider; left and right adjust it by its step instead of moving.
+    g.key("down", true);
+    g.key("down", false);
+    assert_eq!(focus(&g).as_deref(), Some("vol"));
+    g.key("right", true);
+    g.key("right", false);
+    g.key("left", true);
+    g.key("left", false);
+    g.key("left", true);
+    g.key("left", false);
+    assert_eq!(&log(&g)[2..], ["vol0.75", "vol0.5", "vol0.25"]);
+
+    // The focused button is drawn hovered: red.
+    g.key("up", true);
+    g.key("up", false);
+    g.frame(0.016);
+    g.render();
+    let img = g.renderer().read_pixels().unwrap();
+    // Column of 10px buttons with a 4px gap, centered at the top left of the screen area.
+    let at = |x: u32, y: u32| &img.pixels[((y * img.width + x) * 4) as usize..][..3];
+    assert_eq!(at(2, 16), [255, 0, 0], "the focused (second) button looks hovered");
+    assert_ne!(at(2, 2), [255, 0, 0]);
+
+    // Moving the mouse takes the focus away; the next arrow starts over at the first widget.
+    g.pointer_moved(Some(v2(60.0, 60.0)));
+    assert_eq!(focus(&g), None);
+    g.key("right", true);
+    g.key("right", false);
+    assert_eq!(focus(&g).as_deref(), Some("play"));
+}
+
+#[test]
+fn gamepads_press_axes_repeat_and_navigate() {
+    let mut g = game!("main.luau" => NAV_MENU);
+    g.frame(0.016);
+    let focus =
+        |g: &Game| -> Option<String> { g.eval("t", "return (select(2, kulisa.ui.focused()))").unwrap() };
+    let log = |g: &Game| -> Vec<String> { g.eval("t", "return log").unwrap() };
+
+    g.gamepad_connected(7, Some("Test Pad"));
+    assert_eq!(
+        g.eval::<(f32, String)>("t", "local p = kulisa.input.pads()[1] return p.id, p.name").unwrap(),
+        (7.0, "Test Pad".into())
+    );
+    // D-pad down focuses, A clicks; B is the game's.
+    g.gamepad_button(7, "down", true);
+    g.gamepad_button(7, "down", false);
+    assert_eq!(focus(&g).as_deref(), Some("play"));
+    g.gamepad_button(7, "a", true);
+    g.gamepad_button(7, "a", false);
+    g.gamepad_button(7, "b", true);
+    assert!(g.eval::<bool>("t", "return kulisa.input.pad_down('b') and kulisa.input.pad_down('b', 7) and not kulisa.input.pad_down('a')").unwrap());
+    g.gamepad_button(7, "b", false);
+    assert_eq!(log(&g), ["play", "pad:b"]);
+
+    // Holding the left stick down repeats after a delay.
+    g.gamepad_axis(7, "ly", 0.9);
+    assert_eq!(focus(&g).as_deref(), Some("load"));
+    for _ in 0..60 {
+        g.frame(0.016); // about one second: well past the delay
+    }
+    assert_eq!(focus(&g).as_deref(), Some("vol"), "repeats stop at the last widget");
+    g.gamepad_axis(7, "ly", 0.0);
+    assert_eq!(g.eval::<f32>("t", "return kulisa.input.pad_axis('ly')").unwrap(), 0.0);
+
+    // Without a navigable screen, directions and A reach the game.
+    g.eval::<()>("t", "kulisa.ui.hide('menu')").unwrap();
+    g.frame(0.016);
+    g.eval::<()>("t", "log = {}").unwrap();
+    g.gamepad_button(7, "down", true);
+    g.gamepad_button(7, "a", true);
+    assert_eq!(log(&g), ["pad:down", "pad:a"]);
+
+    // A screen that opens after the player used the d-pad starts focused.
+    g.eval::<()>("t", "kulisa.ui.show('menu')").unwrap();
+    g.frame(0.016);
+    assert_eq!(focus(&g).as_deref(), Some("play"));
+
+    let err = g.eval::<()>("t", "kulisa.input.pad_down('select')").unwrap_err();
+    assert!(err.contains("unknown gamepad button `select`"), "{err}");
+    g.gamepad_connected(7, None);
+    assert_eq!(g.eval::<f32>("t", "return #kulisa.input.pads()").unwrap(), 0.0);
+}
+
 const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
 }";

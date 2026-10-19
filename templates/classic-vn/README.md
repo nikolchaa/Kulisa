@@ -35,6 +35,12 @@ cargo xtask apk --game templates/classic-vn
   rollback past a point with `$ kulisa.story.block_rollback()`.
 - **Window auto**: the text box hides for `scene` and comes back after the transition, and
   lines wait for transitions, as with Ren'Py's `with`.
+- **Keyboard and gamepad only**: arrow keys or the d-pad/left stick move through menus and
+  choices, Enter or A picks (screens opt in with `nav = true`; modal screens always do). In the
+  story: A advances, B or Start opens the game menu, X toggles auto, Y opens the history, LB
+  rolls back, RB toggles skip (hold RT to skip), Back/Select hides the interface. In the game
+  menu LB and RB change section and B closes it; Page Up/Down and the right stick scroll the
+  history.
 - Hide the interface with H or a middle click; open the game menu with Escape, a right
   click, a long press or Android's back button. Swipe down for the history.
 

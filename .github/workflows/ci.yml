@@ -28,8 +28,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      # ALSA headers for cpal (kulisa-audio).
-      - run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev
+      # ALSA headers for cpal (kulisa-audio), udev headers for gilrs (gamepads).
+      - run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev
       - run: cargo fmt --all --check 2>&1 | tee -a ci.log
       - run: python3 .github/scripts/check-vendored-mlua.py 2>&1 | tee -a ci.log
       - run: cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee -a ci.log
@@ -55,7 +55,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers libasound2-dev
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers libasound2-dev libudev-dev
       - run: cargo test --workspace 2>&1 | tee -a ci.log
       - run: cargo build -p kulisa-player 2>&1 | tee -a ci.log
       - if: failure()

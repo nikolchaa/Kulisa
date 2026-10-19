@@ -9,7 +9,7 @@ local c = config.colors
 
 ui.screen("main_menu", function()
     local nav = {
-        style.button("Start", actions.start, { size = style.size(40), id = "start" }),
+        style.button("Start", actions.start, { size = style.size(40), id = "start", autofocus = true }),
         style.button("Load", function()
             actions.open_menu("load")
         end, { size = style.size(40) }),

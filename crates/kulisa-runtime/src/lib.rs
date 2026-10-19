@@ -3,6 +3,7 @@
 
 #[cfg(target_os = "android")]
 mod android;
+mod gamepad;
 
 use std::sync::Arc;
 
@@ -36,6 +37,7 @@ struct App {
     renderer: Option<Renderer>,
     creating_renderer: bool,
     game: Option<Game>,
+    pads: gamepad::Pads,
     last_frame: Instant,
     #[cfg(target_os = "android")]
     android: AndroidApp,
@@ -121,6 +123,7 @@ impl App {
             renderer: None,
             creating_renderer: false,
             game: None,
+            pads: gamepad::Pads::new(),
             last_frame: Instant::now(),
             #[cfg(target_os = "android")]
             android,
@@ -392,6 +395,7 @@ impl App {
             }
             WindowEvent::RedrawRequested => {
                 let Some(game) = &mut self.game else { return };
+                self.pads.poll(game);
                 let now = Instant::now();
                 game.frame((now - self.last_frame).as_secs_f32());
                 self.last_frame = now;

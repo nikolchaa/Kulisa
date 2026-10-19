@@ -191,7 +191,7 @@ ui.screen("game_menu", function()
     local section = state.menu() or "save"
     local nav = {}
     local function item(label: string, f, selected: boolean?)
-        table.insert(nav, style.button(label, f, { selected = selected, size = style.size(32) }))
+        table.insert(nav, style.button(label, f, { selected = selected, autofocus = selected, size = style.size(32) }))
     end
     if state.started then
         item("History", function() actions.open_menu("history") end, section == "history")

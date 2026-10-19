@@ -138,6 +138,53 @@ fn classic_vn_plays() {
     g.eval::<()>("t", "require('game/actions').main_menu()").unwrap();
     frames(&mut g, 2);
     assert!(eval::<bool>(&g, "kulisa.ui.shown('main_menu') and not kulisa.ui.shown('say')"));
+    // Keyboard and gamepad alone. The player has used the keys above, so the main menu opened
+    // with Start focused; Enter begins, then the pad plays on.
+    frames(&mut g, 2);
+    assert_eq!(eval::<String>(&g, "select(2, kulisa.ui.focused())"), "start");
+    g.key("enter", true);
+    g.key("enter", false);
+    frames(&mut g, 40);
+    assert_eq!(line(&g), "The light in the window had gone from gold to violet.");
+    let press = |g: &mut Game, button: &str| {
+        g.gamepad_button(0, button, true);
+        g.gamepad_button(0, button, false);
+    };
+    // A finishes the line, then moves on; at the menu it picks instead, so stop when it shows.
+    for _ in 0..12 {
+        frames(&mut g, 30);
+        if eval::<bool>(&g, "kulisa.ui.shown('choice')") {
+            break;
+        }
+        press(&mut g, "a");
+    }
+    frames(&mut g, 30);
+    assert!(eval::<bool>(&g, "kulisa.ui.shown('choice')"), "at the menu: {}", line(&g));
+    // The first choice is focused already (the player has used the arrows); down, then A.
+    assert_eq!(eval::<String>(&g, "(select(1, kulisa.ui.focused()))"), "choice");
+    press(&mut g, "down");
+    press(&mut g, "a");
+    frames(&mut g, 30);
+    assert_eq!(line(&g), "Maybe later. I want to look around first.");
+    // Y opens the history, RB changes section, B closes; LB rolls back to the menu.
+    press(&mut g, "y");
+    frames(&mut g, 2);
+    assert_eq!(eval::<String>(&g, "require('game/state').menu:peek()"), "history");
+    press(&mut g, "rb");
+    frames(&mut g, 2);
+    assert_eq!(eval::<String>(&g, "require('game/state').menu:peek()"), "save");
+    press(&mut g, "b");
+    frames(&mut g, 2);
+    assert!(!eval::<bool>(&g, "kulisa.ui.shown('game_menu')"));
+    press(&mut g, "lb");
+    frames(&mut g, 5);
+    assert!(eval::<bool>(&g, "kulisa.ui.shown('choice')"));
+    // Moving the mouse hands control back to the pointer.
+    g.pointer_moved(Some(Vec2::new(5.0, 5.0)));
+    g.pointer_moved(Some(Vec2::new(300.0, 300.0)));
+    assert_eq!(eval::<String>(&g, "tostring(kulisa.ui.focused())"), "nil");
+    g.eval::<()>("t", "require('game/actions').main_menu()").unwrap();
+    frames(&mut g, 2);
     let errors: Vec<String> = g.eval("t", "return errors").unwrap();
     assert!(errors.is_empty(), "{errors:?}");
     drop(g);

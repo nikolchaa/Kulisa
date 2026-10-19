@@ -48,6 +48,11 @@ const EVENTS: &[&str] = &[
     "swipe",
     "pinch",
     "rotate",
+    "pad_press",
+    "pad_release",
+    "pad_axis",
+    "pad_connect",
+    "pad_disconnect",
     "display",
 ];
 
@@ -1776,6 +1781,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(out)
         })?,
     )?;
+    super::pad::install(lua, &input)?;
     k.set("input", input)?;
     super::interact::install(lua, &k)?;
 

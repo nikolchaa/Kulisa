@@ -37,6 +37,7 @@ pub(crate) struct ScreenDef {
     build: Function,
     z: i32,
     modal: bool,
+    nav: bool,
     area: Area,
 }
 
@@ -369,6 +370,7 @@ impl Convert<'_> {
         e.disabled_look = self.look(t, "disabled_")?;
         e.selected = self.get(t, "selected")?.as_boolean().unwrap_or(false);
         e.disabled = self.get(t, "disabled")?.as_boolean().unwrap_or(false);
+        e.autofocus = self.get(t, "autofocus")?.as_boolean().unwrap_or(false);
         let callback = |this: &mut Self, key: &str| -> mlua::Result<Option<u64>> {
             match t.raw_get::<LuaValue>(key)? {
                 LuaValue::Nil => Ok(None),
@@ -704,7 +706,7 @@ fn sync(
     let group = ensure(st, &mut w.host.group, parent, Node::group);
     let state = if w.el.button {
         WState {
-            hover: w.state.hover,
+            hover: w.state.hover || w.state.focus,
             pressed: w.state.pressed,
             selected: w.el.selected,
             disabled: w.el.disabled,
@@ -905,18 +907,23 @@ pub(crate) fn api(lua: &Lua) -> mlua::Result<Table> {
     t.set(
         "screen",
         lua.create_function(|lua, (name, build, opts): (String, Function, Option<Table>)| {
-            let (z, modal, a) = match &opts {
-                Some(o) => (
-                    o.get::<Option<i32>>("z")?.unwrap_or(100),
-                    o.get::<Option<bool>>("modal")?.unwrap_or(false),
-                    area(&o.get::<LuaValue>("area")?)?,
-                ),
-                None => (100, false, Area::Safe),
+            let (z, modal, nav, a) = match &opts {
+                Some(o) => {
+                    let modal = o.get::<Option<bool>>("modal")?.unwrap_or(false);
+                    (
+                        o.get::<Option<i32>>("z")?.unwrap_or(100),
+                        modal,
+                        o.get::<Option<bool>>("nav")?.unwrap_or(modal),
+                        area(&o.get::<LuaValue>("area")?)?,
+                    )
+                }
+                None => (100, false, false, Area::Safe),
             };
             with(lua, |st| {
-                st.ui.defs.insert(name.clone(), ScreenDef { build, z, modal, area: a });
+                st.ui.defs.insert(name.clone(), ScreenDef { build, z, modal, nav, area: a });
                 if st.ui.ui.screen(&name).is_some() {
                     st.ui.ui.show(&name, z, modal, a);
+                    st.ui.ui.set_nav(&name, nav);
                     st.ui.deps.mark(&name);
                 }
                 Ok(())
@@ -933,8 +940,9 @@ pub(crate) fn api(lua: &Lua) -> mlua::Result<Table> {
                         "there is no screen `{name}`; define it with kulisa.ui.screen"
                     ))
                 })?;
-                let (z, modal, a) = (def.z, def.modal, def.area);
+                let (z, modal, nav, a) = (def.z, def.modal, def.nav, def.area);
                 st.ui.ui.show(&name, z, modal, a);
+                st.ui.ui.set_nav(&name, nav);
                 if !st.ui.layers.contains_key(&name) {
                     let mut layer = Node::layer(0.0);
                     layer.z = z;
@@ -985,6 +993,37 @@ pub(crate) fn api(lua: &Lua) -> mlua::Result<Table> {
         "find",
         lua.create_function(|lua, (screen, id): (String, String)| {
             with(lua, |st| Ok(find(st, &screen, &id).map(|(n, _)| NodeRef(n))))
+        })?,
+    )?;
+    // Keyboard and gamepad focus: which widget the d-pad/arrows are on.
+    t.set(
+        "focus",
+        lua.create_function(|lua, (screen, id): (String, String)| {
+            with(lua, |st| {
+                st.pads.focus_mode = true;
+                Ok(st.ui.ui.focus_id(&screen, &id))
+            })
+        })?,
+    )?;
+    t.set(
+        "focused",
+        lua.create_function(|lua, ()| {
+            with(lua, |st| {
+                Ok(match st.ui.ui.focused() {
+                    Some((screen, id)) => (Some(screen), id),
+                    None => (None, None),
+                })
+            })
+        })?,
+    )?;
+    t.set(
+        "unfocus",
+        lua.create_function(|lua, ()| {
+            with(lua, |st| {
+                st.pads.focus_mode = false;
+                st.ui.ui.clear_focus();
+                Ok(())
+            })
         })?,
     )?;
     t.set(

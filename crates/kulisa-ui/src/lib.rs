@@ -6,6 +6,7 @@
 //! measures text for layout ([`Measure`]) and runs callbacks ([`UiEvent`]).
 
 mod element;
+mod focus;
 mod gesture;
 mod input;
 mod layout;
@@ -15,6 +16,7 @@ pub use element::{
     Align, Anchor, Element, Fill, Justify, Kind, Layout, Look, Sides, Size, SliderSpec, State, Style,
     TextAlign, TextLook,
 };
+pub use focus::Nav;
 pub use gesture::{Direction, Gesture, Gestures};
 pub use input::UiEvent;
 pub use layout::Measure;
@@ -57,6 +59,8 @@ impl Areas {
 pub struct Interaction {
     pub hover: bool,
     pub pressed: bool,
+    /// Focused with the keyboard or gamepad; looks hovered.
+    pub focus: bool,
     /// A slider value set by dragging, shown until the screen rebuilds with a new value.
     pub drag_value: Option<f32>,
 }
@@ -189,6 +193,8 @@ pub struct Screen<N> {
     /// Blocks pointer input to everything below it (game menus, dialogs).
     pub modal: bool,
     pub area: Area,
+    /// Takes keyboard and gamepad navigation (modal screens always do).
+    pub nav: bool,
     pub root: Option<Widget<N>>,
 }
 
@@ -225,7 +231,9 @@ impl<N: Default> Ui<N> {
                 s.modal = modal;
                 s.area = area;
             }
-            None => self.screens.push(Screen { name: name.to_string(), z, modal, area, root: None }),
+            None => {
+                self.screens.push(Screen { name: name.to_string(), z, modal, area, nav: false, root: None })
+            }
         }
         self.screens.sort_by_key(|s| s.z);
     }

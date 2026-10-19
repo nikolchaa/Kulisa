@@ -264,6 +264,8 @@ pub struct Element {
     pub button: bool,
     pub selected: bool,
     pub disabled: bool,
+    /// The widget focus lands on first when a navigable screen opens.
+    pub autofocus: bool,
     /// Host callback ids.
     pub on_click: Option<u64>,
     pub on_change: Option<u64>,

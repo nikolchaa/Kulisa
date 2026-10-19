@@ -54,6 +54,7 @@ function style.button(text: string, on_click, opts)
         anchor = opts.anchor,
         key = opts.key,
         id = opts.id,
+        autofocus = opts.autofocus,
         ui.text({
             text = text,
             size = opts.size or style.size(30),
@@ -114,6 +115,7 @@ function style.card(on_click, opts, children)
         anchor = opts.anchor,
         key = opts.key,
         id = opts.id,
+        autofocus = opts.autofocus,
         background = "gui/round.png",
         slice = 16,
         tint = opts.tint or "#1d1c25e6",

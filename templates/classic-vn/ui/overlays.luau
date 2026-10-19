@@ -31,7 +31,7 @@ ui.screen("confirm", function(props)
                     end, { size = style.size(34) }),
                     style.button("No", function()
                         ui.hide("confirm")
-                    end, { size = style.size(34) }),
+                    end, { size = style.size(34), autofocus = true }),
                 }),
             }),
         }),

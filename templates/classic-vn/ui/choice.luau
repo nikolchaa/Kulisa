@@ -13,7 +13,13 @@ ui.screen("choice", function(props)
     for _, item in props.items do
         table.insert(cards, style.card(function()
             flow.choose(item.index)
-        end, { key = tostring(item.index), width = style.size(820), padding = style.size(18) }, {
+        end, {
+            key = tostring(item.index),
+            width = style.size(820),
+            padding = style.size(18),
+            -- Keyboard and gamepad start on the first choice.
+            autofocus = item.index == props.items[1].index,
+        }, {
             ui.text({
                 text = item.text,
                 width = "fill",
@@ -35,6 +41,6 @@ ui.screen("choice", function(props)
             cards,
         }),
     })
-end, { z = 120, area = "design" })
+end, { z = 120, area = "design", nav = true })
 
 return {}

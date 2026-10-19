@@ -26,7 +26,8 @@ local function what()
 end
 
 local function skipping(): boolean
-    return state.mode:peek() == "skip" or (kulisa.input.down("control") and state.menu:peek() == nil)
+    return state.mode:peek() == "skip"
+        or ((kulisa.input.down("control") or kulisa.input.pad_down("rt")) and state.menu:peek() == nil)
 end
 
 function flow.set_mode(mode: string)

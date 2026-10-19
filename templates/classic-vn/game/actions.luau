@@ -40,6 +40,13 @@ function actions.close_menu()
     prefs.flush(true)
 end
 
+-- Moves to the next (step 1) or previous (-1) game menu section: LB and RB on a gamepad.
+function actions.cycle_menu(step: number)
+    local sections = if state.started then { "history", "save", "load", "prefs" } else { "load", "prefs" }
+    local at = table.find(sections, state.menu:peek()) or 1
+    actions.open_menu(sections[(at - 1 + step) % #sections + 1])
+end
+
 function actions.toggle_menu(section: string?)
     if ui.shown("confirm") then
         ui.hide("confirm")

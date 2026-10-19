@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+gilrs = "0.11.2"
 kulisa-core.workspace = true
 kulisa-lua.workspace = true
 kulisa-platform.workspace = true

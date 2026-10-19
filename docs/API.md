@@ -216,6 +216,9 @@ end)
 | `swipe` | `direction` (`left`, `right`, `up`, `down`), `x, y` where it started |
 | `pinch` | `factor, x, y, total`: two fingers moved; `factor` is the distance now over the distance at the last event, `total` over the distance when the second finger landed, `x, y` the midpoint |
 | `rotate` | `delta, x, y, total`: radians the line between two fingers turned (positive is clockwise on screen) since the last event, and since the second finger landed |
+| `pad_press`, `pad_release` | `button, pad`: a gamepad button, see Gamepads |
+| `pad_axis` | `axis, value, pad` |
+| `pad_connect`, `pad_disconnect` | `pad, name` / `pad` |
 | `wheel` | lines; positive is up |
 | `resize` | window `width, height` in pixels |
 | `error` | message |
@@ -224,7 +227,7 @@ end)
 
 `kulisa.input.pointer()` → `x, y` or nil (the primary pointer); `kulisa.input.pointers()` →
 `{ { id, x, y, touch, down }, ... }`, the mouse and every finger; `kulisa.input.down(key)` →
-whether a key is held.
+whether a key is held. See Gamepads for the pads.
 
 The primary pointer is the first finger down, or the mouse when none is. It drives hover, the
 UI and the `tap`/`long_press`/`swipe` gestures; other fingers only produce `press`, `move`,
@@ -235,6 +238,22 @@ Shown screens see the left button and touches first (topmost first), then dragga
 hotspots (see Interaction). What a button, slider or scroll takes, what a draggable or a
 blocking hotspot takes, and anything over a modal screen, does not reach `press`, `release`,
 gestures or `wheel`. Other buttons and keys always reach the handlers.
+
+## Gamepads
+
+Gamepads work on Windows, Linux, macOS and in browsers (the Gamepad API; a page sees a pad
+after the player presses a button on it). Android and iOS gamepads are not wired up yet.
+
+- Buttons: `a b x y` (by position: `a` is the bottom one), `lb rb`, `lt rt` (triggers as
+  buttons), `back start guide`, `ls rs` (stick clicks) and the d-pad `up down left right`.
+  Events `pad_press` and `pad_release` carry the button and the pad's number.
+- Axes: `lx ly rx ry` run from -1 (left, up) to 1 (right, down) with a dead zone already
+  applied; `lt rt` from 0 to 1. `pad_axis` fires when a value changes.
+- `kulisa.input.pad_down(button, pad?)` → whether a button is held, on that pad or any;
+  `kulisa.input.pad_axis(axis, pad?)` → the value (the strongest across pads without `pad`);
+  `kulisa.input.pads()` → `{ { id, name }, ... }`.
+- While a UI screen takes navigation (see UI), the d-pad, left stick and A do not reach
+  `pad_press`; everything else does. The right stick scrolls lists on such screens.
 
 ## Timers
 
@@ -312,7 +331,7 @@ who:set("Ren") -- the screen rebuilds next frame
 - `ui.signal(value)` → a signal: `s()` or `s:get()` reads it (and subscribes the screen being
   built), `s:peek()` reads without subscribing, `s:set(v)` changes it. A signal can also be
   given directly as a widget property (`text = who`). Create signals once, not in screens.
-- `ui.screen(name, fn, { z = 100, modal = false, area = "safe" })` defines a screen.
+- `ui.screen(name, fn, { z = 100, modal = false, nav = modal, area = "safe" })` defines a screen.
   `fn(props)` returns one widget. `z` orders screens (higher on top). `modal` screens block
   pointer input to everything below. `area` is what the screen's root is laid out in:
   `"safe"` (the visible screen minus notches and system bars), `"screen"` (the whole visible
@@ -325,6 +344,28 @@ who:set("Ren") -- the screen rebuilds next frame
   `complete`, `skip()`, ...), the sprite of an image, the group of a box. `ui.bounds(screen,
   id)` → `x, y, width, height`. `ui.layer(screen)` → the screen's layer (tween its
   `opacity` to fade a screen).
+
+### Keyboard and gamepad navigation
+
+Screens with `nav = true` (modal screens by default) can be used without a pointer. The
+topmost such screen takes the arrow keys, the d-pad and the left stick (they move focus to the
+nearest button or slider in that direction, and repeat while held), Enter, Space and the A
+button (click the focused button), and Page Up/Down (scroll a list on it). While a screen
+takes them, those inputs do not reach `key` or `pad_press`, and the keys' releases do not
+either. On a focused slider, left/right (or up/down for a vertical one) change the value by
+`step`, or by a twentieth of its range. If nothing is focusable, the arrows scroll the screen's
+scroll widget.
+
+Focus starts after the first arrow, d-pad or stick press (or Enter/A on a navigable screen
+with nothing focused), on the widget with `autofocus = true` or else the first one; screens
+that open afterwards get a focus right away, until the mouse or a touch is used again, which
+drops it. A focused widget looks hovered (`hover_*` properties and the button's children
+follow), and a scroll moves to keep it on show.
+
+- `ui.screen(name, fn, { nav = true })`: whether a screen takes navigation.
+- Widget property `autofocus = true`: where focus starts.
+- `ui.focus(screen, id)` → whether the widget with that `id` took focus; `ui.focused()` →
+  `screen, id` of the focused widget (or nil); `ui.unfocus()`.
 
 ### Widgets
 

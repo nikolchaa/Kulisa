@@ -6,6 +6,10 @@
 --   forward). Skip: Tab toggles, Ctrl skips while held. Auto: A. Hide the interface: H or
 --   middle click. Game menu: Escape, right click, long press, Android back. History: swipe
 --   down. Touch screens can roll back by tapping the side set in Preferences.
+--   Menus and choices: arrow keys or the d-pad / left stick move, Enter or A picks.
+--   Gamepad in the story: A advance, B or Start menu, X auto, Y history, LB back, RB skip
+--   (hold RT to skip), Back/Select hides the interface. In the game menu LB and RB switch
+--   section, B closes it.
 
 local config = require("game/config")
 
@@ -125,6 +129,48 @@ kulisa.on("key", function(key)
         if item then
             flow.choose(item.index)
         end
+    end
+end)
+
+-- Gamepad: the d-pad and left stick move through menus and choices (the engine takes them
+-- while a menu is up); these are the rest. In the game menu LB and RB change section.
+kulisa.on("pad_press", function(button)
+    if kulisa.ui.shown("confirm") then
+        if button == "b" then
+            kulisa.ui.hide("confirm")
+        end
+        return
+    end
+    if state.menu:peek() ~= nil then
+        if button == "b" or button == "start" then
+            actions.close_menu()
+        elseif button == "lb" then
+            actions.cycle_menu(-1)
+        elseif button == "rb" then
+            actions.cycle_menu(1)
+        end
+        return
+    end
+    if not playing() then
+        if button == "start" and state.started then
+            actions.open_menu("save")
+        end
+        return
+    end
+    if button == "a" then
+        flow.advance()
+    elseif button == "b" or button == "start" then
+        actions.open_menu("save")
+    elseif button == "x" then
+        flow.toggle("auto")
+    elseif button == "y" then
+        actions.open_menu("history")
+    elseif button == "lb" then
+        flow.rollback()
+    elseif button == "rb" then
+        flow.toggle("skip")
+    elseif button == "back" then
+        actions.toggle_hidden()
     end
 end)
 

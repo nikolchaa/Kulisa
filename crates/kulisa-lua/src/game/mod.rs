@@ -10,6 +10,7 @@ mod hit;
 mod interact;
 mod media;
 mod mesh;
+mod pad;
 mod pointer;
 mod ui;
 
@@ -115,6 +116,7 @@ pub(crate) struct State {
     /// Every pointer: the mouse (id 0) and the touches that are down (ids from 1).
     pub pointers: BTreeMap<u32, pointer::Pointer>,
     pub pinch: Option<pointer::Pinch>,
+    pub pads: pad::Gamepads,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -500,6 +502,7 @@ impl Game {
             interact: Default::default(),
             pointers: BTreeMap::new(),
             pinch: None,
+            pads: Default::default(),
         };
         state.display.device = device;
         let shared = Rc::new(RefCell::new(state));
@@ -588,6 +591,7 @@ impl Game {
         }
         let mouse = self.state.borrow().pointers.get(&0).and_then(|p| p.pos);
         interact::hover(&self.lua, &self.state, mouse);
+        self.nav_frame(dt);
         ui::update(&self.lua, &self.state);
         self.report_display();
 
@@ -724,9 +728,12 @@ impl Game {
     /// mouse when none is) is the primary pointer: it drives hover, UI and the gestures.
     pub fn pointer_moved_id(&mut self, id: u32, window: Option<Vec2>) {
         let p = window.map(|w| self.to_design(w));
+        let shifted;
         let events = {
             let mut st = self.state.borrow_mut();
-            st.pointers.entry(id).or_insert_with(|| pointer::Pointer::new(id != 0)).pos = p;
+            let ptr = st.pointers.entry(id).or_insert_with(|| pointer::Pointer::new(id != 0));
+            shifted = p.is_some_and(|p| ptr.pos.is_none_or(|q| (q - p).length() > 0.5));
+            ptr.pos = p;
             if is_primary(&st, id) {
                 st.pointer = p;
                 match p {
@@ -744,6 +751,10 @@ impl Game {
             }
         };
         ui::run_events(&self.state, events);
+        if shifted {
+            // A real mouse or touch move: the keyboard focus gives way to it.
+            self.pointer_took_over();
+        }
         match p {
             Some(p) => {
                 interact::moved(&self.lua, &self.state, id, p);
@@ -767,6 +778,9 @@ impl Game {
     /// touches first, then draggables and hotspots; what they take does not reach `press`.
     pub fn pressed_id(&mut self, id: u32, button: &str) {
         let left = matches!(button, "left" | "touch");
+        if left {
+            self.pointer_took_over();
+        }
         let (p, primary) = {
             let mut st = self.state.borrow_mut();
             let ptr = st.pointers.entry(id).or_insert_with(|| pointer::Pointer::new(id != 0));
@@ -906,6 +920,10 @@ impl Game {
             } else {
                 st.keys.remove(name);
             }
+        }
+        // Arrows and Enter drive a navigable UI screen; the game never sees what they take.
+        if self.nav_key(name, pressed) {
+            return;
         }
         emit(&self.state, if pressed { "key" } else { "key_up" }, name.to_string());
     }
