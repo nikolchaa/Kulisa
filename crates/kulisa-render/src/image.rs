@@ -45,7 +45,7 @@ impl Image {
     pub fn from_straight_rgba(width: u32, height: u32, mut pixels: Vec<u8>) -> Image {
         assert_eq!(pixels.len(), (width * height * 4) as usize, "pixel buffer size mismatch");
         let (lin, srgb) = (to_linear(), to_srgb());
-        for px in pixels.chunks_exact_mut(4) {
+        for px in pixels.as_chunks_mut::<4>().0 {
             let a = px[3];
             if a == 255 {
                 continue;

@@ -40,8 +40,8 @@ Building blocks we depend on: `winit`, `wgpu`, `cosmic-text`, `kira`, `mlua`
 | Crate | Owns | Depends on |
 |---|---|---|
 | `kulisa-platform` | Asset/file access, save paths, haptics, gyro, logging, safe areas | std, per-OS crates |
-| `kulisa-core` | Scene graph, nodes, transforms, camera, tweens/timelines, `Value` type, game state, rollback log | `glam` |
-| `kulisa-render` | wgpu device, batcher, textures/atlases, meshes, shaders, render targets, post-fx | `wgpu`, `kulisa-core` |
+| `kulisa-core` | Scene graph, nodes, transforms, camera, viewport, frame extraction; later tweens/timelines, `Value` type, game state, rollback log | `glam`, `bytemuck` |
+| `kulisa-render` | wgpu device, batcher, textures/atlases, meshes, shaders, render targets, post-fx | `wgpu`, `image`, `kulisa-core` |
 | `kulisa-text` | cosmic-text shaping, glyph atlas, rich text tags, effects, ruby | `cosmic-text`, `kulisa-render` |
 | `kulisa-audio` | Channels, music/sound/voice, crossfades, volume groups | `kira` |
 | `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM | `kulisa-core` |
@@ -82,46 +82,82 @@ native and async browser APIs on web.
 
 ### Coordinate system
 
-Games declare a **design resolution** (e.g. 1920×1080). The window maps to it
-with a scale mode (`fit`, `fill`, `expand`). `expand` grows the visible area on
-wider/taller screens (16:9 to 20:9, tablets, portrait) instead of letterboxing.
-Safe-area insets (notches, rounded corners, home indicator) are exposed to
-layout and scripts in design units.
+Games declare a **design resolution** (e.g. 1920×1080) and a scale mode
+(`kulisa_core::Viewport`):
+
+- `Fit`: the whole design area is visible; nothing is drawn outside it (letterbox).
+- `Fill`: the design area covers the window; edges are cropped.
+- `Expand` (default): like `Fit`, but content outside the design area stays
+  visible, so wider/taller screens (16:9 to 20:9, tablets, portrait) see more.
+
+World space is in design units with **y down**. The camera rests on the design
+center, so with an untouched camera a node at `(x, y)` appears at design `(x, y)`.
+Anchoring UI to the *screen* edges and safe areas (notches, home indicator) is
+the UI system's job (M5); in M1 a HUD layer is anchored to the design area.
 
 ## 4. Render pipeline
 
+Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame`
+(no GPU code, unit-tested); `kulisa-render` only uploads and draws it.
+
 - **Backends.** Vulkan on Windows, Linux and Android; Metal on macOS and iOS;
-  WebGPU on web with WebGL2 fallback. DX12 (Windows) and GLES (Linux, old
-  Android) are fallbacks only when Vulkan is unavailable.
-- **Retained scene, immediate draw list.** Nodes live in a slot-map arena in
-  `kulisa-core` (generational IDs, no `Rc<RefCell>`). Each frame the visible
-  tree is flattened into `DrawItem`s: `{pipeline, textures, blend, clip,
-  target, vertex range}`.
-- **Batching.** Items are sorted by target, then layer/z (stable), and adjacent
-  items with the same pipeline, bind group, blend and clip merge into one draw
-  call. Sprites go through a shared quad vertex format
-  (`pos, uv, color, extra`); small images are packed into atlases so most
-  sprite scenes are a handful of draw calls. Meshes use the same vertex format
-  with their own index ranges, so deformable meshes batch too.
-- **Camera and parallax.** A 2D camera (pan, zoom, rotate, shake, dolly). Each
-  layer has a `depth`; its view matrix is the camera transform scaled by a
-  parallax factor derived from depth. Pointer/gyro follow are camera
-  behaviours written against public API.
-- **Render targets.** A node can render its subtree into a texture, which any
-  other node can then sample. Transitions, post-fx and thumbnails all use this.
-- **Shaders.** Custom WGSL per node, per layer or per screen. Kulisa prepends a
-  small prelude (frame uniforms: time, resolution, camera; vertex IO structs) so
-  user shaders only write the parts they care about. User uniforms are
-  declared from Luau and packed into a uniform buffer. Pipelines are cached by
-  `(shader, blend, target format)` and rebuilt on shader hot reload.
-- **Post-fx.** An ordered chain of full-screen passes using ping-pong targets.
-  Bloom, blur, color grading, grain and CRT ship as example shaders in
-  templates/demos, not as engine built-ins.
-- **Color.** Blending happens in linear space on sRGB targets. Premultiplied
-  alpha everywhere.
-- **Quality tiers.** `low/medium/high` chosen from adapter info, limits and
-  platform; overridable. Tiers scale render-target resolution, MSAA and which
-  post-fx chains a scene enables. Scenes can declare fallbacks per tier.
+  WebGPU on web with WebGL2 fallback. DX12 (Windows) and GLES (Linux, Android)
+  are fallbacks. A small driver denylist skips adapters that crash on valid
+  usage (the Android emulator's gfxstream Vulkan). `WGPU_BACKEND` overrides.
+- **Scene graph.** Nodes live in a generational arena (`NodeId`, no
+  `Rc<RefCell>`). Kinds: `Group`, `Sprite`, `Layer` (parallax + effects) and
+  `Target` (render-to-texture). Transform, opacity, tint, clip and layer parallax
+  are inherited; blend and material are per node. Siblings draw by `z` (stable);
+  children of a sprite with negative `z` draw behind it (shadows, glows).
+- **Extraction** (`kulisa_core::extract`). One tree walk per frame produces
+  passes in execution order. Vertices are transformed on the CPU into the pixel
+  space of their pass target (4 vertices per sprite is cheaper than per-draw
+  uniforms and lets everything batch). Offscreen sprites are culled.
+  - Vertex: `pos: vec2<f32>`, `uv: vec2<f32>`, `color: unorm8x4`
+    (linear, premultiplied), 20 bytes. Meshes (M6) reuse it with their own
+    index ranges.
+  - `Target` nodes become their own pass, pushed before the pass that contains
+    them. A target sampled by another target must come earlier in the tree;
+    otherwise it shows the previous frame.
+  - Layers with effects render into a screen-sized transient texture, run their
+    chain, and are composited back as one quad.
+- **Batching**, two levels. Extraction merges consecutive items with identical
+  texture, blend, material and clip. The renderer then merges consecutive items
+  whose GPU state matches: images up to 512 px are packed into 2048² atlas pages
+  (shelf packer, 1 px extruded borders), so sprites using *different* small
+  images still share one bind group and draw call. Large images and render
+  targets get their own textures. A tested scene of 60 sprites using 3 textures
+  is 1 draw call.
+- **Clipping** uses scissor rectangles. A rotated clip uses its bounding box.
+- **Camera and parallax.** `Camera { position, zoom, rotation, shake }`. A
+  layer's `parallax` factor scales how much of the camera's movement, zoom and
+  rotation applies: 1 = world, 0 = fixed to the screen. Pointer/gyro follow are
+  behaviours written against public API (see the runtime smoke scene).
+- **Shaders.** User WGSL defines `fn fragment(in: VertexOut) -> vec4<f32>`
+  (premultiplied linear color) and optionally `fn vertex(in: VertexIn) ->
+  VertexOut`. Kulisa appends a prelude (after the user code, so naga's
+  `file:line` errors match the user's file) with `globals` (`proj`,
+  `resolution`, `time`), `tex`/`samp`, and `params.p[0..4]` (four `vec4`s per
+  material or effect, uploaded with dynamic offsets). Shaders are validated with
+  naga before reaching wgpu; `reload_shader` keeps the old shader on error.
+  Pipelines are cached by `(shader, blend, format)`.
+- **Effects.** Screens, layers and targets carry ordered effect chains. Effects
+  ping-pong between two scratch textures; the last writes into the pass target.
+  Vignette, grain and wave ship as examples in the runtime, not built-ins.
+- **Blend modes** (premultiplied): alpha, add, multiply, screen.
+- **Color.** Textures and targets are `Rgba8UnormSrgb`; blending happens in
+  linear space. Images are premultiplied in linear space at load. If the surface
+  cannot be viewed as sRGB (some GLES drivers), the screen is drawn into a
+  scratch texture and a final pass encodes sRGB, so user shaders never care.
+- **Headless mode** renders offscreen with pixel readback. GPU tests use it and
+  run in CI on software adapters; save thumbnails (M3) will too.
+- **Known limits (M1):** linear filtering only (no per-texture nearest/repeat
+  yet); no mipmaps; atlas space is not reclaimed when textures are dropped;
+  vertex colors are 8-bit, so very dark tint gradients band; custom shaders that
+  offset UVs should use non-atlas textures (render targets, large images).
+- **Quality tiers** (planned, M9): `low/medium/high` from adapter info, limits
+  and platform; overridable. Tiers scale render-target resolution, MSAA and
+  which effect chains a scene enables.
 
 ## 5. Text
 
@@ -363,4 +399,7 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | `cargo xtask` for engine-developer build steps (web, APK, iOS app). |
 | 2026-10-19 | Minimum OS: iOS 15, macOS 11 (Rust's iOS 10 default fails to link Luau's C++ with current Xcode), Android API 26. |
 | 2026-10-19 | The name is written **Kulisa** in prose, titles and UI; code identifiers (crates, CLI, `.kulisa`, the `kulisa` Luau global) stay lowercase per Rust and file-extension conventions. |
+| 2026-10-19 | M1: extraction in `kulisa-core` emits pixel-space vertices per pass; batching happens at extraction and again on GPU state (atlas pages). Keeps the renderer thin and the logic testable without a GPU. |
+| 2026-10-19 | M1: user shaders are fragment (+ optional vertex) functions over a fixed prelude, validated with naga for `file:line` errors. Effects use the same contract. |
+| 2026-10-19 | M1: the window always shows sRGB-correct output; GLES surfaces without sRGB views get a final encode pass instead of pushing that into every shader. |
 | 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |
