@@ -4,6 +4,13 @@ use glam::{Affine2, UVec2, Vec2};
 
 use crate::{Camera, Color, Mesh};
 
+/// Reads texture opacity on the CPU for pixel-perfect hit tests.
+pub trait AlphaSource {
+    /// Alpha in 0..=1 of `texture` at `uv` (0..1 over the whole image), or `None` when the
+    /// pixels are not available (the hit test then treats the texture as opaque).
+    fn alpha(&self, texture: TextureId, uv: Vec2) -> Option<f32>;
+}
+
 /// A texture owned by the renderer (images and render targets).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u32);
@@ -401,16 +408,110 @@ impl Scene {
         Some(self.camera.view(parallax.unwrap_or(1.0)) * model)
     }
 
-    /// Whether design-space point `p` is inside the node's drawn area (sprite rectangle or
-    /// any of its quads). Groups and layers have no area of their own.
+    /// Whether design-space point `p` is inside the node's drawn area (sprite rectangle,
+    /// mesh triangles or any of its quads). Groups and layers have no area of their own.
     pub fn hit(&self, id: NodeId, p: Vec2) -> bool {
+        self.hit_alpha(id, p, None)
+    }
+
+    /// Like [`Scene::hit`], and with `alpha = Some((threshold, source))` the pixel under the
+    /// point must also be at least that opaque. Textures the source does not know about
+    /// count as opaque.
+    pub fn hit_alpha(&self, id: NodeId, p: Vec2, alpha: Option<(f32, &dyn AlphaSource)>) -> bool {
         let Some(m) = self.to_design(id) else { return false };
         let local = m.inverse().transform_point2(p);
+        self.hit_local(id, local, alpha)
+    }
+
+    fn hit_local(&self, id: NodeId, local: Vec2, alpha: Option<(f32, &dyn AlphaSource)>) -> bool {
+        let opaque_enough = |texture: TextureId, uv: Vec2| match alpha {
+            Some((min, src)) => src.alpha(texture, uv).is_none_or(|a| a >= min),
+            None => true,
+        };
         match &self[id].kind {
-            NodeKind::Sprite(s) => Rect { min: Vec2::ZERO, max: s.size }.contains(local),
-            NodeKind::Quads(q) => q.iter().any(|q| q.rect.contains(local)),
-            NodeKind::Mesh(m) => m.hit(local).is_some(),
+            NodeKind::Sprite(s) => {
+                let inside = Rect { min: Vec2::ZERO, max: s.size }.contains(local);
+                inside && opaque_enough(s.texture, s.uv.min + s.uv.size() * (local / s.size))
+            }
+            NodeKind::Quads(q) => q.iter().any(|q| {
+                q.rect.contains(local)
+                    && opaque_enough(
+                        q.texture,
+                        q.uv.min + q.uv.size() * ((local - q.rect.min) / q.rect.size()),
+                    )
+            }),
+            NodeKind::Mesh(m) => m.hit(local).is_some_and(|uv| opaque_enough(m.texture, uv)),
             _ => false,
+        }
+    }
+
+    /// Every node under design-space point `p`, topmost first (the reverse of draw order),
+    /// skipping hidden and fully transparent subtrees, points outside a node's `clip` and
+    /// render targets. Only `root`'s subtree is searched when given.
+    pub fn pick_all(
+        &self,
+        p: Vec2,
+        root: Option<NodeId>,
+        alpha: Option<(f32, &dyn AlphaSource)>,
+        out: &mut Vec<NodeId>,
+    ) {
+        let start = root.unwrap_or(self.root);
+        if !self.contains(start) {
+            return;
+        }
+        // The transform above `start`: its ancestors' models and the nearest layer's parallax.
+        let (mut model, mut parallax) = (Affine2::IDENTITY, None);
+        let mut up = self[start].parent;
+        while let Some(n) = up {
+            let node = &self[n];
+            if matches!(node.kind, NodeKind::Target(_)) {
+                return;
+            }
+            if let (NodeKind::Layer(l), None) = (&node.kind, parallax) {
+                parallax = Some(l.parallax);
+            }
+            model = node.transform.to_affine() * model;
+            up = node.parent;
+        }
+        self.pick_node(start, p, model, parallax, alpha, out);
+    }
+
+    fn pick_node(
+        &self,
+        id: NodeId,
+        p: Vec2,
+        parent_model: Affine2,
+        parallax: Option<f32>,
+        alpha: Option<(f32, &dyn AlphaSource)>,
+        out: &mut Vec<NodeId>,
+    ) {
+        let node = &self[id];
+        if !node.visible || node.opacity <= 0.0 || matches!(node.kind, NodeKind::Target(_)) {
+            return;
+        }
+        let model = parent_model * node.transform.to_affine();
+        let parallax = match &node.kind {
+            NodeKind::Layer(l) => Some(l.parallax),
+            _ => parallax,
+        };
+        let local = (self.camera.view(parallax.unwrap_or(1.0)) * model).inverse().transform_point2(p);
+        if node.clip.is_some_and(|c| !c.contains(local)) {
+            return;
+        }
+        // Draw order is: negative-z children (sprites only), the node, the other children.
+        // Walking it backwards gives topmost first.
+        let mut kids: Vec<NodeId> = node.children.clone();
+        kids.sort_by_key(|&c| self[c].z); // stable: ties keep insertion order
+        let behind = matches!(node.kind, NodeKind::Sprite(_));
+        let split = if behind { kids.partition_point(|&c| self[c].z < 0) } else { 0 };
+        for &c in kids[split..].iter().rev() {
+            self.pick_node(c, p, model, parallax, alpha, out);
+        }
+        if self.hit_local(id, local, alpha) {
+            out.push(id);
+        }
+        for &c in kids[..split].iter().rev() {
+            self.pick_node(c, p, model, parallax, alpha, out);
         }
     }
 
@@ -486,6 +587,86 @@ mod tests {
         let inside = s.add(t, Node::sprite(TextureId(1), Vec2::splat(10.0)));
         assert!(s.to_design(inside).is_none());
         assert!(!s.hit(inside, Vec2::new(5.0, 5.0)));
+    }
+
+    /// Left half of every texture is opaque, the right half transparent.
+    struct LeftHalf;
+    impl AlphaSource for LeftHalf {
+        fn alpha(&self, _: TextureId, uv: Vec2) -> Option<f32> {
+            Some(if uv.x < 0.5 { 1.0 } else { 0.0 })
+        }
+    }
+
+    #[test]
+    fn alpha_hit_tests_read_the_pixel_under_the_point() {
+        let mut s = scene();
+        let sprite = s.add(s.root(), Node::sprite(TextureId(1), Vec2::new(100.0, 50.0)).at(10.0, 10.0));
+        assert!(s.hit(sprite, Vec2::new(90.0, 30.0)), "shape only: the rectangle");
+        let alpha: Option<(f32, &dyn AlphaSource)> = Some((0.5, &LeftHalf));
+        assert!(s.hit_alpha(sprite, Vec2::new(30.0, 30.0), alpha));
+        assert!(!s.hit_alpha(sprite, Vec2::new(90.0, 30.0), alpha), "transparent right half");
+        // A mesh looks the pixel up through its interpolated UVs, deformed or not.
+        let mut mesh = Mesh::grid(TextureId(1), 1, 1, Vec2::new(100.0, 50.0), Rect::UNIT);
+        mesh.positions[1].x = 200.0; // the right edge stretches: uv.x 0.5 is now at x = 100
+        mesh.positions[3].x = 200.0;
+        let m = s.add(s.root(), Node::mesh(mesh).at(0.0, 200.0));
+        assert!(s.hit_alpha(m, Vec2::new(90.0, 210.0), alpha));
+        assert!(!s.hit_alpha(m, Vec2::new(110.0, 210.0), alpha));
+    }
+
+    #[test]
+    fn pick_all_lists_topmost_first_and_honours_visibility_and_clips() {
+        let mut s = scene();
+        let at = |s: &mut Scene, parent: NodeId, z: i32, x: f32| {
+            s.add(parent, Node::sprite(TextureId(1), Vec2::splat(50.0)).at(x, 0.0).with_z(z))
+        };
+        let root = s.root();
+        let back = at(&mut s, root, 0, 0.0);
+        let front = at(&mut s, root, 5, 10.0);
+        let mid = at(&mut s, root, 1, 20.0);
+        let shadow = at(&mut s, front, -1, 0.0);
+        let mut picked = Vec::new();
+        s.pick_all(Vec2::new(30.0, 10.0), None, None, &mut picked);
+        assert_eq!(picked, vec![front, shadow, mid, back], "front, its shadow behind it, then by z");
+
+        s[mid].visible = false;
+        s[front].opacity = 0.0;
+        picked.clear();
+        s.pick_all(Vec2::new(30.0, 10.0), None, None, &mut picked);
+        assert_eq!(picked, vec![back], "hidden and transparent subtrees are skipped");
+
+        // Clips cut the area a child can be hit in; `root` limits the search.
+        let mut g = Node::group().at(0.0, 100.0);
+        g.clip = Some(Rect::new(0.0, 0.0, 20.0, 20.0));
+        let g = s.add(s.root(), g);
+        let inner = at(&mut s, g, 0, 0.0);
+        picked.clear();
+        s.pick_all(Vec2::new(10.0, 110.0), None, None, &mut picked);
+        assert_eq!(picked, vec![inner]);
+        picked.clear();
+        s.pick_all(Vec2::new(40.0, 110.0), None, None, &mut picked);
+        assert!(picked.is_empty(), "outside the clip");
+        s.pick_all(Vec2::new(10.0, 110.0), Some(back), None, &mut picked);
+        assert!(picked.is_empty(), "other subtree");
+    }
+
+    #[test]
+    fn pick_all_follows_parallax_and_skips_targets() {
+        let mut s = scene();
+        let layer = s.add(s.root(), Node::layer(0.5));
+        let sprite = s.add(layer, Node::sprite(TextureId(1), Vec2::splat(20.0)).at(100.0, 100.0));
+        s.camera.position.x += 100.0; // the layer moves by half: 50 px left
+        let mut picked = Vec::new();
+        s.pick_all(Vec2::new(55.0, 105.0), None, None, &mut picked);
+        assert_eq!(picked, vec![sprite]);
+        picked.clear();
+        s.pick_all(Vec2::new(105.0, 105.0), Some(sprite), None, &mut picked);
+        assert!(picked.is_empty(), "a root below a layer still gets the layer's parallax");
+        let t = s.add(s.root(), Node::target(TextureId(2), UVec2::new(64, 64)));
+        s.add(t, Node::sprite(TextureId(1), Vec2::splat(64.0)));
+        picked.clear();
+        s.pick_all(Vec2::new(5.0, 5.0), None, None, &mut picked);
+        assert!(picked.is_empty(), "render target contents are not on screen");
     }
 
     #[test]

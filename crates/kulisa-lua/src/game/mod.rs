@@ -6,6 +6,7 @@
 
 mod api;
 mod display;
+mod hit;
 mod media;
 mod mesh;
 mod ui;
@@ -107,6 +108,7 @@ pub(crate) struct State {
     pub line_seen: bool,
     pub ui: ui::UiState,
     pub display: display::DisplayState,
+    pub alpha_masks: hit::Masks,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -488,6 +490,7 @@ impl Game {
             line_seen: false,
             ui: Default::default(),
             display: Default::default(),
+            alpha_masks: Default::default(),
         };
         state.display.device = device;
         let shared = Rc::new(RefCell::new(state));

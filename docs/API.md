@@ -113,8 +113,25 @@ Properties (read and write unless noted):
 | `complete`, `duration` (read-only) | text | Whether the typewriter finished; its total time. |
 
 Methods: `node:remove()`, `node:exists()`, `node:add(child)`, `node:children()`,
-`node:contains(x, y)` (design point inside the node, after all transforms, camera and
-parallax), `node:tween(props, opts)`, and for text `node:skip()`, `node:restart()`.
+`node:contains(x, y, alpha?)` (design point inside the node, after all transforms, camera and
+parallax; see Hit testing), `node:tween(props, opts)`, and for text `node:skip()`,
+`node:restart()`.
+
+### Hit testing
+
+- `node:contains(x, y, alpha?)`: whether the design-space point is on the node's drawn area:
+  a sprite's rectangle, a mesh's triangles (so deformed meshes are hit where they are drawn),
+  text glyph boxes. Groups and layers have no area. With `alpha` (a number from 0 to 1, or
+  `true` for 0.5) the pixel under the point must be at least that opaque: pixel-perfect clicks
+  on irregular sprites. Alpha comes from the image file the sprite or mesh uses, decoded on the
+  first test; images that are not files (captures, render targets, text glyphs) count as
+  opaque.
+- `kulisa.pick_all(x, y, { root?, alpha? })` → the nodes under the point, topmost first (the
+  reverse of draw order). Hidden and fully transparent nodes (and their children), points
+  outside a node's `clip`, and render-target contents are skipped. `root` limits the search to
+  that node's subtree.
+- `kulisa.pick(x, y, { root?, alpha?, filter? })` → the topmost node, or nil. `filter(node)`
+  can reject nodes (return false) to look through them.
 
 ### Meshes
 
@@ -156,7 +173,7 @@ local tri = kulisa.mesh{ positions = { 0, 0, 100, 0, 0, 100 }, indices = { 1, 2,
 - A mesh has at most 65,536 vertices. Small images share atlas pages, so UVs outside 0..1
   would read a neighbour's pixels: keep meshes inside 0..1, or use an image larger than 512
   pixels per side for tiling effects.
-- `node:contains(x, y)` tests the triangles, so a deformed mesh is hit where it is drawn.
+- `node:contains` and `kulisa.pick` test the triangles, so a deformed mesh is hit where it is drawn.
 
 Text markup: `{b}`, `{i}`, `{color=#hex}`, `{size=N}`, `{font=Name}`, `{wave}`, `{shake}`,
 `{ruby=reading}`, `{speed=factor}` (typewriter speed), `{w=secs}` (typewriter pause); `{{` is a literal brace.

@@ -17,6 +17,7 @@ use mlua::{
 };
 
 use super::display;
+use super::hit;
 use super::media::{self, TransitionSpec};
 use super::mesh;
 use super::{
@@ -717,8 +718,9 @@ impl UserData for NodeRef {
         m.add_method("tween", |lua, this, (props, opts): (Table, LuaValue)| {
             tween(lua, this.0, false, props, opts)
         });
-        m.add_method("contains", |lua, this, (x, y): (f32, f32)| {
-            with(lua, |st| Ok(st.scene.hit(this.0, Vec2::new(x, y))))
+        m.add_method("contains", |lua, this, (x, y, alpha): (f32, f32, LuaValue)| {
+            let alpha = hit::threshold(&alpha)?;
+            with(lua, |st| Ok(hit::contains(st, this.0, Vec2::new(x, y), alpha)))
         });
         m.add_method("skip", |lua, this, ()| {
             with(lua, |st| {
@@ -1706,6 +1708,40 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 st.handlers.values_mut().for_each(|h| h.retain(|(i, _)| *i != id));
                 Ok(())
             })
+        })?,
+    )?;
+    // kulisa.pick(x, y, { root, alpha, filter }) -> the topmost node under the point.
+    // kulisa.pick_all(x, y, { root, alpha }) -> every node there, topmost first.
+    let pick_args = |opts: &Option<Table>| -> mlua::Result<(Option<NodeId>, Option<f32>)> {
+        let Some(o) = opts else { return Ok((None, None)) };
+        let root = match o.get::<LuaValue>("root")? {
+            LuaValue::Nil => None,
+            LuaValue::UserData(ud) => Some(ud.borrow::<NodeRef>()?.0),
+            _ => return Err(mlua::Error::runtime("`root` must be a node")),
+        };
+        Ok((root, hit::threshold(&o.get::<LuaValue>("alpha")?)?))
+    };
+    k.set(
+        "pick_all",
+        lua.create_function(move |lua, (x, y, opts): (f32, f32, Option<Table>)| {
+            let (root, alpha) = pick_args(&opts)?;
+            let ids = with(lua, |st| Ok(hit::pick_all(st, Vec2::new(x, y), root, alpha)))?;
+            lua.create_sequence_from(ids.into_iter().map(NodeRef))
+        })?,
+    )?;
+    k.set(
+        "pick",
+        lua.create_function(move |lua, (x, y, opts): (f32, f32, Option<Table>)| {
+            let (root, alpha) = pick_args(&opts)?;
+            let filter = opts.as_ref().map(|o| o.get::<Option<Function>>("filter")).transpose()?.flatten();
+            let ids = with(lua, |st| Ok(hit::pick_all(st, Vec2::new(x, y), root, alpha)))?;
+            for id in ids {
+                // The filter runs Luau, so the state is not borrowed here.
+                if filter.as_ref().is_none_or(|f| f.call::<bool>(NodeRef(id)).unwrap_or(false)) {
+                    return Ok(Some(NodeRef(id)));
+                }
+            }
+            Ok(None)
         })?,
     )?;
     let input = lua.create_table()?;

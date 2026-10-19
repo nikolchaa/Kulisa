@@ -402,6 +402,64 @@ fn free_form_meshes_take_raw_geometry() {
     assert_eq!(g.eval::<f32>("t", "return tri.vertex_count").unwrap(), 4.0);
 }
 
+/// A PNG whose left half is opaque and right half transparent.
+fn half_png(w: u32, h: u32) -> Vec<u8> {
+    let px: Vec<u8> = (0..w * h)
+        .flat_map(|i| if i % w < w / 2 { [255, 255, 255, 255] } else { [255, 255, 255, 0] })
+        .collect();
+    kulisa_render::Image::from_straight_rgba(w, h, px).encode_png().unwrap()
+}
+
+#[test]
+fn alpha_hit_testing_and_picking() {
+    let g = game!("main.luau" => r##"
+        kulisa.display(200, 100, "fit")
+        local img = kulisa.load_image("half.png")
+        back = kulisa.sprite{ image = img, width = 100, height = 100 }
+        front = kulisa.sprite{ image = img, width = 100, height = 100, x = 50, z = 1 }
+        deformed = kulisa.mesh{ image = img, cols = 2, rows = 1, width = 100, height = 50, y = 200 }
+        local tint = kulisa.sprite{ width = 10, height = 10, x = 150, y = 0, z = 2 }
+        solid = tint
+    "##,
+    "half.png" => half_png(16, 8));
+    // Shape only, then with a pixel test: the right half of each sprite is see-through.
+    let v: (bool, bool, bool, bool) = g
+        .eval(
+            "t",
+            "return front:contains(140, 50), front:contains(140, 50, true), front:contains(70, 50, 0.9), front:contains(140, 50, 0.0)",
+        )
+        .unwrap();
+    assert_eq!(v, (true, false, true, true), "0 accepts everything, even transparent pixels");
+    // Picking goes front to back; the see-through half lets the click reach what is behind.
+    let names: Vec<String> = g
+        .eval("t", "local l = {} for _, n in kulisa.pick_all(75, 50) do table.insert(l, n == front and 'front' or n == back and 'back' or '?') end return l")
+        .unwrap();
+    assert_eq!(names, ["front", "back"]);
+    let pick = |x: i32, y: i32, extra: &str| -> String {
+        g.eval(
+            "t",
+            &format!(
+                "local n = kulisa.pick({x}, {y}, {{ alpha = true{extra} }}) return n == front and 'front' or n == back and 'back' or n == deformed and 'mesh' or n == solid and 'solid' or 'none'"
+            ),
+        )
+        .unwrap()
+    };
+    assert_eq!(pick(60, 50, ""), "front", "opaque left half of front");
+    assert_eq!(pick(120, 50, ""), "none", "right half of front and nothing behind it at x=120");
+    assert_eq!(pick(30, 50, ""), "back");
+    assert_eq!(pick(30, 50, ", filter = function(n) return n ~= back end"), "none", "filter rejects back");
+    assert_eq!(pick(30, 50, ", root = back"), "back", "limited to a subtree");
+    assert_eq!(pick(60, 50, ", root = back"), "none", "back is see-through there, front is outside the root");
+    // A deformed mesh is tested where it is drawn.
+    g.eval::<()>("t", "for r = 0, 1 do for c = 0, 2 do local i = deformed:vertex_at(c, r) local x, y = deformed:vertex(i) deformed:set_vertex(i, x * 2, y) end end").unwrap();
+    assert_eq!(pick(80, 225, ""), "mesh", "x = 80 is uv 0.4 after stretching to twice the width");
+    assert_eq!(pick(120, 225, ""), "none", "uv 0.6 is transparent");
+    // Images without a decodable source (the white pixel) are opaque.
+    assert_eq!(pick(155, 5, ""), "solid");
+    let err = g.eval::<()>("t", "kulisa.pick(1, 1, { alpha = 2 })").unwrap_err();
+    assert!(err.contains("between 0 and 1"), "{err}");
+}
+
 const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
 }";
