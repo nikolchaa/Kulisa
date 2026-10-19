@@ -8,3 +8,7 @@ CXXSTDLIB_wasm32_unknown_unknown = "c++"
 CXXSTDLIB_aarch64_linux_android = "c++_static"
 CXXSTDLIB_armv7_linux_androideabi = "c++_static"
 CXXSTDLIB_x86_64_linux_android = "c++_static"
+# Minimum OS versions. Rust's iOS default (10.0) does not link with C++ objects
+# built by current Xcode toolchains.
+IPHONEOS_DEPLOYMENT_TARGET = "15.0"
+MACOSX_DEPLOYMENT_TARGET = "11.0"
