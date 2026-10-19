@@ -5,7 +5,7 @@ use std::env;
 use std::fs;
 use std::process::Command;
 
-use crate::{Result, root, run};
+use crate::{Result, game_pack, root, run};
 
 /// Keep in sync with IPHONEOS_DEPLOYMENT_TARGET in .cargo/config.toml.
 const MIN_IOS: &str = "15.0";
@@ -68,6 +68,8 @@ pub fn app(args: &[String]) -> Result {
     fs::create_dir_all(&app).map_err(|e| e.to_string())?;
     fs::copy(&bin, app.join(EXECUTABLE)).map_err(|e| format!("{}: {e}", bin.display()))?;
     fs::write(app.join("Info.plist"), info_plist(platform)).map_err(|e| e.to_string())?;
+    // The player looks for game.kpak next to its executable.
+    fs::write(app.join("game.kpak"), game_pack(args)?).map_err(|e| e.to_string())?;
 
     // The simulator refuses unsigned arm64 apps; an ad-hoc signature is enough there.
     // Devices need a real identity and provisioning profile, which this does not provide.

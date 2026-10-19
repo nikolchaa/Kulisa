@@ -9,7 +9,7 @@ use kulisa_lua::Game;
 use kulisa_platform::Assets;
 use kulisa_render::Renderer;
 
-const FONT: &[u8] = include_bytes!("../../kulisa-runtime/assets/fonts/Inter-Regular.ttf");
+const FONT: &[u8] = include_bytes!("../../../demos/smoke/fonts/Inter-Regular.ttf");
 
 /// Writes `files` into a fresh game folder.
 fn folder(files: &[(&str, &[u8])]) -> PathBuf {

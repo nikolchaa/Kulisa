@@ -731,11 +731,13 @@ fn create(
         LuaValue::UserData(ud) => Some(ud.borrow::<NodeRef>()?.0),
         _ => return Err(mlua::Error::runtime("`parent` must be a node")),
     };
-    let rest: Vec<(String, LuaValue)> = opts
+    let mut rest: Vec<(String, LuaValue)> = opts
         .pairs::<String, LuaValue>()
         .filter_map(Result::ok)
         .filter(|(k, _)| k != "parent" && k != "center" && !consumed.contains(&k.as_str()))
         .collect();
+    // `params` needs the shader set first.
+    rest.sort_by_key(|(k, _)| k != "shader");
     let center = opts.get::<Option<bool>>("center")?.unwrap_or(false);
     with(lua, |st| {
         let parent = parent.unwrap_or(st.scene.root());

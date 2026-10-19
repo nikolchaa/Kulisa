@@ -3,6 +3,9 @@
 //!   cargo xtask web [--release] [--serve [PORT]]   build the web player into dist/web
 //!   cargo xtask apk [--release]                    build an Android APK into dist/android
 //!   cargo xtask ios-app [--sim] [--release]        build an iOS .app into dist/ios (macOS only)
+//!   cargo xtask pack [--out FILE]                  pack a game folder into a .kpak
+//!
+//! Every command takes `--game DIR`, the game to bundle (default `demos/smoke`).
 
 use std::env;
 use std::fs;
@@ -25,9 +28,9 @@ fn main() {
         Some("web") => web(&args[1..]),
         Some("apk") => android::apk(&args[1..]),
         Some("ios-app") => ios::app(&args[1..]),
-        _ => Err(
-            "usage: cargo xtask web [--release] [--serve [PORT]] | apk [--release] | ios-app [--sim] [--release]".into(),
-        ),
+        Some("pack") => pack(&args[1..]),
+        _ => Err("usage: cargo xtask web [--release] [--serve [PORT]] | apk [--release] |                   ios-app [--sim] [--release] | pack [--out FILE]; all take --game DIR"
+            .into()),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
@@ -37,6 +40,29 @@ fn main() {
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+}
+
+/// The value after `flag`, if given.
+fn option<'a>(args: &'a [String], flag: &str) -> Result<Option<&'a str>> {
+    match args.iter().position(|a| a == flag) {
+        Some(i) => args.get(i + 1).map(|v| Some(v.as_str())).ok_or(format!("{flag} needs a value")),
+        None => Ok(None),
+    }
+}
+
+/// The game (`--game DIR`, default `demos/smoke`) packed as `.kpak` bytes.
+fn game_pack(args: &[String]) -> Result<Vec<u8>> {
+    let dir = option(args, "--game")?.map_or_else(|| root().join("demos/smoke"), PathBuf::from);
+    let bytes = kulisa_platform::build_pack(&dir)?;
+    eprintln!("packed {} ({:.1} MB)", dir.display(), bytes.len() as f64 / 1e6);
+    Ok(bytes)
+}
+
+fn pack(args: &[String]) -> Result {
+    let out = option(args, "--out")?.unwrap_or("game.kpak");
+    fs::write(out, game_pack(args)?).map_err(|e| format!("{out}: {e}"))?;
+    eprintln!("wrote {out}");
+    Ok(())
 }
 
 fn run(cmd: &mut Command) -> Result {
@@ -122,6 +148,7 @@ fn web(args: &[String]) -> Result {
         .arg(&out)
         .arg(&wasm))?;
     fs::write(out.join("index.html"), INDEX_HTML).map_err(|e| e.to_string())?;
+    fs::write(out.join("game.kpak"), game_pack(args)?).map_err(|e| e.to_string())?;
     let size = fs::metadata(out.join("kulisa_bg.wasm")).map(|m| m.len()).unwrap_or(0);
     eprintln!("web build ready: {} ({:.1} MB wasm)", out.display(), size as f64 / 1e6);
 

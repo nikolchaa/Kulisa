@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Result, root, run};
+use crate::{Result, game_pack, option, root, run};
 
 /// Android ABI name and Rust target for each supported architecture.
 const ABIS: &[(&str, &str)] = &[
@@ -82,10 +82,7 @@ fn ndk(sdk: &Path) -> Result<PathBuf> {
 
 pub fn apk(args: &[String]) -> Result {
     let release = args.iter().any(|a| a == "--release");
-    let abis: Vec<&str> = match args.iter().position(|a| a == "--abi") {
-        Some(i) => args.get(i + 1).ok_or("--abi needs a value, e.g. arm64-v8a,x86_64")?.split(',').collect(),
-        None => vec!["arm64-v8a"],
-    };
+    let abis: Vec<&str> = option(args, "--abi")?.map_or(vec!["arm64-v8a"], |a| a.split(',').collect());
     let sdk = sdk()?;
     let ndk = ndk(&sdk)?;
     let host = if cfg!(windows) {
@@ -130,6 +127,10 @@ pub fn apk(args: &[String]) -> Result {
         fs::copy(&so, dir.join("libkulisa.so")).map_err(|e| format!("{}: {e}", so.display()))?;
     }
 
+    // The player reads the game from assets/game.kpak through the AssetManager.
+    fs::create_dir_all(staging.join("assets")).map_err(|e| e.to_string())?;
+    fs::write(staging.join("assets/game.kpak"), game_pack(args)?).map_err(|e| e.to_string())?;
+
     let tools = newest(&sdk.join("build-tools"))?;
     let platform = newest(&sdk.join("platforms"))?;
     fs::write(work.join("AndroidManifest.xml"), MANIFEST).map_err(|e| e.to_string())?;
@@ -148,7 +149,7 @@ pub fn apk(args: &[String]) -> Result {
         .args(["--target-sdk-version", &TARGET_SDK.to_string()]))?;
     // Paths inside the APK are relative to the working directory.
     let mut add = Command::new(tools.join(exe("aapt")));
-    add.current_dir(&staging).arg("add").arg(&unsigned);
+    add.current_dir(&staging).arg("add").arg(&unsigned).arg("assets/game.kpak");
     for abi in &abis {
         add.arg(format!("lib/{abi}/libkulisa.so"));
     }

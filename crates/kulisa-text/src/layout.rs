@@ -378,10 +378,9 @@ pub(crate) mod tests {
 
     pub fn system() -> TextSystem {
         let mut t = TextSystem::new();
-        let names =
-            t.load_font(include_bytes!("../../kulisa-runtime/assets/fonts/Inter-Regular.ttf").to_vec());
+        let names = t.load_font(include_bytes!("../../../demos/smoke/fonts/Inter-Regular.ttf").to_vec());
         assert_eq!(names, ["Inter"]);
-        t.load_font(include_bytes!("../../kulisa-runtime/assets/fonts/Inter-Bold.ttf").to_vec());
+        t.load_font(include_bytes!("../../../demos/smoke/fonts/Inter-Bold.ttf").to_vec());
         t
     }
 

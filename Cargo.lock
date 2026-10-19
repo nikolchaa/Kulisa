@@ -1255,8 +1255,11 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "env_logger",
+ "js-sys",
  "log",
  "oslog",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 
@@ -1284,13 +1287,10 @@ dependencies = [
 name = "kulisa-runtime"
 version = "0.1.0"
 dependencies = [
- "kulisa-audio",
  "kulisa-core",
  "kulisa-lua",
  "kulisa-platform",
  "kulisa-render",
- "kulisa-story",
- "kulisa-text",
  "log",
  "pollster",
  "wasm-bindgen-futures",
@@ -3718,6 +3718,9 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 [[package]]
 name = "xtask"
 version = "0.1.0"
+dependencies = [
+ "kulisa-platform",
+]
 
 [[package]]
 name = "yazi"

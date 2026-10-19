@@ -8,13 +8,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-kulisa-audio.workspace = true
 kulisa-core.workspace = true
 kulisa-lua.workspace = true
 kulisa-platform.workspace = true
 kulisa-render.workspace = true
-kulisa-story.workspace = true
-kulisa-text.workspace = true
 log.workspace = true
 web-time.workspace = true
 winit.workspace = true

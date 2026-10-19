@@ -1,21 +1,12 @@
-//! Frame loop. Owns the window, renderer and scripting, and drives them from winit events.
+//! Frame loop. Owns the window, finds the game, creates the renderer and forwards frames and
+//! input to the scripted [`Game`].
 
-mod logo;
-mod sfx;
-mod smoke;
-mod story;
-
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use kulisa_audio::{Audio, PlayOptions};
-use kulisa_core::{ScaleMode, Vec2, Viewport};
-use kulisa_lua::Scripting;
+use kulisa_core::Vec2;
+use kulisa_lua::Game;
+use kulisa_platform::Assets;
 use kulisa_render::Renderer;
-use kulisa_text::TextSystem;
-use sfx::Sfx;
-use smoke::Smoke;
-use story::{AudioCmd, StoryPlayer};
 use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
@@ -26,180 +17,77 @@ use winit::window::{Window, WindowId};
 #[cfg(target_os = "android")]
 pub use winit::platform::android::activity::AndroidApp;
 
-const HELLO: &str = include_str!("scripts/hello.luau");
-const MUSIC_VOLUME: f32 = 0.35;
-
 pub enum UserEvent {
-    RendererReady(Result<Renderer, String>),
-}
-
-struct Script {
-    vm: Scripting,
-    module: kulisa_lua::Table,
+    RendererReady(Result<Box<Renderer>, String>),
+    GameLoaded(Result<Assets, String>),
 }
 
 struct App {
     proxy: EventLoopProxy<UserEvent>,
     window: Option<Arc<Window>>,
+    /// The game's files, until the renderer is ready too.
+    assets: Option<Result<Assets, String>>,
+    /// The renderer, until the game takes it.
     renderer: Option<Renderer>,
     creating_renderer: bool,
-    script: Option<Script>,
-    story: Option<StoryPlayer>,
-    smoke: Option<Smoke>,
-    text: TextSystem,
-    /// Created at startup on native; on the web only after the first user gesture, as
-    /// browsers require.
-    audio: Option<Audio>,
-    sfx: Option<Sfx>,
-    /// Looping track per channel, as the story wants it (played once audio is available).
-    tracks: BTreeMap<String, String>,
-    music_on: bool,
-    viewport: Viewport,
-    /// Last pointer position in window pixels.
-    pointer: Option<Vec2>,
-    start: Instant,
+    game: Option<Game>,
     last_frame: Instant,
 }
 
+/// Key names as scripts see them: "space", "enter", "left", "f5", "a", ...
+fn key_name(key: &Key) -> Option<String> {
+    const NAMED: &[(NamedKey, &str)] = &[
+        (NamedKey::Space, "space"),
+        (NamedKey::Enter, "enter"),
+        (NamedKey::Escape, "escape"),
+        (NamedKey::Tab, "tab"),
+        (NamedKey::Backspace, "backspace"),
+        (NamedKey::Delete, "delete"),
+        (NamedKey::ArrowLeft, "left"),
+        (NamedKey::ArrowRight, "right"),
+        (NamedKey::ArrowUp, "up"),
+        (NamedKey::ArrowDown, "down"),
+        (NamedKey::PageUp, "pageup"),
+        (NamedKey::PageDown, "pagedown"),
+        (NamedKey::Home, "home"),
+        (NamedKey::End, "end"),
+        (NamedKey::Shift, "shift"),
+        (NamedKey::Control, "control"),
+        (NamedKey::Alt, "alt"),
+        (NamedKey::GoBack, "back"),
+        (NamedKey::BrowserBack, "back"),
+        (NamedKey::F1, "f1"),
+        (NamedKey::F2, "f2"),
+        (NamedKey::F3, "f3"),
+        (NamedKey::F4, "f4"),
+        (NamedKey::F5, "f5"),
+        (NamedKey::F6, "f6"),
+        (NamedKey::F7, "f7"),
+        (NamedKey::F8, "f8"),
+        (NamedKey::F9, "f9"),
+        (NamedKey::F10, "f10"),
+        (NamedKey::F11, "f11"),
+        (NamedKey::F12, "f12"),
+    ];
+    match key {
+        Key::Named(n) => NAMED.iter().find(|(k, _)| k == n).map(|(_, s)| s.to_string()),
+        Key::Character(c) if c.as_str() == " " => Some("space".into()),
+        Key::Character(c) => Some(c.to_lowercase()),
+        _ => None,
+    }
+}
+
 impl App {
-    fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
-        let script = match load_script() {
-            Ok(s) => Some(s),
-            Err(e) => {
-                log::error!("{e}");
-                None
-            }
-        };
-        let story = script.as_ref().map(|s| {
-            StoryPlayer::new(&s.vm).unwrap_or_else(|e| {
-                log::error!("{e}");
-                StoryPlayer::failed(&s.vm, e)
-            })
-        });
+    fn new(proxy: EventLoopProxy<UserEvent>, assets: Option<Result<Assets, String>>) -> Self {
         Self {
             proxy,
             window: None,
+            assets,
             renderer: None,
             creating_renderer: false,
-            script,
-            story,
-            smoke: None,
-            text: load_fonts(),
-            audio: None,
-            sfx: None,
-            tracks: BTreeMap::new(),
-            music_on: true,
-            viewport: Viewport { design: smoke::DESIGN, mode: ScaleMode::Expand },
-            pointer: None,
-            start: Instant::now(),
+            game: None,
             last_frame: Instant::now(),
         }
-    }
-
-    fn start_audio(&mut self) {
-        if self.audio.is_some() {
-            return;
-        }
-        let started = Audio::new().and_then(|mut audio| {
-            audio.set_volume("music", MUSIC_VOLUME, 0.0)?;
-            Ok((audio, Sfx::new()?))
-        });
-        match started {
-            Ok((audio, sfx)) => {
-                (self.audio, self.sfx) = (Some(audio), Some(sfx));
-                // Start whatever the story already asked for.
-                let tracks: Vec<_> = self.tracks.iter().map(|(c, f)| (c.clone(), f.clone())).collect();
-                for (channel, file) in tracks {
-                    self.play(&channel, &file, 1.0, true);
-                }
-            }
-            // No output device (e.g. a headless machine): keep running silently.
-            Err(e) => log::warn!("audio unavailable: {e}"),
-        }
-    }
-
-    fn play(&mut self, channel: &str, file: &str, fade: f32, looping: bool) {
-        let (Some(audio), Some(sfx)) = (&mut self.audio, &self.sfx) else { return };
-        let Some(sound) = sfx.get(file) else {
-            log::warn!("smoke scene has no sound `{file}`");
-            return;
-        };
-        let opts = PlayOptions { looping, fade_in: fade, crossfade: fade.max(0.3), ..Default::default() };
-        if let Err(e) = audio.play(channel, sound, opts) {
-            log::warn!("{e}");
-        }
-    }
-
-    /// Applies the story's audio requests.
-    fn apply_audio(&mut self) {
-        let cmds = self.story.as_mut().map(|s| std::mem::take(&mut s.audio)).unwrap_or_default();
-        for cmd in cmds {
-            match cmd {
-                AudioCmd::Play { channel, file, fade, looping } => {
-                    if looping {
-                        self.tracks.insert(channel.clone(), file.clone());
-                    }
-                    self.play(&channel, &file, fade, looping);
-                }
-                AudioCmd::Stop { channel, fade } => {
-                    self.tracks.remove(&channel);
-                    if let Some(audio) = &mut self.audio {
-                        let _ = audio.stop(&channel, fade);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Click, tap, space or enter: pick the choice under the pointer, or continue.
-    fn interact(&mut self) {
-        self.start_audio();
-        if let (Some(audio), Some(sfx)) = (&mut self.audio, &self.sfx) {
-            let _ = audio.play("sound", &sfx.blip, PlayOptions { volume: 0.6, ..Default::default() });
-        }
-        let pointer = self.pointer_design();
-        let (Some(story), Some(smoke), Some(r)) = (&mut self.story, &mut self.smoke, &mut self.renderer)
-        else {
-            return;
-        };
-        match pointer.and_then(|p| smoke.menu_hit(p)) {
-            Some(index) => story.choose(smoke, r, &mut self.text, index),
-            None => story.advance(smoke, r, &mut self.text),
-        }
-    }
-
-    fn story_action(&mut self, action: StoryAction) {
-        let (Some(story), Some(smoke), Some(r)) = (&mut self.story, &mut self.smoke, &mut self.renderer)
-        else {
-            return;
-        };
-        let text = &mut self.text;
-        match action {
-            StoryAction::Choose(n) => {
-                if let Some(index) = story.menu_item(n) {
-                    story.choose(smoke, r, text, index);
-                }
-            }
-            StoryAction::Rollback => story.rollback(smoke, r, text, &self.tracks),
-            StoryAction::RollForward => story.roll_forward(smoke, r, text, &self.tracks),
-            StoryAction::Save => story.quicksave(),
-            StoryAction::Load => story.quickload(smoke, r, text, &self.tracks),
-        }
-    }
-
-    fn toggle_music(&mut self) {
-        self.start_audio();
-        self.music_on = !self.music_on;
-        if let Some(audio) = &mut self.audio {
-            let _ = audio.set_volume("music", if self.music_on { MUSIC_VOLUME } else { 0.0 }, 0.6);
-        }
-    }
-
-    /// The pointer in design units (where the UI lives).
-    fn pointer_design(&self) -> Option<Vec2> {
-        let r = self.renderer.as_ref()?;
-        let layout = self.viewport.layout(r.size());
-        self.pointer.map(|p| layout.to_pixels.inverse().transform_point2(p))
     }
 
     fn create_renderer(&mut self, window: Arc<Window>) {
@@ -207,7 +95,7 @@ impl App {
         let size = window.inner_size();
         let proxy = self.proxy.clone();
         let task = async move {
-            let result = Renderer::new(window, (size.width, size.height)).await;
+            let result = Renderer::new(window, (size.width, size.height)).await.map(Box::new);
             let _ = proxy.send_event(UserEvent::RendererReady(result));
         };
         #[cfg(target_arch = "wasm32")]
@@ -216,57 +104,35 @@ impl App {
         pollster::block_on(task);
     }
 
-    fn frame(&mut self) {
-        let now = Instant::now();
-        let t = (now - self.start).as_secs_f32();
-        let dt = (now - self.last_frame).as_secs_f32().min(0.1);
-        self.last_frame = now;
-        let (mut tint, mut angle) = ([1.0; 4], 0.0);
-        if let Some(s) = &self.script {
-            match s.vm.call::<_, (f32, f32, f32, f32, f32)>(&s.module, "update", t) {
-                Ok((r, g, b, a, rot)) => (tint, angle) = ([r, g, b, a], rot),
-                Err(e) => {
-                    log::error!("{e}");
-                    self.script = None;
-                }
-            }
-        }
-        let pointer = self.pointer_design();
-        let (Some(renderer), Some(window), Some(smoke)) = (&mut self.renderer, &self.window, &mut self.smoke)
-        else {
+    /// Starts the game once both its files and the renderer are ready.
+    fn start_game(&mut self) {
+        if self.assets.is_none() || self.renderer.is_none() {
             return;
-        };
-        if let Some(story) = &mut self.story {
-            story.tick(dt, smoke, renderer, &mut self.text);
         }
-        let scale = self.viewport.layout(renderer.size()).scale;
-        smoke.update(renderer, &mut self.text, scale, t, dt, tint, angle, pointer);
-        window.pre_present_notify();
-        renderer.render(&smoke.scene, &self.viewport, t);
-        self.apply_audio();
+        let renderer = self.renderer.take().unwrap();
+        let started = self.assets.take().unwrap().and_then(|assets| Game::new(assets, renderer));
+        match started {
+            Ok(mut game) => {
+                if let Some(w) = &self.window {
+                    let size = w.inner_size();
+                    game.resize(size.width, size.height);
+                    w.request_redraw();
+                }
+                self.last_frame = Instant::now();
+                self.game = Some(game);
+            }
+            Err(e) => log::error!("the game failed to start:\n{e}"),
+        }
     }
-}
 
-enum StoryAction {
-    Choose(usize),
-    Rollback,
-    RollForward,
-    Save,
-    Load,
-}
-
-fn load_fonts() -> TextSystem {
-    let mut text = TextSystem::new();
-    text.load_font(include_bytes!("../assets/fonts/Inter-Regular.ttf").to_vec());
-    text.load_font(include_bytes!("../assets/fonts/Inter-Bold.ttf").to_vec());
-    text
-}
-
-fn load_script() -> Result<Script, kulisa_lua::Error> {
-    let vm = Scripting::new()?;
-    log::info!("{} ready", vm.luau_version());
-    let module = vm.run("hello.luau", HELLO)?;
-    Ok(Script { vm, module })
+    /// Browsers allow audio only after a user gesture.
+    fn input(&mut self) -> Option<&mut Game> {
+        let game = self.game.as_mut()?;
+        if cfg!(target_arch = "wasm32") {
+            game.start_audio();
+        }
+        Some(game)
+    }
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -288,50 +154,50 @@ impl ApplicationHandler<UserEvent> for App {
                 w
             }
         };
-        if self.renderer.is_none() && !self.creating_renderer {
-            self.create_renderer(window);
-        }
-        if !cfg!(target_arch = "wasm32") {
-            self.start_audio();
+        // Android recreates the native window after a suspend; the GPU device stays.
+        let size = window.inner_size();
+        let resumed = match (&mut self.game, &mut self.renderer) {
+            (Some(game), _) => Some(game.resume(window.clone(), size.width, size.height)),
+            (None, Some(r)) if r.is_suspended() => Some(r.resume(window.clone(), size.width, size.height)),
+            _ => None,
+        };
+        match resumed {
+            Some(Err(e)) => log::error!("resuming the renderer: {e}"),
+            Some(Ok(())) => window.request_redraw(),
+            None if self.renderer.is_none() && !self.creating_renderer => self.create_renderer(window),
+            None => {}
         }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         // Android destroys the native window on suspend; the surface must go with it.
-        // The renderer and scene are rebuilt on resume; the story keeps its place.
         if cfg!(target_os = "android") {
-            self.renderer = None;
-            self.smoke = None;
+            if let Some(game) = &mut self.game {
+                game.suspend();
+            } else if let Some(r) = &mut self.renderer {
+                r.suspend();
+            }
         }
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::RendererReady(result) => {
+            UserEvent::RendererReady(Ok(mut r)) => {
                 self.creating_renderer = false;
-                match result {
-                    Ok(mut r) => {
-                        if let Some(w) = &self.window {
-                            let size = w.inner_size();
-                            r.resize(size.width, size.height);
-                            w.request_redraw();
-                        }
-                        // Glyph textures belonged to the previous renderer, if any.
-                        self.text.clear_glyph_cache();
-                        let scale = self.viewport.layout(r.size()).scale;
-                        match Smoke::build(&mut r, scale) {
-                            Ok(mut smoke) => {
-                                if let Some(story) = &mut self.story {
-                                    story.resume(&mut smoke, &mut r, &mut self.text, &self.tracks);
-                                }
-                                self.smoke = Some(smoke);
-                            }
-                            Err(e) => log::error!("{e}"),
-                        }
-                        self.renderer = Some(r);
-                    }
-                    Err(e) => log::error!("renderer: {e}"),
+                if let Some(w) = &self.window {
+                    let size = w.inner_size();
+                    r.resize(size.width, size.height);
                 }
+                self.renderer = Some(*r);
+                self.start_game();
+            }
+            UserEvent::RendererReady(Err(e)) => {
+                self.creating_renderer = false;
+                log::error!("renderer: {e}");
+            }
+            UserEvent::GameLoaded(assets) => {
+                self.assets = Some(assets);
+                self.start_game();
             }
         }
     }
@@ -340,58 +206,67 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let Some(r) = &mut self.renderer {
+                if let Some(game) = &mut self.game {
+                    game.resize(size.width, size.height);
+                } else if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                self.pointer = Some(Vec2::new(position.x as f32, position.y as f32));
-            }
-            WindowEvent::CursorLeft { .. } => self.pointer = None,
-            WindowEvent::Touch(touch) => {
-                self.pointer = Some(Vec2::new(touch.location.x as f32, touch.location.y as f32));
-                if touch.phase == TouchPhase::Started {
-                    self.interact();
+                if let Some(game) = &mut self.game {
+                    game.pointer_moved(Some(Vec2::new(position.x as f32, position.y as f32)));
                 }
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
-                self.interact()
+            WindowEvent::CursorLeft { .. } => {
+                if let Some(game) = &mut self.game {
+                    game.pointer_moved(None);
+                }
+            }
+            WindowEvent::Touch(touch) => {
+                let Some(game) = self.input() else { return };
+                game.pointer_moved(Some(Vec2::new(touch.location.x as f32, touch.location.y as f32)));
+                match touch.phase {
+                    TouchPhase::Started => game.pressed("touch"),
+                    TouchPhase::Ended | TouchPhase::Cancelled => game.released("touch"),
+                    TouchPhase::Moved => {}
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let name = match button {
+                    MouseButton::Left => "left",
+                    MouseButton::Right => "right",
+                    MouseButton::Middle => "middle",
+                    _ => return,
+                };
+                let Some(game) = self.input() else { return };
+                match state {
+                    ElementState::Pressed => game.pressed(name),
+                    ElementState::Released => game.released(name),
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let y = match delta {
+                let lines = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
-                    MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
                 };
-                if y > 0.0 {
-                    self.story_action(StoryAction::Rollback);
-                } else if y < 0.0 {
-                    self.story_action(StoryAction::RollForward);
+                if let Some(game) = &mut self.game {
+                    game.wheel(lines);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed && !event.repeat =>
-            {
-                match event.logical_key.as_ref() {
-                    Key::Named(NamedKey::Space | NamedKey::Enter) => self.interact(),
-                    Key::Named(NamedKey::ArrowLeft | NamedKey::PageUp) => {
-                        self.story_action(StoryAction::Rollback)
-                    }
-                    Key::Named(NamedKey::ArrowRight | NamedKey::PageDown) => {
-                        self.story_action(StoryAction::RollForward)
-                    }
-                    Key::Named(NamedKey::F5) => self.story_action(StoryAction::Save),
-                    Key::Named(NamedKey::F9) => self.story_action(StoryAction::Load),
-                    Key::Character(c) if c.eq_ignore_ascii_case("m") => self.toggle_music(),
-                    Key::Character(c) => {
-                        if let Some(d) = c.chars().next().and_then(|d| d.to_digit(10)).filter(|d| *d > 0) {
-                            self.story_action(StoryAction::Choose(d as usize - 1));
-                        }
-                    }
-                    _ => {}
-                }
+            WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
+                let Some(name) = key_name(&event.logical_key) else { return };
+                let Some(game) = self.input() else { return };
+                game.key(&name, event.state == ElementState::Pressed);
             }
             WindowEvent::RedrawRequested => {
-                self.frame();
+                let Some(game) = &mut self.game else { return };
+                let now = Instant::now();
+                game.frame((now - self.last_frame).as_secs_f32());
+                self.last_frame = now;
+                if let Some(w) = &self.window {
+                    w.pre_present_notify();
+                }
+                game.render();
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
@@ -401,8 +276,17 @@ impl ApplicationHandler<UserEvent> for App {
     }
 }
 
-fn run_with(event_loop: EventLoop<UserEvent>) {
-    let app = App::new(event_loop.create_proxy());
+fn run_with(event_loop: EventLoop<UserEvent>, assets: Option<Result<Assets, String>>) {
+    let proxy = event_loop.create_proxy();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let proxy = proxy.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let assets = kulisa_platform::fetch("game.kpak").await.and_then(Assets::pack);
+            let _ = proxy.send_event(UserEvent::GameLoaded(assets));
+        });
+    }
+    let app = App::new(proxy, assets);
     #[cfg(target_arch = "wasm32")]
     {
         use winit::platform::web::EventLoopExtWebSys;
@@ -417,23 +301,65 @@ fn run_with(event_loop: EventLoop<UserEvent>) {
     }
 }
 
+/// The game folder or `.kpak`: the first argument, `KULISA_GAME`, or `game/` or `game.kpak`
+/// next to the executable (an iOS app bundle) or in the working directory.
+#[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+fn find_game() -> Result<Assets, String> {
+    use std::path::PathBuf;
+    let open = |p: PathBuf| {
+        if p.is_dir() {
+            Ok(Assets::dir(p))
+        } else {
+            Assets::pack(std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?)
+        }
+    };
+    if let Some(p) = std::env::args_os().nth(1).or_else(|| std::env::var_os("KULISA_GAME")) {
+        return open(p.into());
+    }
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
+    for dir in exe_dir.into_iter().chain([PathBuf::from(".")]) {
+        for name in ["game", "game.kpak"] {
+            if dir.join(name).exists() {
+                return open(dir.join(name));
+            }
+        }
+    }
+    Err("no game found; pass a game folder or .kpak, like `kulisa-player demos/smoke`".into())
+}
+
 /// Runs the engine on desktop, iOS and web.
 #[cfg(not(target_os = "android"))]
 pub fn run() {
     kulisa_platform::init_logging();
     let event_loop = EventLoop::with_user_event().build().expect("failed to create event loop");
-    run_with(event_loop);
+    // The web fetches the game while the renderer starts.
+    #[cfg(target_arch = "wasm32")]
+    let assets = None;
+    #[cfg(not(target_arch = "wasm32"))]
+    let assets = Some(find_game());
+    run_with(event_loop, assets);
 }
 
-/// Runs the engine inside an Android `NativeActivity`.
+/// Runs the engine inside an Android `NativeActivity`, with the game in the APK's
+/// `assets/game.kpak`.
 #[cfg(target_os = "android")]
 pub fn run_android(app: AndroidApp) {
+    use std::io::Read;
     use winit::platform::android::EventLoopBuilderExtAndroid;
     kulisa_platform::init_logging();
     if let Some(dir) = app.internal_data_path() {
         kulisa_platform::set_android_data_dir(dir);
     }
+    let assets = app
+        .asset_manager()
+        .open(c"game.kpak")
+        .ok_or_else(|| "the APK has no assets/game.kpak".to_string())
+        .and_then(|mut a| {
+            let mut bytes = Vec::new();
+            a.read_to_end(&mut bytes).map_err(|e| format!("reading game.kpak: {e}"))?;
+            Assets::pack(bytes)
+        });
     let event_loop =
         EventLoop::with_user_event().with_android_app(app).build().expect("failed to create event loop");
-    run_with(event_loop);
+    run_with(event_loop, Some(assets));
 }

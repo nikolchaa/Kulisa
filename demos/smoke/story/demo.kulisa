@@ -8,7 +8,7 @@ label start:
     $ visits += 1
     scene dusk
     show logo
-    play music "pad" fadein 2.0
+    play music "audio/pad.wav" fadein 2.0
     k "Welcome{w=0.3} to the {b}Kulisa{/b} smoke test. This is visit [visits]."
     k "Everything here is driven by a {color=#ff6a3d}.kulisa{/color} script: the lines, the choices and what is on stage."
     menu:
@@ -18,7 +18,7 @@ label start:
             $ spins += 1
             k "{wave}Wheee.{/wave} That was spin number [spins]."
         "Change the music":
-            play music "night" fadein 1.5
+            play music "audio/night.wav" fadein 1.5
             scene night
             k "Same channel, new track: the old one fades out as the new one fades in."
         "Hide the logo" if visits > 1:
