@@ -42,8 +42,8 @@ Building blocks we depend on: `winit`, `wgpu`, `cosmic-text`, `kira`, `mlua`
 | `kulisa-platform` | Asset/file access, save paths, haptics, gyro, logging, safe areas | std, per-OS crates |
 | `kulisa-core` | Scene graph, nodes, transforms, camera, viewport, frame extraction; later tweens/timelines, `Value` type, game state, rollback log | `glam`, `bytemuck` |
 | `kulisa-render` | wgpu device, batcher, textures/atlases, meshes, shaders, render targets, post-fx | `wgpu`, `image`, `kulisa-core` |
-| `kulisa-text` | cosmic-text shaping, glyph atlas, rich text tags, effects, ruby | `cosmic-text`, `kulisa-render` |
-| `kulisa-audio` | Channels, music/sound/voice, crossfades, volume groups | `kira` |
+| `kulisa-text` | Markup, cosmic-text shaping, glyph cache in the sprite atlas, typewriter, effects, ruby | `cosmic-text`, `kulisa-core`, `kulisa-render` |
+| `kulisa-audio` | Channels (music/sound/voice/custom), crossfades, per-channel volume, placeholder synthesis | `kira` |
 | `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM | `kulisa-core` |
 | `kulisa-lua` | Luau VM, sandbox, the `kulisa.*` API binding | `mlua`, engine crates |
 | `kulisa-ui` | Reactive declarative screens, layout, widgets | `kulisa-core`, `kulisa-text` |
@@ -161,22 +161,60 @@ Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame
 
 ## 5. Text
 
-`cosmic-text` shapes and lays out; Kulisa owns rasterized glyph caching in a
-GPU atlas (one R8 atlas for masks, one RGBA for color emoji). Each glyph becomes
-a quad in the normal batcher, which makes per-character effects cheap: the
-typewriter reveals glyphs, and effects (wave, shake, color, size) are per-glyph
-vertex offsets/colors computed per frame. Inline tags (`{b}`, `{color=#f00}`,
-`{wave}`, `{ruby=ふりがな}`) are parsed into spans before shaping. Ruby text is
-laid out as a second line anchored to its base span. RTL and CJK come from
-cosmic-text; fallback fonts are configured per game.
+Implemented in M2 (`kulisa-text`).
+
+- **Markup** (`markup.rs`): `{b}`, `{i}`, `{color=#e8a0bf}`, `{size=1.5}` or
+  `{size=32px}`, `{font=Name}`, `{wave[=amp]}`, `{shake[=amp]}`,
+  `{ruby=reading}base{/ruby}`, `{speed=k}` and `{w=secs}` pauses; `{{` is a
+  literal brace. Errors are strict (unknown tag, bad value, mismatched or unclosed
+  tag) with a byte offset and a plain-English message.
+- **Shaping** with cosmic-text (bidi/RTL, fallback across loaded fonts, per-span
+  size via `Attrs::metrics`). Each span's index rides along as glyph metadata, so
+  every glyph maps back to its style without a second pass.
+- **No bundled engine fonts.** `TextSystem::load_font` takes TTF/OTF bytes;
+  `load_system_fonts` is an opt-in desktop fallback for development. The smoke
+  scene ships Inter (SIL OFL 1.1, license next to the files).
+- **Glyphs live in the sprite atlas.** Glyphs are rasterized (swash) at physical
+  pixel size (design size × window scale, so text stays sharp) and uploaded with
+  `Renderer::create_texture`, i.e. into the same atlas pages as small sprites. A
+  text box is a `NodeKind::Quads` node and batches with the UI around it. Glyphs
+  are cached per cosmic-text `CacheKey` (font, size, subpixel bin); a box
+  re-lays out when the window scale changes. Upload goes through the `GlyphSink`
+  trait so layout is unit-tested without a GPU.
+- **Typewriter** (`TextBox`): each glyph's reveal time comes from character
+  order, `{speed}` spans and `{w}` pauses; characters per second and per-glyph
+  fade are runtime settings. `skip()` and `is_complete()` serve click-to-advance.
+- **Effects** are per-frame offsets and alphas on the glyph quads: wave (sine by
+  glyph order), shake (deterministic jitter at 24 Hz), color and size via spans.
+- **Ruby** is shaped at half size and centered above the first line of its base
+  text; lines with ruby get extra leading. It reveals with its base.
+- **Known limits (M2):** no synthetic bold/italic (load the real faces); ruby over
+  a base that wraps across lines sits above the first line only; vertical text and
+  per-glyph custom shaders are not supported yet; RTL is shaped by cosmic-text but
+  not yet tested (no RTL font is bundled).
 
 ## 6. Audio
 
-`kira` with one mixer track per channel. Built-in channels: `music`, `sound`,
-`voice`, plus any number of game-defined channels. Each has a volume group, and
-the settings screen (a template, not the engine) binds to them. Crossfades and
-fades are kira tweens. Voice can drive auto-advance (the VM waits for the voice
-handle to finish). Music position is part of the saved scene state.
+Implemented in M2 (`kulisa-audio`) on kira.
+
+- One kira sub-track per channel, each with its own volume (linear 0..1 in the
+  API, decibels inside). Built-in `music` and `voice` are single-sound channels:
+  playing a new sound fades out the current one over `crossfade` seconds.
+  `sound` overlaps freely. Games add channels with `add_channel`.
+- `PlayOptions { volume, looping, fade_in, crossfade }`; `stop(channel, fade)`;
+  `set_volume(channel, v, fade)`; master volume; `is_playing(channel)`, which
+  story code will use on `voice` for auto-advance (M3).
+- `Sound::decode` loads short sounds into memory. `Sound::stream` streams long
+  music on native; kira streams on a thread, which `wasm32-unknown-unknown`
+  lacks, so on the web it decodes up front.
+- Formats: Ogg Vorbis, WAV (PCM), MP3, FLAC. `wav::encode_mono16` and
+  `wav::blip` make synthesized placeholder sounds.
+- **Web:** browsers only start audio after a user gesture, so the runtime creates
+  the audio system on the first click, tap or key.
+- **No audio device** (headless machines) is a warning, not an error.
+- Tests run against kira's mock backend, so CI needs no sound card. Linux builds
+  need ALSA headers (`libasound2-dev`).
+- Music position as part of saved scene state arrives with saves (M3).
 
 ## 7. Story language and VM
 
@@ -402,4 +440,6 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | M1: extraction in `kulisa-core` emits pixel-space vertices per pass; batching happens at extraction and again on GPU state (atlas pages). Keeps the renderer thin and the logic testable without a GPU. |
 | 2026-10-19 | M1: user shaders are fragment (+ optional vertex) functions over a fixed prelude, validated with naga for `file:line` errors. Effects use the same contract. |
 | 2026-10-19 | M1: the window always shows sRGB-correct output; GLES surfaces without sRGB views get a final encode pass instead of pushing that into every shader. |
+| 2026-10-19 | M2: glyphs go into the sprite atlas (RGBA) instead of a separate R8 glyph atlas: text batches with sprites and there is one texture path. Costs 4x memory per glyph; revisit if CJK-heavy games hit atlas limits. |
+| 2026-10-19 | M2: audio channels are kira sub-tracks; music streams on native but decodes up front on web (no threads). Web audio starts on first user gesture. |
 | 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |
