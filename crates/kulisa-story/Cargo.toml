@@ -1,0 +1,11 @@
+[package]
+name = "kulisa-story"
+description = "The .kulisa story language for the Kulisa engine: parser, compiler and a VM with rollback and update-safe saves."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kulisa-core.workspace = true

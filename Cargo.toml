@@ -17,6 +17,7 @@ kulisa-platform = { path = "crates/kulisa-platform" }
 kulisa-render = { path = "crates/kulisa-render" }
 kulisa-lua = { path = "crates/kulisa-lua" }
 kulisa-runtime = { path = "crates/kulisa-runtime" }
+kulisa-story = { path = "crates/kulisa-story" }
 kulisa-text = { path = "crates/kulisa-text" }
 
 cosmic-text = "0.19"
