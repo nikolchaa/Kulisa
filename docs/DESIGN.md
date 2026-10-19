@@ -356,3 +356,4 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | Vendor `mlua` 0.12.2 with a one-line wasm fix rather than switching scripting languages. |
 | 2026-10-19 | Static libc++ on Android (`c++_static` + `c++abi`) so APKs need no extra `.so`. |
 | 2026-10-19 | `cargo xtask` for engine-developer build steps (web, APK). |
+| 2026-10-19 | Minimum OS: iOS 15, macOS 11 (Rust's iOS 10 default fails to link Luau's C++ with current Xcode), Android API 26. |
