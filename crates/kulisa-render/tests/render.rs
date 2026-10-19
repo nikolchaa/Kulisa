@@ -4,7 +4,7 @@
 //! which CI does so they cannot silently pass.
 
 use kulisa_core::{
-    BlendMode, Color, Material, Node, NodeKind, Rect, ScaleMode, Scene, UVec2, Vec2, Viewport,
+    BlendMode, Color, Material, Node, NodeKind, Rect, ScaleMode, Scene, Slice, UVec2, Vec2, Viewport,
 };
 use kulisa_render::{Image, Renderer};
 
@@ -140,7 +140,7 @@ fn custom_shaders_read_params() {
     let mut node = Node::sprite(white, Vec2::splat(16.0));
     let mut params = [0.0; 16];
     params[1] = 1.0; // linear green
-    node.material = Some(Material { shader, params });
+    node.material = Some(Material::new(shader, params));
     s.add(s.root(), node);
     r.render(&s, &v, 0.0);
     assert_px(&r.read_pixels().unwrap(), 8, 8, [0, 255, 0]);
@@ -163,7 +163,7 @@ fn screen_and_layer_effects_chain() {
         )
         .unwrap();
     let red = solid(&mut r, [255, 0, 0, 255]);
-    let effect = |shader| Material { shader, params: [0.0; 16] };
+    let effect = |shader| Material::new(shader, [0.0; 16]);
     // Layer effect: red becomes green inside the layer only.
     let mut layer = Node::layer(1.0);
     if let NodeKind::Layer(l) = &mut layer.kind {
@@ -191,4 +191,98 @@ fn shader_errors_are_readable() {
         .create_shader("broken.wgsl", "fn fragment(in: VertexOut) -> vec4<f32> {\n  return nope;\n}")
         .unwrap_err();
     assert!(err.contains("broken.wgsl:2"), "{err}");
+}
+
+#[test]
+fn masks_bind_a_second_texture() {
+    let Some(mut r) = renderer() else { return };
+    let (mut s, v) = scene();
+    // Left half of the mask is black, right half white (an atlas image: copied unpacked).
+    let mut px = Vec::new();
+    for _y in 0..4 {
+        for x in 0..4 {
+            px.extend_from_slice(if x < 2 { &[0, 0, 0, 255] } else { &[255, 255, 255, 255] });
+        }
+    }
+    let mask = r.create_texture(&Image::from_straight_rgba(4, 4, px));
+    let shader = r
+        .create_shader(
+            "masked.wgsl",
+            "fn fragment(in: VertexOut) -> vec4<f32> { let m = textureSample(mask_tex, mask_samp, in.uv).r; return vec4<f32>(m, 0.0, 1.0 - m, 1.0); }",
+        )
+        .unwrap();
+    let target = r.create_target(32, 32);
+    let mut node = Node::sprite(target, Vec2::splat(32.0));
+    node.material = Some(Material { shader, params: [0.0; 16], mask: Some(mask) });
+    s.add(s.root(), node);
+    // Without a mask the shader samples white.
+    let mut plain = Node::sprite(target, Vec2::splat(16.0)).at(40.0, 40.0);
+    plain.material = Some(Material::new(shader, [0.0; 16]));
+    s.add(s.root(), plain);
+    r.render(&s, &v, 0.0);
+    let img = r.read_pixels().unwrap();
+    assert_px(&img, 4, 16, [0, 0, 255]);
+    assert_px(&img, 28, 16, [255, 0, 0]);
+    assert_px(&img, 48, 48, [255, 0, 0]);
+}
+
+#[test]
+fn captures_scenes_into_targets_and_reads_them_back() {
+    let Some(mut r) = renderer() else { return };
+    let (mut s, v) = scene();
+    let red = solid(&mut r, [255, 0, 0, 255]);
+    s.add(s.root(), Node::sprite(red, Vec2::splat(32.0)));
+    // A 32x32 capture of the 64x64 scene: the sprite covers its top-left quarter.
+    let shot = r.create_target(32, 32);
+    r.capture(&s, &v, 0.0, shot).unwrap();
+    let rb = r.read_texture(shot).unwrap();
+    let img = r.poll_readback(&rb, true).unwrap().unwrap();
+    assert_eq!((img.width, img.height), (32, 32));
+    assert_px(&img, 4, 4, [255, 0, 0]);
+    assert_px(&img, 24, 24, [0, 0, 0]);
+    // The capture shows on screen like any texture.
+    let (mut s2, v2) = scene();
+    s2.add(s2.root(), Node::sprite(shot, Vec2::splat(64.0)));
+    r.render(&s2, &v2, 0.0);
+    let img = r.read_pixels().unwrap();
+    assert_px(&img, 10, 10, [255, 0, 0]);
+    assert_px(&img, 50, 50, [0, 0, 0]);
+    assert!(r.capture(&s, &v, 0.0, red).is_err(), "atlas images are not render targets");
+    // Freed textures draw white instead of failing.
+    r.free_texture(shot);
+    r.render(&s2, &v2, 0.0);
+    assert_px(&r.read_pixels().unwrap(), 50, 50, [255, 255, 255]);
+}
+
+#[test]
+fn nine_slices_keep_their_borders() {
+    let Some(mut r) = renderer() else { return };
+    let (mut s, v) = scene();
+    // 8x8 image: a 2 px red border around blue.
+    let mut px = Vec::new();
+    for y in 0..8 {
+        for x in 0..8 {
+            let edge = x < 2 || y < 2 || x >= 6 || y >= 6;
+            px.extend_from_slice(if edge { &[255, 0, 0, 255] } else { &[0, 0, 255, 255] });
+        }
+    }
+    let img = r.create_texture_unpacked(&Image::from_straight_rgba(8, 8, px));
+    let mut node = Node::sprite(img, Vec2::new(48.0, 32.0)).at(8.0, 8.0);
+    if let NodeKind::Sprite(sp) = &mut node.kind {
+        sp.slice = Some(Slice {
+            left: 2.0,
+            top: 2.0,
+            right: 2.0,
+            bottom: 2.0,
+            source: Vec2::splat(8.0),
+            scale: 1.0,
+        });
+    }
+    s.add(s.root(), node);
+    r.render(&s, &v, 0.0);
+    let out = r.read_pixels().unwrap();
+    assert_px(&out, 8, 20, [255, 0, 0]); // left border stays 2 px wide
+    assert_px(&out, 30, 24, [0, 0, 255]); // the middle stretches
+    assert_px(&out, 54, 20, [255, 0, 0]);
+    assert_px(&out, 30, 39, [255, 0, 0]);
 }

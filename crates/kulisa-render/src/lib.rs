@@ -6,6 +6,8 @@ mod shader;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use kulisa_core::{
@@ -83,8 +85,14 @@ struct GpuTexture {
 }
 
 enum Tex {
-    Atlas { page: usize, uv: Rect, size: UVec2 },
+    Atlas {
+        page: usize,
+        uv: Rect,
+        size: UVec2,
+    },
     Own(GpuTexture),
+    /// Released with [`Renderer::free_texture`]; draws as white.
+    Freed,
 }
 
 struct Page {
@@ -133,6 +141,10 @@ pub struct Renderer {
     shaders: Vec<wgpu::ShaderModule>,
     pipelines: HashMap<(u32, Blend, wgpu::TextureFormat), wgpu::RenderPipeline>,
     textures: Vec<Tex>,
+    /// Unpacked copies of atlas images used as masks (masks sample their own 0..1 UVs).
+    mask_copies: HashMap<TextureId, GpuTexture>,
+    /// 1x1 white: the mask when a material has none.
+    white_tex: GpuTexture,
     pages: Vec<Page>,
     page_size: u32,
     white_uv: Rect,
@@ -221,9 +233,10 @@ fn create_gpu_texture(
     size: UVec2,
     render_target: bool,
 ) -> GpuTexture {
-    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+    let mut usage =
+        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
     if render_target {
-        usage |= wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+        usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
     }
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: None,
@@ -416,7 +429,12 @@ impl Renderer {
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("kulisa"),
-            bind_group_layouts: &[Some(&globals_layout), Some(&texture_layout), Some(&params_layout)],
+            bind_group_layouts: &[
+                Some(&globals_layout),
+                Some(&texture_layout),
+                Some(&params_layout),
+                Some(&texture_layout),
+            ],
             ..Default::default()
         });
 
@@ -475,6 +493,7 @@ impl Renderer {
         let globals_bg = uniform_bind_group(&device, &globals_layout, &ubuf, GLOBALS_SIZE);
         let params_bg = uniform_bind_group(&device, &params_layout, &pbuf, PARAMS_SIZE);
         let vbuf = buffer("vertices", 1 << 16, wgpu::BufferUsages::VERTEX);
+        let white_tex = create_gpu_texture(&device, &texture_layout, &sampler, UVec2::ONE, false);
         let ibuf = buffer("indices", 1 << 16, wgpu::BufferUsages::INDEX);
 
         let mut r = Self {
@@ -495,6 +514,8 @@ impl Renderer {
             shaders: Vec::new(),
             pipelines: HashMap::new(),
             textures: Vec::new(),
+            mask_copies: HashMap::new(),
+            white_tex,
             pages: Vec::new(),
             page_size: limits.max_texture_dimension_2d.min(2048),
             white_uv: Rect::UNIT,
@@ -511,6 +532,7 @@ impl Renderer {
             stats: FrameStats::default(),
             warned_feedback: false,
         };
+        r.upload(&r.white_tex.texture, 0, 0, &Image::solid(1, 1, [255; 4]));
         let sprite = r.module("sprite", shader::build("sprite", shader::SPRITE)?);
         let present = r.module("present", shader::build("present", shader::PRESENT_ENCODE)?);
         r.shaders.extend([sprite, present]);
@@ -624,6 +646,24 @@ impl Renderer {
         id
     }
 
+    /// Uploads an image into its own texture, never an atlas page, so
+    /// [`Renderer::free_texture`] gives its memory back (e.g. save thumbnails).
+    pub fn create_texture_unpacked(&mut self, image: &Image) -> TextureId {
+        let tex = self.new_texture(UVec2::new(image.width, image.height), false);
+        self.upload(&tex.texture, 0, 0, image);
+        self.textures.push(Tex::Own(tex));
+        TextureId(self.textures.len() as u32 - 1)
+    }
+
+    /// Releases a texture. Unpacked textures and render targets free their memory; atlas
+    /// space is not reclaimed. Sprites still showing it draw white.
+    pub fn free_texture(&mut self, id: TextureId) {
+        if let Some(t) = self.textures.get_mut(id.0 as usize) {
+            *t = Tex::Freed;
+        }
+        self.mask_copies.remove(&id);
+    }
+
     /// Creates a render target for a [`kulisa_core::Target`] node; sprites can show it.
     pub fn create_target(&mut self, width: u32, height: u32) -> TextureId {
         let tex = self.new_texture(UVec2::new(width, height), true);
@@ -636,6 +676,7 @@ impl Renderer {
         match self.textures.get(id.0 as usize)? {
             Tex::Atlas { size, .. } => Some(*size),
             Tex::Own(t) => Some(t.size),
+            Tex::Freed => None,
         }
     }
 
@@ -740,10 +781,10 @@ impl Renderer {
         if (id.0 as usize) < self.shaders.len() { id.0 } else { SPRITE_SHADER }
     }
 
-    /// Format of the texture a pass writes into.
-    fn target_format(&self, target: PassTarget) -> wgpu::TextureFormat {
+    /// Format of the texture a pass writes into. Captures always write `RT_FORMAT`.
+    fn target_format(&self, target: PassTarget, capture: bool) -> wgpu::TextureFormat {
         match target {
-            PassTarget::Surface if !self.encode_on_present => self.out_format,
+            PassTarget::Surface if !self.encode_on_present && !capture => self.out_format,
             _ => RT_FORMAT,
         }
     }
@@ -756,7 +797,7 @@ impl Renderer {
                     TexRef::Texture(id) => match self.textures.get(id.0 as usize) {
                         Some(Tex::Atlas { uv, .. }) => *uv,
                         Some(Tex::Own(_)) => continue,
-                        None => self.white_uv,
+                        Some(Tex::Freed) | None => self.white_uv,
                     },
                     TexRef::White => self.white_uv,
                     TexRef::Transient(_) => continue,
@@ -814,17 +855,98 @@ impl Renderer {
             TexRef::Texture(id) => match self.textures.get(id.0 as usize) {
                 Some(Tex::Atlas { page, .. }) => &self.pages[*page].tex.bind_group,
                 Some(Tex::Own(t)) => &t.bind_group,
-                None => &self.pages[0].tex.bind_group,
+                Some(Tex::Freed) | None => &self.pages[0].tex.bind_group,
             },
             TexRef::White => &self.pages[0].tex.bind_group,
             TexRef::Transient(k) => &self.transients[k as usize].bind_group,
         }
     }
 
+    fn mask_bind_group(&self, mask: Option<TextureId>) -> &wgpu::BindGroup {
+        let Some(id) = mask else { return &self.white_tex.bind_group };
+        match self.textures.get(id.0 as usize) {
+            Some(Tex::Own(t)) => &t.bind_group,
+            Some(Tex::Atlas { .. }) => {
+                self.mask_copies.get(&id).map_or(&self.white_tex.bind_group, |t| &t.bind_group)
+            }
+            _ => &self.white_tex.bind_group,
+        }
+    }
+
+    /// Copies atlas images used as masks into their own textures.
+    fn prepare_masks(&mut self, frame: &Frame, encoder: &mut wgpu::CommandEncoder) {
+        let masks = frame.passes.iter().flat_map(|p| {
+            p.items
+                .iter()
+                .filter_map(|i| i.material.and_then(|m| m.mask))
+                .chain(p.effects.iter().filter_map(|e| e.mask))
+        });
+        let mut missing: Vec<TextureId> = Vec::new();
+        for id in masks {
+            if matches!(self.textures.get(id.0 as usize), Some(Tex::Atlas { .. }))
+                && !self.mask_copies.contains_key(&id)
+                && !missing.contains(&id)
+            {
+                missing.push(id);
+            }
+        }
+        for id in missing {
+            let Some(Tex::Atlas { page, uv, size }) = self.textures.get(id.0 as usize) else { continue };
+            let (page, size) = (*page, *size);
+            let origin = (uv.min * self.page_size as f32).round();
+            let copy = self.new_texture(size, false);
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.pages[page].tex.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: origin.x as u32, y: origin.y as u32, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &copy.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
+            );
+            self.mask_copies.insert(id, copy);
+        }
+    }
+
     /// Renders `scene` laid out by `viewport` and presents it. `time` is in seconds.
     pub fn render(&mut self, scene: &Scene, viewport: &Viewport, time: f32) {
+        self.draw_scene(scene, viewport, time, None);
+    }
+
+    /// Renders `scene` into the render target `target` as if the target were the window
+    /// (screen transitions, save thumbnails). Nothing is presented.
+    pub fn capture(
+        &mut self,
+        scene: &Scene,
+        viewport: &Viewport,
+        time: f32,
+        target: TextureId,
+    ) -> Result<(), String> {
+        let size = match self.textures.get(target.0 as usize) {
+            Some(Tex::Own(t)) if t.texture.usage().contains(wgpu::TextureUsages::RENDER_ATTACHMENT) => t.size,
+            _ => return Err(format!("texture {} is not a render target", target.0)),
+        };
+        self.draw_scene(scene, viewport, time, Some((target, size)));
+        Ok(())
+    }
+
+    fn draw_scene(
+        &mut self,
+        scene: &Scene,
+        viewport: &Viewport,
+        time: f32,
+        capture: Option<(TextureId, UVec2)>,
+    ) {
+        let size = capture.map_or(self.size, |(_, s)| s);
+        let capturing = capture.is_some();
         let mut frame = std::mem::take(&mut self.frame);
-        kulisa_core::extract(scene, &viewport.layout(self.size), self.size, &mut frame);
+        kulisa_core::extract(scene, &viewport.layout(size), size, &mut frame);
         self.remap_uvs(&mut frame);
 
         // A full-target quad for every pass with effects, plus one for present.
@@ -838,8 +960,13 @@ impl Renderer {
         let uniforms = self.uniforms(&frame, time);
 
         // Resources: transients, scratch, buffers, pipelines.
+        for t in &mut self.transients {
+            if t.size != size {
+                *t = create_gpu_texture(&self.device, &self.texture_layout, &self.sampler, size, true);
+            }
+        }
         while self.transients.len() < frame.transients as usize {
-            self.transients.push(self.new_texture(self.size, true));
+            self.transients.push(self.new_texture(size, true));
         }
         if self.encode_on_present && self.screen.is_none() {
             self.screen = Some(self.new_texture(self.size, true));
@@ -864,7 +991,7 @@ impl Renderer {
         self.queue.write_buffer(&self.ubuf, 0, &uniforms.globals);
         self.queue.write_buffer(&self.pbuf, 0, &uniforms.params);
         for pass in &frame.passes {
-            let fmt = self.target_format(pass.target);
+            let fmt = self.target_format(pass.target, capturing);
             let item_fmt = if pass.effects.is_empty() { fmt } else { RT_FORMAT };
             for item in &pass.items {
                 let shader = item.material.map_or(SPRITE_SHADER, |m| self.shader_index(m.shader));
@@ -875,17 +1002,20 @@ impl Renderer {
                 self.pipeline(self.shader_index(e.shader), Blend::Replace, f);
             }
         }
-        if self.encode_on_present {
+        if self.encode_on_present && !capturing {
             self.pipeline(PRESENT_SHADER, Blend::Replace, self.out_format);
         }
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        self.prepare_masks(&frame, &mut encoder);
 
         // Acquire the output.
-        let surface_tex = match &self.output {
-            Output::Surface { surface: None, .. } => {
+        let surface_tex = match (&self.output, capturing) {
+            (_, true) | (Output::Headless(_), _) => None,
+            (Output::Surface { surface: None, .. }, _) => {
                 self.frame = frame;
                 return;
             }
-            Output::Surface { surface: Some(surface), config } => match surface.get_current_texture() {
+            (Output::Surface { surface: Some(surface), config }, _) => match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) => Some(t),
                 wgpu::CurrentSurfaceTexture::Suboptimal(_)
                 | wgpu::CurrentSurfaceTexture::Outdated
@@ -900,7 +1030,6 @@ impl Renderer {
                     return;
                 }
             },
-            Output::Headless(_) => None,
         };
         let surface_view = surface_tex.as_ref().map(|t| {
             t.texture.create_view(&wgpu::TextureViewDescriptor {
@@ -908,21 +1037,25 @@ impl Renderer {
                 ..Default::default()
             })
         });
-        let screen_view = match (&self.screen, &surface_view, &self.output) {
-            (Some(s), _, _) => &s.view,
-            (None, Some(v), _) => v,
-            (None, None, Output::Headless(t)) => &t.view,
+        let capture_view = capture.and_then(|(id, _)| match self.textures.get(id.0 as usize) {
+            Some(Tex::Own(t)) => Some(&t.view),
+            _ => None,
+        });
+        let screen_view = match (capture_view, &self.screen, &surface_view, &self.output) {
+            (Some(v), ..) => v,
+            (None, Some(s), _, _) => &s.view,
+            (None, None, Some(v), _) => v,
+            (None, None, None, Output::Headless(t)) => &t.view,
             _ => unreachable!("a surface output always has a view"),
         };
 
-        let mut encoder = self.device.create_command_encoder(&Default::default());
         let mut stats = FrameStats { vertices: frame.vertices.len() as u32, ..Default::default() };
         for (i, pass) in frame.passes.iter().enumerate() {
             let target_view = match pass.target {
                 PassTarget::Surface => screen_view,
                 PassTarget::Transient(k) => &self.transients[k as usize].view,
                 PassTarget::Texture(id) => match self.textures.get(id.0 as usize) {
-                    Some(Tex::Own(t)) => &t.view,
+                    Some(Tex::Own(t)) if capture.is_none_or(|(c, _)| c != id) => &t.view,
                     _ => {
                         log::warn!("pass target {id:?} is not a render target");
                         continue;
@@ -930,7 +1063,7 @@ impl Renderer {
                 },
             };
             let globals = (i as u64 * self.align) as u32;
-            let fmt = self.target_format(pass.target);
+            let fmt = self.target_format(pass.target, capturing);
             match pairs[i] {
                 None => self.draw_items(
                     &mut encoder,
@@ -963,10 +1096,13 @@ impl Renderer {
                             &mut encoder,
                             dst,
                             f,
-                            shader,
-                            &src.bind_group,
-                            globals,
-                            params,
+                            Fullscreen {
+                                shader,
+                                input: &src.bind_group,
+                                mask: self.mask_bind_group(effect.mask),
+                                globals,
+                                param: params,
+                            },
                             quad.clone(),
                         );
                         stats.draw_calls += 1;
@@ -975,16 +1111,19 @@ impl Renderer {
                 }
             }
         }
-        if let (Some(screen), Some(view)) = (&self.screen, &surface_view) {
+        if let (Some(screen), Some(view), false) = (&self.screen, &surface_view, capturing) {
             let globals = (frame.passes.len() as u64 * self.align) as u32;
             self.draw_fullscreen(
                 &mut encoder,
                 view,
                 self.out_format,
-                PRESENT_SHADER,
-                &screen.bind_group,
-                globals,
-                0,
+                Fullscreen {
+                    shader: PRESENT_SHADER,
+                    input: &screen.bind_group,
+                    mask: &self.white_tex.bind_group,
+                    globals,
+                    param: 0,
+                },
                 present_quad,
             );
             stats.draw_calls += 1;
@@ -994,7 +1133,9 @@ impl Renderer {
         if let Some(t) = surface_tex {
             self.queue.present(t);
         }
-        self.stats = stats;
+        if !capturing {
+            self.stats = stats;
+        }
         self.frame = frame;
     }
 
@@ -1069,7 +1210,8 @@ impl Renderer {
             }
             let shader = item.material.map_or(SPRITE_SHADER, |m| self.shader_index(m.shader));
             let bg = self.texture_bind_group(item.texture);
-            let state = (shader, item.blend, bg as *const _, param, item.clip);
+            let mask = self.mask_bind_group(item.material.and_then(|m| m.mask));
+            let state = (shader, item.blend, bg as *const _, mask as *const _, param, item.clip);
             if let Some((_, range, _)) = &mut pending
                 && last_state == Some(state)
                 && range.end == item.indices.start
@@ -1082,6 +1224,7 @@ impl Renderer {
                 rp.set_pipeline(&self.pipelines[&(shader, Blend::Mode(item.blend), format)]);
                 rp.set_bind_group(1, bg, &[]);
                 rp.set_bind_group(2, &self.params_bg, &[param * self.align as u32]);
+                rp.set_bind_group(3, mask, &[]);
                 let [x, y, w, h] = item.clip.unwrap_or([0, 0, pass.size.x, pass.size.y]);
                 rp.set_scissor_rect(x, y, w, h);
                 last_state = Some(state);
@@ -1091,16 +1234,12 @@ impl Renderer {
         flush(&mut rp, &mut pending);
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn draw_fullscreen(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         format: wgpu::TextureFormat,
-        shader: u32,
-        input: &wgpu::BindGroup,
-        globals: u32,
-        param: u32,
+        f: Fullscreen,
         quad: std::ops::Range<u32>,
     ) {
         let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1119,22 +1258,27 @@ impl Renderer {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        rp.set_pipeline(&self.pipelines[&(shader, Blend::Replace, format)]);
+        rp.set_pipeline(&self.pipelines[&(f.shader, Blend::Replace, format)]);
         rp.set_vertex_buffer(0, self.vbuf.slice(..));
         rp.set_index_buffer(self.ibuf.slice(..), wgpu::IndexFormat::Uint32);
-        rp.set_bind_group(0, &self.globals_bg, &[globals]);
-        rp.set_bind_group(1, input, &[]);
-        rp.set_bind_group(2, &self.params_bg, &[param * self.align as u32]);
+        rp.set_bind_group(0, &self.globals_bg, &[f.globals]);
+        rp.set_bind_group(1, f.input, &[]);
+        rp.set_bind_group(2, &self.params_bg, &[f.param * self.align as u32]);
+        rp.set_bind_group(3, f.mask, &[]);
         rp.draw_indexed(quad, 0, 0..1);
     }
 
-    /// Reads back the headless output (premultiplied sRGB RGBA8). Native only.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn read_pixels(&self) -> Option<Image> {
-        let Output::Headless(tex) = &self.output else { return None };
+    /// Starts copying a render target or unpacked texture back to the CPU. Finish it with
+    /// [`Renderer::poll_readback`]; browsers deliver the pixels a frame or more later.
+    pub fn read_texture(&self, id: TextureId) -> Option<Readback> {
+        let Some(Tex::Own(tex)) = self.textures.get(id.0 as usize) else { return None };
+        Some(self.start_readback(tex))
+    }
+
+    fn start_readback(&self, tex: &GpuTexture) -> Readback {
         let (w, h) = (tex.size.x, tex.size.y);
         let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("readback"),
             size: (row * h) as u64,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -1149,7 +1293,7 @@ impl Renderer {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: &buf,
+                buffer: &buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(row),
@@ -1159,13 +1303,64 @@ impl Renderer {
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
         self.queue.submit([encoder.finish()]);
-        buf.map_async(wgpu::MapMode::Read, .., |_| {});
-        self.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
-        let data = buf.get_mapped_range(..).ok()?;
-        let mut pixels = Vec::with_capacity((w * h * 4) as usize);
-        for y in 0..h as usize {
-            pixels.extend_from_slice(&data[y * row as usize..][..(w * 4) as usize]);
-        }
-        Some(Image { width: w, height: h, pixels })
+        let state = Arc::new(AtomicU8::new(0));
+        let done = state.clone();
+        buffer.map_async(wgpu::MapMode::Read, .., move |r| {
+            done.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release)
+        });
+        Readback { buffer, size: tex.size, row, state }
     }
+
+    /// The pixels of a [`Readback`] (premultiplied sRGB RGBA8) once they arrived, or `None`
+    /// while it is pending. `wait` blocks until then (native only; ignored on the web).
+    pub fn poll_readback(&self, rb: &Readback, wait: bool) -> Option<Result<Image, String>> {
+        let poll = if wait && !cfg!(target_arch = "wasm32") {
+            wgpu::PollType::wait_indefinitely()
+        } else {
+            wgpu::PollType::Poll
+        };
+        let _ = self.device.poll(poll);
+        match rb.state.load(Ordering::Acquire) {
+            0 => None,
+            2 => Some(Err("reading the texture back failed".into())),
+            _ => {
+                let data = match rb.buffer.get_mapped_range(..) {
+                    Ok(d) => d,
+                    Err(e) => return Some(Err(e.to_string())),
+                };
+                let (w, h) = (rb.size.x as usize, rb.size.y as usize);
+                let mut pixels = Vec::with_capacity(w * h * 4);
+                for y in 0..h {
+                    pixels.extend_from_slice(&data[y * rb.row as usize..][..w * 4]);
+                }
+                Some(Ok(Image { width: rb.size.x, height: rb.size.y, pixels }))
+            }
+        }
+    }
+
+    /// Reads back the headless output (premultiplied sRGB RGBA8). Native only.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn read_pixels(&self) -> Option<Image> {
+        let Output::Headless(tex) = &self.output else { return None };
+        let rb = self.start_readback(tex);
+        self.poll_readback(&rb, true)?.ok()
+    }
+}
+
+/// A texture copy on its way back to the CPU (see [`Renderer::read_texture`]).
+pub struct Readback {
+    buffer: wgpu::Buffer,
+    size: UVec2,
+    row: u32,
+    /// 0 pending, 1 mapped, 2 failed.
+    state: Arc<AtomicU8>,
+}
+
+/// Bindings of a full-target draw (effects, present).
+struct Fullscreen<'a> {
+    shader: u32,
+    input: &'a wgpu::BindGroup,
+    mask: &'a wgpu::BindGroup,
+    globals: u32,
+    param: u32,
 }

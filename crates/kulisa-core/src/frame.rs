@@ -9,7 +9,9 @@ use std::ops::Range;
 use bytemuck::{Pod, Zeroable};
 use glam::{Affine2, UVec2, Vec2};
 
-use crate::{BlendMode, Color, Effect, Material, NodeId, NodeKind, Rect, Scene, TextureId, ViewLayout};
+use crate::{
+    BlendMode, Color, Effect, Material, NodeId, NodeKind, Rect, Scene, Sprite, TextureId, ViewLayout,
+};
 
 /// Vertex in pass pixel space. `color` is linear, premultiplied, 8-bit.
 #[repr(C)]
@@ -125,6 +127,43 @@ pub fn extract(scene: &Scene, layout: &ViewLayout, window: UVec2, frame: &mut Fr
         items,
         effects: scene.effects.clone(),
     });
+}
+
+/// The quads a sprite draws, in local units with their UVs: one, or up to nine for a
+/// nine-slice. Borders larger than the sprite shrink proportionally.
+fn sprite_parts(s: &Sprite) -> Vec<(Rect, Rect)> {
+    let full = Rect { min: Vec2::ZERO, max: s.size };
+    let Some(sl) = s.slice else { return vec![(full, s.uv)] };
+    let src = sl.source.max(Vec2::ONE);
+    let shrink = |a: f32, b: f32, room: f32| {
+        let total = (a + b) * sl.scale;
+        if total > room && total > 0.0 {
+            (a * sl.scale * room / total, b * sl.scale * room / total)
+        } else {
+            (a * sl.scale, b * sl.scale)
+        }
+    };
+    let (l, r) = shrink(sl.left, sl.right, s.size.x.abs());
+    let (t, b) = shrink(sl.top, sl.bottom, s.size.y.abs());
+    let xs = [0.0, l, s.size.x - r, s.size.x];
+    let ys = [0.0, t, s.size.y - b, s.size.y];
+    let uv = s.uv;
+    let us =
+        [0.0, sl.left / src.x, 1.0 - sl.right / src.x, 1.0].map(|f| uv.min.x + (uv.max.x - uv.min.x) * f);
+    let vs =
+        [0.0, sl.top / src.y, 1.0 - sl.bottom / src.y, 1.0].map(|f| uv.min.y + (uv.max.y - uv.min.y) * f);
+    let mut parts = Vec::with_capacity(9);
+    for j in 0..3 {
+        for i in 0..3 {
+            let rect = Rect { min: Vec2::new(xs[i], ys[j]), max: Vec2::new(xs[i + 1], ys[j + 1]) };
+            if rect.is_empty() {
+                continue;
+            }
+            let uv = Rect { min: Vec2::new(us[i], vs[j]), max: Vec2::new(us[i + 1], vs[j + 1]) };
+            parts.push((rect, uv));
+        }
+    }
+    parts
 }
 
 impl Walker<'_> {
@@ -247,14 +286,17 @@ impl Walker<'_> {
             }
             NodeKind::Sprite(s) => {
                 let m = self.to_pixels(&c);
-                let (w, h) = (s.size.x, s.size.y);
-                let quad = [Vec2::ZERO, Vec2::new(w, 0.0), Vec2::new(w, h), Vec2::new(0.0, h)]
-                    .map(|p| m.transform_point2(p));
                 let tint = Color { a: c.tint.a * c.opacity, ..c.tint };
                 // Children with negative z go behind the sprite (shadows, glows).
                 self.children_in(id, c, items, |z| z < 0);
-                let item = self.quad(quad, s.uv, tint, TexRef::Texture(s.texture), node.blend, node.material);
-                self.push(items, item, c.clip, c.bounds);
+                for (rect, uv) in sprite_parts(s) {
+                    let r = rect;
+                    let quad = [r.min, Vec2::new(r.max.x, r.min.y), r.max, Vec2::new(r.min.x, r.max.y)]
+                        .map(|p| m.transform_point2(p));
+                    let item =
+                        self.quad(quad, uv, tint, TexRef::Texture(s.texture), node.blend, node.material);
+                    self.push(items, item, c.clip, c.bounds);
+                }
                 self.children_in(id, c, items, |z| z >= 0);
             }
         }
@@ -325,7 +367,7 @@ mod tests {
     const WINDOW: UVec2 = UVec2::new(1920, 1080);
 
     fn run(scene: &Scene) -> Frame {
-        let layout = Viewport { design: DESIGN, mode: ScaleMode::Expand }.layout(WINDOW);
+        let layout = Viewport::new(DESIGN.x, DESIGN.y, ScaleMode::Expand).layout(WINDOW);
         let mut f = Frame::default();
         extract(scene, &layout, WINDOW, &mut f);
         f
@@ -479,7 +521,7 @@ mod tests {
         let mut s = Scene::new(DESIGN);
         let mut layer = Node::layer(1.0);
         if let NodeKind::Layer(l) = &mut layer.kind {
-            l.effects.push(Material { shader: crate::ShaderId(1), params: [0.0; 16] });
+            l.effects.push(Material::new(crate::ShaderId(1), [0.0; 16]));
         }
         let l = s.add(s.root(), layer);
         s.add(l, Node::sprite(tex(1), Vec2::ONE));
@@ -488,5 +530,45 @@ mod tests {
         assert_eq!(f.passes[0].target, PassTarget::Transient(0));
         assert_eq!(f.passes[0].effects.len(), 1);
         assert_eq!(f.passes[1].items[0].texture, TexRef::Transient(0));
+    }
+
+    #[test]
+    fn nine_slice_keeps_corners_and_stretches_the_middle() {
+        let mut s = Scene::new(DESIGN);
+        let mut n = Node::sprite(tex(1), Vec2::new(200.0, 100.0)).at(10.0, 10.0);
+        if let NodeKind::Sprite(sp) = &mut n.kind {
+            sp.slice = Some(crate::Slice {
+                left: 8.0,
+                top: 8.0,
+                right: 8.0,
+                bottom: 8.0,
+                source: Vec2::new(32.0, 32.0),
+                scale: 2.0,
+            });
+        }
+        s.add(s.root(), n);
+        let f = run(&s);
+        assert_eq!(f.draw_items(), 1, "the nine parts batch");
+        assert_eq!(f.vertices.len(), 36);
+        // Top-left corner: 16x16 units, UVs 0..0.25.
+        assert_eq!(f.vertices[2].pos, [26.0, 26.0]);
+        assert_eq!(f.vertices[2].uv, [0.25, 0.25]);
+        // Middle part spans the rest; last corner ends at the sprite's far edge.
+        assert_eq!(f.vertices[35 - 1].pos, [210.0, 110.0]);
+        assert_eq!(f.vertices[35 - 1].uv, [1.0, 1.0]);
+
+        // Borders larger than the sprite shrink instead of overlapping.
+        let mut small = Sprite { texture: tex(1), size: Vec2::new(20.0, 20.0), uv: Rect::UNIT, slice: None };
+        small.slice = Some(crate::Slice {
+            left: 16.0,
+            top: 0.0,
+            right: 16.0,
+            bottom: 0.0,
+            source: Vec2::splat(32.0),
+            scale: 1.0,
+        });
+        let parts = sprite_parts(&small);
+        assert_eq!(parts.len(), 2, "the empty middle column is dropped");
+        assert_eq!(parts[0].0.max.x, 10.0);
     }
 }

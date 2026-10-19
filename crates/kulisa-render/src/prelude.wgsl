@@ -3,7 +3,8 @@
 // User shaders define:
 //   fn fragment(in: VertexOut) -> vec4<f32>          required, returns premultiplied linear color
 //   fn vertex(in: VertexIn) -> VertexOut             optional, defaults to kulisa_vertex
-// and may read: globals (time, resolution), params.p[0..4], tex/samp (the bound texture).
+// and may read: globals (time, resolution), params.p[0..4], tex/samp (the bound texture) and
+// mask_tex/mask_samp (the material's mask; white when it has none).
 
 struct Globals {
     proj: mat4x4<f32>,
@@ -22,6 +23,8 @@ struct Params {
 @group(1) @binding(0) var tex: texture_2d<f32>;
 @group(1) @binding(1) var samp: sampler;
 @group(2) @binding(0) var<uniform> params: Params;
+@group(3) @binding(0) var mask_tex: texture_2d<f32>;
+@group(3) @binding(1) var mask_samp: sampler;
 
 struct VertexIn {
     // Target pixels.

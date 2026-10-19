@@ -30,7 +30,8 @@ Scripts run in Luau's sandbox: no `io`, `os.execute` or `loadfile`; library tabl
   `"fill"` (cropped). Default 1920×1080 expand.
 - `kulisa.screen`: `width`, `height`, `mode`, `scale` (window pixels per design unit),
   `clear` (background color), `effects` (screen post-processing, see Shaders),
-  `screen:visible()` → `x, y, width, height` of the design area the window shows.
+  `screen:visible()` → `x, y, width, height` of the design area the window shows (in `"fit"`
+  mode, the design area itself).
 - `kulisa.camera`: `x`, `y` (the point shown at the design center), `zoom`, `rotation`,
   `shake_x`, `shake_y`; `camera:tween(props, opts)` with `x`, `y`, `zoom`, `rotation`;
   `camera:reset()`.
@@ -63,6 +64,8 @@ Properties (read and write unless noted):
 | `opacity`, `visible`, `tint`, `blend` | all | `blend`: `alpha`, `add`, `multiply`, `screen`. |
 | `clip` | all | `{ x, y, width, height }` in local units, or nil. |
 | `shader`, `params` | all | A shader for this node and up to 16 numbers for it. |
+| `mask` | all, after `shader` | A second image for the shader (`mask_tex`), e.g. a wipe mask. |
+| `slice`, `slice_scale` | sprites | Nine-slice borders in image pixels: one number for all four or `{ left, top, right, bottom }`. Corners keep their size (times `slice_scale`, default 1), edges and the middle stretch. |
 | `parent` | all | Reparents (nil = the root). |
 | `kind` | all, read-only | `group`, `sprite`, `text`, `layer`, `target`. |
 | `width`, `height` | sprites (read on all) | Size in local units. |
@@ -132,9 +135,10 @@ end)
 
 WGSL defining `fn fragment(in: VertexOut) -> vec4<f32>` (premultiplied linear color),
 optionally `fn vertex(in: VertexIn) -> VertexOut`. The engine provides `tex`, `samp`,
-`globals.time`, and `params.p[0..4]` (the 16 numbers as four `vec4`s). See
+`mask_tex`, `mask_samp` (the node's `mask`, white without one), `globals.time`,
+`globals.resolution` and `params.p[0..4]` (the 16 numbers as four `vec4`s). See
 `demos/smoke/shaders`. `effects` lists are `{ shader, ... }` or
-`{ { shader = s, params = { ... } }, ... }` and run in order.
+`{ { shader = s, params = { ... }, mask = image }, ... }` and run in order.
 
 ## Audio
 

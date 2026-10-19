@@ -59,6 +59,28 @@ impl Image {
         Image { width, height, pixels }
     }
 
+    /// Encodes the image as PNG (straight alpha, as PNG expects).
+    pub fn encode_png(&self) -> Result<Vec<u8>, String> {
+        let (lin, srgb) = (to_linear(), to_srgb());
+        let mut pixels = self.pixels.clone();
+        for px in pixels.as_chunks_mut::<4>().0 {
+            let a = px[3];
+            if a == 255 || a == 0 {
+                continue;
+            }
+            let af = a as f32 / 255.0;
+            for c in &mut px[..3] {
+                let l = (lin[*c as usize] / af).min(1.0);
+                *c = srgb[(l * (SRGB_STEPS - 1) as f32 + 0.5) as usize];
+            }
+        }
+        let img = image::RgbaImage::from_raw(self.width, self.height, pixels).ok_or("bad image size")?;
+        let mut png = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .map_err(|e| e.to_string())?;
+        Ok(png)
+    }
+
     /// A single-color image from straight-alpha sRGB RGBA.
     pub fn solid(width: u32, height: u32, rgba: [u8; 4]) -> Image {
         let pixels = rgba.repeat((width * height) as usize);
@@ -106,6 +128,14 @@ mod tests {
         assert_eq!((img.width, img.height), (3, 2));
         assert_eq!(&img.pixels[..4], &[255, 0, 0, 255]);
         assert!(Image::decode(b"not an image").is_err());
+    }
+
+    #[test]
+    fn png_roundtrip_keeps_straight_colors() {
+        let img = Image::from_straight_rgba(2, 1, vec![200, 100, 50, 255, 255, 255, 255, 128]);
+        let back = Image::decode(&img.encode_png().unwrap()).unwrap();
+        assert_eq!(&back.pixels[..4], &[200, 100, 50, 255]);
+        assert!(back.pixels[4].abs_diff(img.pixels[4]) <= 1, "{:?} vs {:?}", back.pixels, img.pixels);
     }
 
     #[test]

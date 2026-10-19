@@ -5,7 +5,7 @@ use std::sync::Arc;
 use kulisa_audio::PlayOptions;
 use kulisa_core::{
     BlendMode, Camera, Color, Ease, Material, Migrations, Node, NodeId, NodeKind, Params, Prop, Rect,
-    SaveFile, SaveHeader, ScaleMode, Tween, UVec2, Value, Vec2, Viewport,
+    SaveFile, SaveHeader, ScaleMode, Slice, Sprite, Tween, UVec2, Value, Vec2, Viewport,
 };
 use kulisa_platform::Storage;
 use kulisa_render::Image;
@@ -124,8 +124,8 @@ fn params_table(lua: &Lua, p: &Params) -> mlua::Result<LuaValue> {
     lua.create_sequence_from(p[..end].iter().copied()).map(LuaValue::Table)
 }
 
-/// `{ shader, shader, ... }` or `{ { shader = s, params = {...} }, ... }`.
-fn effects(v: &LuaValue) -> mlua::Result<Vec<Material>> {
+/// `{ shader, shader, ... }` or `{ { shader = s, params = {...}, mask = image }, ... }`.
+fn effects(st: &mut State, v: &LuaValue) -> mlua::Result<Vec<Material>> {
     let bad =
         || mlua::Error::runtime("`effects` must be a list of shaders or { shader = s, params = {...} }");
     match v {
@@ -134,7 +134,7 @@ fn effects(v: &LuaValue) -> mlua::Result<Vec<Material>> {
             .sequence_values::<LuaValue>()
             .map(|item| match item? {
                 LuaValue::UserData(ud) => {
-                    Ok(Material { shader: ud.borrow::<ShaderRef>().map_err(|_| bad())?.0, params: [0.0; 16] })
+                    Ok(Material::new(ud.borrow::<ShaderRef>().map_err(|_| bad())?.0, [0.0; 16]))
                 }
                 LuaValue::Table(e) => {
                     let shader = e.get::<AnyUserData>("shader").map_err(|_| bad())?;
@@ -143,7 +143,11 @@ fn effects(v: &LuaValue) -> mlua::Result<Vec<Material>> {
                         LuaValue::Nil => [0.0; 16],
                         v => params(&v)?,
                     };
-                    Ok(Material { shader, params: p })
+                    let mask = match e.get::<LuaValue>("mask")? {
+                        LuaValue::Nil => None,
+                        v => Some(image_arg(st, &v)?.id),
+                    };
+                    Ok(Material { shader, params: p, mask })
                 }
                 _ => Err(bad()),
             })
@@ -158,6 +162,9 @@ fn effects_table(lua: &Lua, list: &[Material]) -> mlua::Result<LuaValue> {
         let e = lua.create_table()?;
         e.set("shader", ShaderRef(m.shader))?;
         e.set("params", params_table(lua, &m.params)?)?;
+        if let Some(mask) = m.mask {
+            e.set("mask", ImageRef(ImageInfo { id: mask, size: UVec2::ZERO }))?;
+        }
         t.push(e)?;
     }
     Ok(LuaValue::Table(t))
@@ -390,6 +397,23 @@ fn get_prop(lua: &Lua, st: &State, id: NodeId, key: &str) -> mlua::Result<LuaVal
             Some(m) => params_table(lua, &m.params),
             None => Ok(LuaValue::Nil),
         },
+        "mask" => match n.material.and_then(|m| m.mask) {
+            Some(id) => {
+                let size = st.renderer.texture_size(id).unwrap_or_default();
+                ImageRef(ImageInfo { id, size }).into_lua(lua)
+            }
+            None => Ok(LuaValue::Nil),
+        },
+        "slice" => match &n.kind {
+            NodeKind::Sprite(Sprite { slice: Some(s), .. }) => {
+                lua.create_sequence_from([s.left, s.top, s.right, s.bottom]).map(LuaValue::Table)
+            }
+            _ => Ok(LuaValue::Nil),
+        },
+        "slice_scale" => match &n.kind {
+            NodeKind::Sprite(Sprite { slice: Some(s), .. }) => num(s.scale),
+            _ => Ok(LuaValue::Nil),
+        },
         _ => Err(mlua::Error::runtime(format!("nodes have no property `{key}`"))),
     }
 }
@@ -403,11 +427,35 @@ fn image_arg(st: &mut State, v: &LuaValue) -> mlua::Result<ImageInfo> {
     }
 }
 
+/// `slice = 12` (every border) or `{ left, top, right, bottom }`, in image pixels.
+fn slice(v: &LuaValue, source: Vec2, scale: f32) -> mlua::Result<Option<Slice>> {
+    let b = match v {
+        LuaValue::Nil => return Ok(None),
+        LuaValue::Table(t) => {
+            let c = |i: usize| -> mlua::Result<f32> { number(&t.raw_get(i)?, "slice") };
+            [c(1)?, c(2)?, c(3)?, c(4)?]
+        }
+        v => [number(v, "slice")?; 4],
+    };
+    if b.iter().any(|x| *x < 0.0) {
+        return Err(mlua::Error::runtime("`slice` borders cannot be negative"));
+    }
+    Ok(Some(Slice { left: b[0], top: b[1], right: b[2], bottom: b[3], source, scale }))
+}
+
 fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<()> {
     if set_text_prop(st, id, key, &v)? {
         return Ok(());
     }
-    let image = if key == "image" && !v.is_nil() { Some(image_arg(st, &v)?) } else { None };
+    let image =
+        if (key == "image" || key == "mask") && !v.is_nil() { Some(image_arg(st, &v)?) } else { None };
+    let fx = if key == "effects" { Some(effects(st, &v)?) } else { None };
+    let slice_source = match node_of(st, id)?.kind {
+        NodeKind::Sprite(ref s) => {
+            st.renderer.texture_size(image.map_or(s.texture, |i| i.id)).unwrap_or(UVec2::ONE)
+        }
+        _ => UVec2::ONE,
+    };
     let white = st.white;
     let root = st.scene.root();
     if key == "parent" {
@@ -447,16 +495,35 @@ fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<
             _ => return Err(mlua::Error::runtime(format!("`{key}` can only be set on sprites"))),
         },
         "image" => match &mut n.kind {
-            NodeKind::Sprite(s) => s.texture = image.unwrap_or(white).id,
+            NodeKind::Sprite(s) => {
+                s.texture = image.unwrap_or(white).id;
+                if let Some(sl) = &mut s.slice {
+                    sl.source = slice_source.as_vec2();
+                }
+            }
             _ => return Err(mlua::Error::runtime("`image` can only be set on sprites")),
+        },
+        "slice" => match &mut n.kind {
+            NodeKind::Sprite(s) => {
+                s.slice = slice(&v, slice_source.as_vec2(), s.slice.map_or(1.0, |s| s.scale))?
+            }
+            _ => return Err(mlua::Error::runtime("`slice` can only be set on sprites")),
+        },
+        "slice_scale" => match &mut n.kind {
+            NodeKind::Sprite(Sprite { slice: Some(sl), .. }) => sl.scale = number(&v, key)?,
+            _ => return Err(mlua::Error::runtime("set `slice` before `slice_scale`")),
+        },
+        "mask" => match &mut n.material {
+            Some(m) => m.mask = image.map(|i| i.id),
+            None => return Err(mlua::Error::runtime("set `shader` before `mask`")),
         },
         "parallax" => match &mut n.kind {
             NodeKind::Layer(l) => l.parallax = number(&v, key)?,
             _ => return Err(mlua::Error::runtime("`parallax` can only be set on layers")),
         },
         "effects" => match &mut n.kind {
-            NodeKind::Layer(l) => l.effects = effects(&v)?,
-            NodeKind::Target(t) => t.effects = effects(&v)?,
+            NodeKind::Layer(l) => l.effects = fx.unwrap(),
+            NodeKind::Target(t) => t.effects = fx.unwrap(),
             _ => return Err(mlua::Error::runtime("`effects` can only be set on layers and targets")),
         },
         "clear" => match &mut n.kind {
@@ -478,7 +545,12 @@ fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<
                 LuaValue::Nil => None,
                 LuaValue::UserData(ud) => {
                     let shader = ud.borrow::<ShaderRef>()?.0;
-                    Some(Material { shader, params: n.material.map_or([0.0; 16], |m| m.params) })
+                    let old = n.material;
+                    Some(Material {
+                        shader,
+                        params: old.map_or([0.0; 16], |m| m.params),
+                        mask: old.and_then(|m| m.mask),
+                    })
                 }
                 _ => return Err(mlua::Error::runtime("`shader` must be a shader or nil")),
             }
@@ -695,7 +767,7 @@ impl UserData for ScreenRef {
             with(lua, |st| {
                 match key.as_str() {
                     "clear" => st.scene.clear = color(&v, "clear")?,
-                    "effects" => st.scene.effects = effects(&v)?,
+                    "effects" => st.scene.effects = effects(st, &v)?,
                     _ => return Err(mlua::Error::runtime(format!("`screen.{key}` cannot be set"))),
                 }
                 Ok(())
@@ -736,8 +808,12 @@ fn create(
         .filter_map(Result::ok)
         .filter(|(k, _)| k != "parent" && k != "center" && !consumed.contains(&k.as_str()))
         .collect();
-    // `params` needs the shader set first.
-    rest.sort_by_key(|(k, _)| k != "shader");
+    // `params` and `mask` need the shader set first, `slice_scale` the slice.
+    rest.sort_by_key(|(k, _)| match k.as_str() {
+        "shader" | "slice" => 0,
+        "params" | "mask" | "slice_scale" => 2,
+        _ => 1,
+    });
     let center = opts.get::<Option<bool>>("center")?.unwrap_or(false);
     with(lua, |st| {
         let parent = parent.unwrap_or(st.scene.root());

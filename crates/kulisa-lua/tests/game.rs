@@ -28,6 +28,11 @@ fn folder(files: &[(&str, &[u8])]) -> PathBuf {
     dir
 }
 
+/// A solid white PNG.
+fn png(w: u32, h: u32) -> Vec<u8> {
+    kulisa_render::Image::solid(w, h, [255; 4]).encode_png().unwrap()
+}
+
 fn renderer() -> Option<Renderer> {
     match pollster::block_on(Renderer::headless(64, 64)) {
         Ok(r) => Some(r),
@@ -276,4 +281,22 @@ fn requires_modules() {
     assert!(err.contains("requires itself"), "{err}");
     let err = g.eval::<()>("t", "require('missing')").unwrap_err();
     assert!(err.contains("no asset `missing.luau`"), "{err}");
+}
+
+#[test]
+fn nine_slices_and_masks_from_luau() {
+    let g = game!("main.luau" => r##"
+        local img = kulisa.load_image("box.png")
+        panel = kulisa.sprite{ image = img, width = 300, height = 120, slice = 4, slice_scale = 2 }
+        local s = kulisa.load_shader("m.wgsl")
+        masked = kulisa.sprite{ shader = s, mask = img }
+    "##,
+    "box.png" => png(16, 16),
+    "m.wgsl" => "fn fragment(in: VertexOut) -> vec4<f32> { return textureSample(mask_tex, mask_samp, in.uv); }");
+    let v: (f32, f32, f32, bool) =
+        g.eval("t", "return panel.slice[1], panel.slice[4], panel.slice_scale, masked.mask ~= nil").unwrap();
+    assert_eq!(v, (4.0, 4.0, 2.0, true));
+    let err = g.eval::<()>("t", "kulisa.sprite{ mask = panel.image }").unwrap_err();
+    assert!(err.contains("set `shader` before `mask`"), "{err}");
+    g.eval::<()>("t", "panel.slice = { 1, 2, 3, 4 }; panel.slice = nil").unwrap();
 }

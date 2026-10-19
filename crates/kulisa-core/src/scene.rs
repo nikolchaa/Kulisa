@@ -71,6 +71,14 @@ pub enum BlendMode {
 pub struct Material {
     pub shader: ShaderId,
     pub params: Params,
+    /// A second texture for the shader (`mask_tex` in WGSL): wipe masks, lookup tables.
+    pub mask: Option<TextureId>,
+}
+
+impl Material {
+    pub fn new(shader: ShaderId, params: Params) -> Self {
+        Self { shader, params, mask: None }
+    }
 }
 
 /// A full-screen pass in a post-processing chain. Same shader contract as [`Material`].
@@ -110,6 +118,20 @@ pub struct Sprite {
     pub size: Vec2,
     /// Normalized texture region; flip by swapping min and max.
     pub uv: Rect,
+    /// Nine-slice borders: the corners keep their size and the edges and middle stretch.
+    pub slice: Option<Slice>,
+}
+
+/// Nine-slice borders of a sprite, in texture pixels (`source` is the region's size in
+/// texture pixels). Borders are drawn `scale` times their pixel size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Slice {
+    pub left: f32,
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub source: Vec2,
+    pub scale: f32,
 }
 
 /// Groups content that moves with the camera by `parallax` (1 = world, 0 = fixed to the
@@ -192,7 +214,7 @@ impl Node {
     }
 
     pub fn sprite(texture: TextureId, size: Vec2) -> Self {
-        Self::new(NodeKind::Sprite(Sprite { texture, size, uv: Rect::UNIT }))
+        Self::new(NodeKind::Sprite(Sprite { texture, size, uv: Rect::UNIT, slice: None }))
     }
 
     pub fn quads(quads: Vec<Quad>) -> Self {
