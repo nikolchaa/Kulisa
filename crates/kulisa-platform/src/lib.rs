@@ -3,6 +3,8 @@
 mod assets;
 mod device;
 mod storage;
+#[cfg(target_arch = "wasm32")]
+mod web_text;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use assets::build_pack;
@@ -17,6 +19,8 @@ pub use storage::Storage;
 pub use storage::data_dir;
 #[cfg(target_os = "android")]
 pub use storage::set_android_data_dir;
+#[cfg(target_arch = "wasm32")]
+pub use web_text::{TextEvent, web_text_events, web_text_focus};
 
 /// Installs the platform logger once. Safe to call more than once.
 pub fn init_logging() {

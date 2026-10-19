@@ -12,6 +12,7 @@ mod media;
 mod mesh;
 mod pad;
 mod pointer;
+mod typing;
 mod ui;
 
 use std::cell::RefCell;
@@ -117,6 +118,7 @@ pub(crate) struct State {
     pub pointers: BTreeMap<u32, pointer::Pointer>,
     pub pinch: Option<pointer::Pinch>,
     pub pads: pad::Gamepads,
+    pub typing: typing::Typing,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -503,6 +505,7 @@ impl Game {
             pointers: BTreeMap::new(),
             pinch: None,
             pads: Default::default(),
+            typing: Default::default(),
         };
         state.display.device = device;
         let shared = Rc::new(RefCell::new(state));
@@ -920,6 +923,10 @@ impl Game {
             } else {
                 st.keys.remove(name);
             }
+        }
+        // A text field wants characters as `text`, not as keys.
+        if self.wants_text() && typing::is_character_key(name) {
+            return;
         }
         // Arrows and Enter drive a navigable UI screen; the game never sees what they take.
         if self.nav_key(name, pressed) {

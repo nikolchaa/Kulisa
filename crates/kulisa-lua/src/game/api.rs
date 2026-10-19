@@ -53,6 +53,8 @@ const EVENTS: &[&str] = &[
     "pad_axis",
     "pad_connect",
     "pad_disconnect",
+    "text",
+    "preedit",
     "display",
 ];
 
@@ -1782,6 +1784,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     super::pad::install(lua, &input)?;
+    super::typing::install(lua, &input)?;
     k.set("input", input)?;
     super::interact::install(lua, &k)?;
 

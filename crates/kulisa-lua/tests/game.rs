@@ -827,6 +827,101 @@ fn gamepads_press_axes_repeat_and_navigate() {
     assert_eq!(g.eval::<f32>("t", "return #kulisa.input.pads()").unwrap(), 0.0);
 }
 
+#[test]
+fn text_fields_take_text_and_editing_keys() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.load_font("Inter.ttf")
+        local ui = kulisa.ui
+        name = ui.signal("")
+        submitted = {}
+        keys = {}
+        ui.screen("form", function()
+            return ui.column{ gap = 2,
+                ui.input{ id = "name", value = name, placeholder = "Your name", width = 60, height = 10, size = 6,
+                    max_length = 8, on_submit = function(t) table.insert(submitted, t) end },
+                ui.button{ id = "ok", width = 20, height = 10, on_click = function() end },
+            }
+        end, { nav = true, area = "screen" })
+        ui.show("form")
+        kulisa.on("key", function(k) table.insert(keys, k) end)
+        texts = {}
+        kulisa.on("text", function(s) table.insert(texts, s) end)
+    "##,
+    "Inter.ttf" => FONT);
+    g.frame(0.016);
+    let name = |g: &Game| -> String { g.eval("t", "return name:peek()").unwrap() };
+    assert!(!g.wants_text());
+    g.text_input("ignored");
+    assert_eq!(g.eval::<f32>("t", "return #texts").unwrap(), 0.0, "text goes nowhere without a field");
+
+    // Click the field: it starts taking text, and asks for the soft keyboard once.
+    let (x, y, w, h): (f32, f32, f32, f32) = g.eval("t", "return kulisa.ui.bounds('form', 'name')").unwrap();
+    g.pointer_moved(Some(v2(x + w / 2.0, y + h / 2.0)));
+    g.pressed("left");
+    g.released("left");
+    assert!(g.wants_text());
+    assert_eq!(g.take_ime_request(), Some(true));
+    assert_eq!(g.take_ime_request(), None);
+
+    // Characters arrive as text (never as keys); editing keys still arrive as keys.
+    g.text_input("Zoë");
+    g.key("z", true);
+    g.key("z", false);
+    g.key("backspace", true);
+    g.key("backspace", false);
+    assert_eq!(name(&g), "Zo");
+    g.key("left", true);
+    g.key("left", false);
+    g.text_input("ab");
+    assert_eq!(name(&g), "Zabo", "inserted at the caret after one step left");
+    g.key("home", true);
+    g.key("home", false);
+    g.text_input(">");
+    g.key("end", true);
+    g.key("end", false);
+    g.text_input("123456789");
+    assert_eq!(name(&g), ">Zabo123", "capped at max_length = 8 characters");
+
+    // Enter submits; the field stays active until the frame ends, so the game's own Enter
+    // handler can still tell a field was being edited.
+    g.key("enter", true);
+    g.key("enter", false);
+    assert!(g.wants_text());
+    assert_eq!(g.eval::<Vec<String>>("t", "return submitted").unwrap(), [">Zabo123"]);
+    g.frame(0.016);
+    assert!(!g.wants_text());
+    assert_eq!(g.take_ime_request(), Some(false));
+    let keys: Vec<String> = g.eval("t", "return keys").unwrap();
+    assert_eq!(
+        keys,
+        ["backspace", "left", "home", "end", "enter"].map(String::from),
+        "no letters, no arrows eaten by nav"
+    );
+
+    // Not editing: arrows and Enter drive the form again (focus), and text is ignored.
+    g.text_input("nope");
+    assert_eq!(name(&g), ">Zabo123");
+    g.key("down", true);
+    g.key("down", false);
+    assert_eq!(g.eval::<String>("t", "return (select(2, kulisa.ui.focused()))").unwrap(), "name");
+    // Enter on a focused field starts editing it, Escape stops without submitting.
+    g.key("enter", true);
+    g.key("enter", false);
+    assert!(g.wants_text());
+    g.key("escape", true);
+    g.key("escape", false);
+    g.frame(0.016);
+    assert!(!g.wants_text());
+    assert_eq!(g.eval::<f32>("t", "return #submitted").unwrap(), 1.0);
+
+    // Held keys repeat only while a field is active.
+    g.key_repeat("backspace");
+    assert_eq!(g.eval::<f32>("t", "return #keys").unwrap(), 6.0, "no repeats outside a field");
+    let err = g.eval::<()>("t", "kulisa.ui.input{ value = name }").unwrap_err();
+    assert!(err.contains("needs an `id`"), "{err}");
+}
+
 const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
 }";

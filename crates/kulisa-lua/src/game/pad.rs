@@ -212,6 +212,10 @@ impl Game {
             }
             return taken;
         }
+        // A text field uses the arrows, Enter and Space itself.
+        if self.state.borrow().typing.active {
+            return false;
+        }
         let taken = if let Some(dir) = key_dir(name) {
             self.nav_direction(dir, Source::Key(name.to_string()))
         } else if name == "enter" || name == "space" {

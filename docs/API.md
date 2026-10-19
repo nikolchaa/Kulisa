@@ -218,6 +218,8 @@ end)
 | `rotate` | `delta, x, y, total`: radians the line between two fingers turned (positive is clockwise on screen) since the last event, and since the second finger landed |
 | `pad_press`, `pad_release` | `button, pad`: a gamepad button, see Gamepads |
 | `pad_axis` | `axis, value, pad` |
+| `text` | `string`: text typed or committed by an IME, while a text field is active (see Text input) |
+| `preedit` | `string, from, to`: IME composition in progress (byte range of the selection) |
 | `pad_connect`, `pad_disconnect` | `pad, name` / `pad` |
 | `wheel` | lines; positive is up |
 | `resize` | window `width, height` in pixels |
@@ -254,6 +256,27 @@ after the player presses a button on it). Android and iOS gamepads are not wired
   `kulisa.input.pads()` → `{ { id, name }, ... }`.
 - While a UI screen takes navigation (see UI), the d-pad, left stick and A do not reach
   `pad_press`; everything else does. The right stick scrolls lists on such screens.
+
+## Text input
+
+Text fields are made in Luau on top of a few engine pieces, so games can build their own.
+
+- `kulisa.input.start_text()` tells the platform a field has the focus: the soft keyboard
+  appears (Android, and touch browsers through a hidden input), IMEs turn on, and the `text`
+  event delivers what the player types. `kulisa.input.stop_text()` ends it;
+  `kulisa.input.text_active()` asks.
+- While text is active, characters arrive as `text` and not as `key` (so a game's `a` or `h`
+  shortcuts stay quiet); named keys (`backspace`, `delete`, `left`, `right`, `home`, `end`,
+  `enter`, `escape`, ...) still arrive as `key`, and repeat while held. Keyboard navigation of
+  UI screens gives its keys back to the field.
+- `ui.input{ id, value = signal, placeholder, max_length, password, on_change, on_submit,
+  size, font, color, placeholder_color, ... }` is a text field widget: a button (it takes any
+  button property, `hover_*` included) showing the text with a blinking caret. Clicking it, or
+  Enter / A on it, starts editing: typing inserts at the caret, Backspace, Delete, arrows,
+  Home and End edit, Enter calls `on_submit(text)` and stops, Escape stops. `value` is a
+  signal that always holds the text; `id` is required. The field stops editing after the
+  frame's handlers have run, so a game's own `enter` handler can still check
+  `kulisa.input.text_active()` to tell Enter was meant for the field.
 
 ## Timers
 
@@ -382,6 +405,7 @@ lists are flattened; `false`/`nil` entries are skipped, so `cond and ui.text(...
 | `ui.button{ on_click, selected, disabled, ... }` | A box that takes clicks (press and release on it). Any box with `on_click` is a button. |
 | `ui.slider{ value, min = 0, max = 1, step, on_change, vertical, thumb_size = 32, bar, thumb }` | Drag to set a value; `on_change(v)` runs while dragging. `background` is the track, `bar` the filled part, `thumb` the handle (colors or images). |
 | `ui.scroll{ direction = "vertical", start = "end" }` | A clipped viewport; its children stack and scroll with the wheel or by dragging. `start = "end"` keeps it scrolled to the end as content grows (backlogs). |
+| `ui.input{ id, value = signal, ... }` | A text field, see Text input. |
 | `ui.node{ node = n }` | A node the game made, placed by the layout (custom displayables). It is hidden, not removed, when the widget goes away. |
 | `ui.spacer{}` | Empty space that takes what is left in a row or column. |
 

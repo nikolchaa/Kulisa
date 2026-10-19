@@ -15,7 +15,7 @@ use kulisa_platform::Assets;
 use kulisa_render::Renderer;
 use web_time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -171,6 +171,14 @@ impl App {
     fn apply_requests(&mut self, event_loop: &ActiveEventLoop) {
         let (Some(game), Some(window)) = (&mut self.game, &self.window) else { return };
         let r = game.take_requests();
+        if let Some(on) = game.take_ime_request() {
+            window.set_ime_allowed(on);
+            // Touch browsers show a soft keyboard only for a focused input element.
+            #[cfg(target_arch = "wasm32")]
+            if kulisa_platform::web_touch() {
+                kulisa_platform::web_text_focus(on);
+            }
+        }
         #[cfg(any(target_os = "android", target_os = "ios"))]
         if let Some(o) = r.orientation {
             #[cfg(target_os = "android")]
@@ -388,14 +396,48 @@ impl App {
                     game.wheel(lines);
                 }
             }
-            WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
-                let Some(name) = key_name(&event.logical_key) else { return };
+            WindowEvent::KeyboardInput { event, .. } => {
+                let pressed = event.state == ElementState::Pressed;
+                let name = key_name(&event.logical_key);
                 let Some(game) = self.input() else { return };
-                game.key(&name, event.state == ElementState::Pressed);
+                if event.repeat {
+                    // Held keys repeat for text fields (backspace, arrows, letters).
+                    if let Some(name) = &name {
+                        game.key_repeat(name);
+                    }
+                } else if let Some(name) = &name {
+                    game.key(name, pressed);
+                }
+                // Committed text: what the key typed, without control characters (Enter,
+                // Backspace and Ctrl combinations are keys, not text).
+                if pressed
+                    && let Some(text) = &event.text
+                    && !text.chars().any(char::is_control)
+                {
+                    game.text_input(text);
+                }
+            }
+            WindowEvent::Ime(ime) => {
+                let Some(game) = self.input() else { return };
+                match ime {
+                    Ime::Commit(text) => game.text_input(&text),
+                    Ime::Preedit(text, cursor) => game.ime_preedit(&text, cursor),
+                    Ime::Enabled | Ime::Disabled => {}
+                }
             }
             WindowEvent::RedrawRequested => {
                 let Some(game) = &mut self.game else { return };
                 self.pads.poll(game);
+                #[cfg(target_arch = "wasm32")]
+                for e in kulisa_platform::web_text_events() {
+                    match e {
+                        kulisa_platform::TextEvent::Text(t) => game.text_input(&t),
+                        kulisa_platform::TextEvent::Key(k) => {
+                            game.key(k, true);
+                            game.key(k, false);
+                        }
+                    }
+                }
                 let now = Instant::now();
                 game.frame((now - self.last_frame).as_secs_f32());
                 self.last_frame = now;

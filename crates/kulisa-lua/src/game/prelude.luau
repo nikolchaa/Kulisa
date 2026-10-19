@@ -147,3 +147,182 @@ do
         return t
     end
 end
+
+-- Text fields: ui.input{ id, value = signal, placeholder, max_length, password, on_change,
+-- on_submit, ...button and text look properties }. Clicking (or Enter / A on) a field edits
+-- it: typing inserts at the caret, Backspace / Delete / arrows / Home / End edit, Enter
+-- submits, Escape stops. `value` is a signal that always holds the text. Built on
+-- kulisa.input.start_text and the `text` / `key` events, so games can write their own.
+do
+    local ui = kulisa.ui
+    local active -- { id, value, opts } for the field being edited
+    local caret = 0 -- insert position, in characters
+    local active_id = ui.signal(nil)
+    local blink = ui.signal(true)
+    local revision = ui.signal(0)
+    local blinker
+
+    local function chars(s: string): number
+        return utf8.len(s) or #s
+    end
+
+    -- The byte offset after `n` characters.
+    local function offset(s: string, n: number): number
+        if n <= 0 then
+            return 0
+        end
+        return (utf8.offset(s, n + 1) or #s + 1) - 1
+    end
+
+    local function touch()
+        revision:set(revision:peek() + 1)
+        blink:set(true)
+    end
+
+    local function stop()
+        if active then
+            active = nil
+            active_id:set(nil)
+            if blinker then
+                blinker.cancel()
+                blinker = nil
+            end
+            kulisa.input.stop_text()
+        end
+    end
+
+    local function start(id: string, value, opts)
+        stop()
+        active = { id = id, value = value, opts = opts }
+        caret = chars(value:peek() or "")
+        active_id:set(id)
+        kulisa.input.start_text()
+        blinker = kulisa.every(0.5, function()
+            blink:set(not blink:peek())
+        end)
+        touch()
+    end
+
+    local function replace(text: string)
+        active.value:set(text)
+        if active.opts.on_change then
+            active.opts.on_change(text)
+        end
+        touch()
+    end
+
+    kulisa.on("text", function(s: string)
+        if not active then
+            return
+        end
+        local text = active.value:peek() or ""
+        local max = active.opts.max_length
+        if max and chars(text) + chars(s) > max then
+            s = s:sub(1, offset(s, max - chars(text)))
+            if s == "" then
+                return
+            end
+        end
+        local at = offset(text, caret)
+        caret += chars(s)
+        replace(text:sub(1, at) .. s .. text:sub(at + 1))
+    end)
+
+    kulisa.on("key", function(key: string)
+        if not active then
+            return
+        end
+        local text = active.value:peek() or ""
+        if key == "backspace" and caret > 0 then
+            local from, to = offset(text, caret - 1), offset(text, caret)
+            caret -= 1
+            replace(text:sub(1, from) .. text:sub(to + 1))
+        elseif key == "delete" and caret < chars(text) then
+            local from, to = offset(text, caret), offset(text, caret + 1)
+            replace(text:sub(1, from) .. text:sub(to + 1))
+        elseif key == "left" then
+            caret = math.max(caret - 1, 0)
+            touch()
+        elseif key == "right" then
+            caret = math.min(caret + 1, chars(text))
+            touch()
+        elseif key == "home" then
+            caret = 0
+            touch()
+        elseif key == "end" then
+            caret = chars(text)
+            touch()
+        elseif key == "enter" or key == "escape" then
+            local submit = active.opts.on_submit
+            -- Stop after this frame's handlers, so the game's own Enter / Escape handlers
+            -- still see that a field was being edited.
+            local field = active
+            kulisa.after(0, function()
+                if active == field then
+                    stop()
+                end
+            end)
+            if key == "enter" and submit then
+                submit(text)
+            end
+        end
+    end)
+
+    local function escape(s: string): string
+        return (s:gsub("{", "{{"):gsub("}", "}}"))
+    end
+
+    local CONTROL = { value = true, placeholder = true, max_length = true, password = true, on_change = true,
+        on_submit = true, placeholder_color = true, size = true, font = true, color = true, align = true }
+
+    function ui.input(opts)
+        opts = opts or {}
+        local id = opts.id
+        if type(id) ~= "string" then
+            error("ui.input needs an `id` string, so it can tell which field is being edited", 2)
+        end
+        local value = opts.value
+        if type(value) ~= "table" and type(value) ~= "userdata" then
+            error("ui.input needs `value = signal`", 2)
+        end
+        local text = value() or ""
+        local editing = active_id() == id
+        revision() -- rebuild on caret moves
+        local shown
+        if text == "" and not editing then
+            shown = escape(opts.placeholder or "")
+        else
+            local masked = if opts.password then string.rep("*", chars(text)) else text
+            if editing then
+                local at = offset(masked, caret)
+                local mark = if blink() then "|" else " "
+                shown = escape(masked:sub(1, at)) .. mark .. escape(masked:sub(at + 1))
+            else
+                shown = escape(masked)
+            end
+        end
+        local field = {
+            _kind = "button",
+            id = id,
+            on_click = function()
+                start(id, value, opts)
+            end,
+            selected = editing,
+        }
+        for k, v in opts do
+            if not CONTROL[k] then
+                field[k] = v
+            end
+        end
+        local dim = text == "" and not editing
+        table.insert(field, ui.text{
+            text = shown,
+            size = opts.size,
+            font = opts.font,
+            align = opts.align,
+            width = "fill",
+            color = if dim then opts.placeholder_color or "#8a8a96" else opts.color,
+        })
+        return field
+    end
+end
