@@ -14,13 +14,15 @@ pub struct StoryHost {
     vars: Table,
     consts: Table,
     compiled: Vec<Option<Function>>,
+    /// Registered script state: name -> { save = fn, load = fn }.
+    registry: Table,
 }
 
 const MAX_DEPTH: usize = 64;
 
 /// Converts a Luau value to plain data. `strict` refuses functions and userdata (saves);
 /// otherwise they become a placeholder string (expression results).
-fn to_value(v: &LuaValue, path: &str, strict: bool, depth: usize) -> Result<Value, String> {
+pub(crate) fn to_value(v: &LuaValue, path: &str, strict: bool, depth: usize) -> Result<Value, String> {
     if depth > MAX_DEPTH {
         return Err(format!("`{path}` is nested too deeply (or refers to itself)"));
     }
@@ -75,7 +77,7 @@ fn to_value(v: &LuaValue, path: &str, strict: bool, depth: usize) -> Result<Valu
     })
 }
 
-fn from_value(lua: &Lua, v: &Value) -> mlua::Result<LuaValue> {
+pub(crate) fn from_value(lua: &Lua, v: &Value) -> mlua::Result<LuaValue> {
     Ok(match v {
         Value::Nil => LuaValue::Nil,
         Value::Bool(b) => LuaValue::Boolean(*b),
@@ -150,7 +152,7 @@ impl StoryHost {
                 Ok(t)
             })?,
         )?;
-        Ok(Self { lua: lua.clone(), vars, consts, compiled: Vec::new() })
+        Ok(Self { lua: lua.clone(), vars, consts, compiled: Vec::new(), registry: lua.create_table()? })
     }
 
     /// Compiles every chunk of `program`; Luau syntax errors come back as story diagnostics.
@@ -208,6 +210,25 @@ impl StoryHost {
         let v: LuaValue = self.vars.raw_get(name).unwrap_or(LuaValue::Nil);
         to_value(&v, name, false, 0).unwrap_or_default()
     }
+
+    /// The story variables table (what `$` lines read and write).
+    pub fn vars(&self) -> &Table {
+        &self.vars
+    }
+
+    /// Makes `value` visible to story chunks as a constant (helpers, data).
+    pub fn define_value(&self, name: &str, value: LuaValue) -> mlua::Result<()> {
+        self.consts.raw_set(name, value)
+    }
+
+    /// Registers script state that takes part in checkpoints and saves: `save()` returns
+    /// plain data, `load(data)` restores it.
+    pub fn register_state(&self, name: &str, save: Function, load: Function) -> mlua::Result<()> {
+        let entry = self.lua.create_table()?;
+        entry.raw_set("save", save)?;
+        entry.raw_set("load", load)?;
+        self.registry.raw_set(name, entry)
+    }
 }
 
 impl Host for StoryHost {
@@ -234,18 +255,34 @@ impl Host for StoryHost {
         self.call(chunk).map(|_| ())
     }
 
+    /// `{ vars = <story variables>, state = { <registered name> = <its save()> } }`.
     fn snapshot(&mut self) -> Result<Value, String> {
-        to_value(&LuaValue::Table(self.vars.clone()), "story", true, 0)
-            .map(|v| if let Value::List(_) = v { Value::map() } else { v })
+        let vars = to_value(&LuaValue::Table(self.vars.clone()), "story", true, 0)?;
+        let vars = if let Value::List(_) = vars { Value::map() } else { vars };
+        let mut state = std::collections::BTreeMap::new();
+        for pair in self.registry.pairs::<String, Table>() {
+            let (name, entry) = pair.map_err(|e| e.to_string())?;
+            let save: Function = entry.raw_get("save").map_err(|e| e.to_string())?;
+            let data: LuaValue = save.call(()).map_err(|e| format!("state `{name}`: save failed: {e}"))?;
+            state.insert(name.clone(), to_value(&data, &name, true, 0)?);
+        }
+        Ok(Value::map().with("vars", vars).with("state", Value::Map(state)))
     }
 
-    fn restore(&mut self, vars: &Value) -> Result<(), String> {
+    fn restore(&mut self, snapshot: &Value) -> Result<(), String> {
         self.vars.clear().map_err(|e| e.to_string())?;
-        if let Value::Map(m) = vars {
+        if let Value::Map(m) = snapshot.get("vars") {
             for (k, v) in m {
                 let v = from_value(&self.lua, v).map_err(|e| e.to_string())?;
                 self.vars.raw_set(k.as_str(), v).map_err(|e| e.to_string())?;
             }
+        }
+        for pair in self.registry.pairs::<String, Table>() {
+            let (name, entry) = pair.map_err(|e| e.to_string())?;
+            let data = snapshot.get("state").get(&name);
+            let load: Function = entry.raw_get("load").map_err(|e| e.to_string())?;
+            let data = from_value(&self.lua, data).map_err(|e| e.to_string())?;
+            load.call::<()>(data).map_err(|e| format!("state `{name}`: load failed: {e}"))?;
         }
         Ok(())
     }
@@ -308,11 +345,12 @@ label start:
         let (mut vm, mut h) = setup(STORY);
         vm.next(&mut h).unwrap();
         let snap = h.snapshot().unwrap();
-        assert_eq!(snap.get("trust"), &Value::Int(2));
-        assert_eq!(snap.get("bag"), &Value::List(vec!["key".into(), "map".into()]));
-        assert_eq!(snap.get("mila"), &Value::Nil, "defines are constants, not saved");
-        assert_eq!(snap.get("greet"), &Value::Nil, "top-level lua: helpers are constants, not saved");
-        h.restore(&Value::map().with("trust", 9i64)).unwrap();
+        let vars = snap.get("vars");
+        assert_eq!(vars.get("trust"), &Value::Int(2));
+        assert_eq!(vars.get("bag"), &Value::List(vec!["key".into(), "map".into()]));
+        assert_eq!(vars.get("mila"), &Value::Nil, "defines are constants, not saved");
+        assert_eq!(vars.get("greet"), &Value::Nil, "top-level lua: helpers are constants, not saved");
+        h.restore(&Value::map().with("vars", Value::map().with("trust", 9i64))).unwrap();
         assert_eq!(h.var("trust"), Value::Int(9));
         assert_eq!(h.var("bag"), Value::Nil);
     }
@@ -326,6 +364,31 @@ label start:
         assert_eq!(h.var("n"), Value::Int(0));
         assert_eq!(say(&mut vm, &mut h), "a");
         assert_eq!(say(&mut vm, &mut h), "b 1");
+    }
+
+    #[test]
+    fn registered_state_rolls_back_with_the_story() {
+        let (mut vm, mut h) = setup(
+            "label start:
+    \"a\"
+    \"b\"
+",
+        );
+        let lua = h.lua.clone();
+        lua.load("inventory = { coins = 1 }").exec().unwrap();
+        let save: Function =
+            lua.load("return function() return { coins = inventory.coins } end").eval().unwrap();
+        let load: Function =
+            lua.load("return function(t) inventory.coins = t and t.coins or 0 end").eval().unwrap();
+        h.register_state("inventory", save, load).unwrap();
+        assert_eq!(say(&mut vm, &mut h), "a");
+        lua.load("inventory.coins = 50").exec().unwrap();
+        assert_eq!(say(&mut vm, &mut h), "b");
+        vm.rollback(&mut h).unwrap();
+        let coins: i64 = lua.load("return inventory.coins").eval().unwrap();
+        assert_eq!(coins, 1, "registered state rolled back");
+        let saved = vm.save().unwrap();
+        assert_eq!(saved.get("vars").get("state").get("inventory").get("coins"), &Value::Int(1));
     }
 
     #[test]
