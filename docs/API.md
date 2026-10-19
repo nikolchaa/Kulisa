@@ -235,7 +235,7 @@ Properties every widget takes:
 | `padding`, `margin` | A number, `{ vertical, horizontal }` or `{ top, right, bottom, left }`. |
 | `anchor` | Where the widget sits in an overlay box: `top_left` (default), `top`, `top_right`, `left`, `center`, `right`, `bottom_left`, `bottom`, `bottom_right`, or `{ x, y }` in 0..1. |
 | `x`, `y` | Moves the widget after layout. |
-| `background`, `tint`, `opacity`, `slice`, `slice_scale` | A color (`"#rrggbb"`, `{ r, g, b, a }`) or image (path or image) behind the widget; image tint; opacity of the widget and its children; nine-slice borders for an image background. |
+| `background`, `tint`, `opacity`, `slice`, `slice_scale` | A color (`"#rrggbb"`, `{ r, g, b, a }`), an image (path or image) or a tinted image (`{ image = ..., tint = ... }`) behind the widget; `tint` multiplies the background; opacity of the widget and its children; nine-slice borders for an image background (sliders' bars use them too). |
 | `color` | Text color. |
 | `visible = false` | Leaves the widget out. |
 | `hover_*`, `pressed_*`, `selected_*`, `disabled_*` | Any of `background`, `tint`, `opacity`, `color`, `image`, `bar`, `thumb`, `slice`, `slice_scale` for that state, e.g. `hover_background`, `selected_color`. Widgets inside a button follow the button's state. |
@@ -322,4 +322,5 @@ like:
   `kulisa.save.setup`.
 
 Saves live in the platform's app data folder (`%APPDATA%\<id>\saves` on Windows,
-`localStorage` on the web, internal storage on Android).
+`localStorage` on the web, internal storage on Android). On desktop, `KULISA_DATA_DIR` moves
+it (portable installs, tests).

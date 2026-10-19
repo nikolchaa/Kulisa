@@ -42,11 +42,14 @@ pub fn set_android_data_dir(path: PathBuf) {
     let _ = ANDROID_DATA_DIR.set(path);
 }
 
-/// Where a game keeps its data on this platform.
+/// Where a game keeps its data on this platform. `KULISA_DATA_DIR` overrides the base
+/// folder (portable installs, tests).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn data_dir(game_id: &str) -> Result<PathBuf, String> {
     use std::env::var_os;
-    let base: Option<PathBuf> = if cfg!(target_os = "android") {
+    let base: Option<PathBuf> = if let Some(d) = var_os("KULISA_DATA_DIR").filter(|d| !d.is_empty()) {
+        Some(PathBuf::from(d))
+    } else if cfg!(target_os = "android") {
         #[cfg(target_os = "android")]
         {
             ANDROID_DATA_DIR.get().cloned()

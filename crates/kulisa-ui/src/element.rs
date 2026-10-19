@@ -132,11 +132,11 @@ pub struct Style {
     pub offset: Vec2,
 }
 
-/// A background, bar or thumb.
+/// A background, bar or thumb: a color, or an image with its own tint.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fill {
     Color(Color),
-    Image { texture: TextureId, size: Vec2 },
+    Image { texture: TextureId, size: Vec2, tint: Color },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

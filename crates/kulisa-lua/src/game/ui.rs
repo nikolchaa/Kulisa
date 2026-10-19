@@ -217,10 +217,19 @@ impl Convert<'_> {
         Ok(match v {
             LuaValue::Nil | LuaValue::Boolean(false) => None,
             LuaValue::String(s) if s.to_string_lossy().starts_with('#') => Some(Fill::Color(color(v, what)?)),
+            // { image = ..., tint = ... }: a tinted image.
+            LuaValue::Table(t) if t.contains_key("image")? => {
+                let img = image_arg(self.st, &t.get::<LuaValue>("image")?)?;
+                let tint = match t.get::<LuaValue>("tint")? {
+                    LuaValue::Nil => Color::WHITE,
+                    v => color(&v, what)?,
+                };
+                Some(Fill::Image { texture: img.id, size: img.size.as_vec2(), tint })
+            }
             LuaValue::Table(_) => Some(Fill::Color(color(v, what)?)),
             v => {
                 let img = image_arg(self.st, v)?;
-                Some(Fill::Image { texture: img.id, size: img.size.as_vec2() })
+                Some(Fill::Image { texture: img.id, size: img.size.as_vec2(), tint: Color::WHITE })
             }
         })
     }
@@ -510,8 +519,12 @@ impl Measure for Meter<'_> {
             Ok(r) => r,
             Err(_) => return Vec2::ZERO,
         };
-        let style = text_style(t, Color::WHITE, max_width);
-        let s = self.text.layout(self.renderer, &rich, &style, self.scale).size;
+        // Wrapping at exactly a text's own width can break it on rounding: allow a hair more.
+        let style = text_style(t, Color::WHITE, max_width.map(|w| w + 1.0));
+        let mut s = self.text.layout(self.renderer, &rich, &style, self.scale).size;
+        if let Some(w) = max_width {
+            s.x = s.x.min(w);
+        }
         self.cache.insert(key, s);
         s
     }
@@ -660,7 +673,7 @@ fn paint(
     let tint = look.tint.unwrap_or(Color::WHITE);
     let (texture, source, color) = match fill {
         Fill::Color(c) => (white.id, white.size.as_vec2(), c * tint),
-        Fill::Image { texture, size } => (texture, size, tint),
+        Fill::Image { texture, size, tint: own } => (texture, size, own * tint),
     };
     let n = &mut st.scene[id];
     n.z = z;
@@ -742,8 +755,17 @@ fn sync(
                 )
             };
             let (mut b, mut th) = (w.host.bar, w.host.thumb);
-            paint(st, &mut b, group, look.bar, bar, &Look { slice: None, ..look.clone() }, 1);
-            paint(st, &mut th, group, look.thumb, thumb, &Look { slice: None, ..look.clone() }, 2);
+            // The widget's tint is the track's; bars and thumbs carry their own.
+            paint(st, &mut b, group, look.bar, bar, &Look { tint: None, ..look.clone() }, 1);
+            paint(
+                st,
+                &mut th,
+                group,
+                look.thumb,
+                thumb,
+                &Look { tint: None, slice: None, ..look.clone() },
+                2,
+            );
             (w.host.bar, w.host.thumb) = (b, th);
         }
         Kind::Node => {
@@ -775,7 +797,7 @@ fn sync_text(st: &mut State, w: &mut Widget<UiNodes>, group: NodeId, inner: Rect
     let Some(t) = w.el.text.clone() else { return };
     let color = look.color.unwrap_or(Color::WHITE);
     // A hair wider than measured, so text sized to fit never wraps on rounding.
-    let wrap = inner.size().x + 0.5;
+    let wrap = inner.size().x + 1.0;
     let id = match w.host.content {
         Some(id) if st.scene.contains(id) => id,
         _ => {

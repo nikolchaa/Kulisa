@@ -1,10 +1,13 @@
 //! Frame loop. Owns the window, finds the game, creates the renderer and forwards frames and
 //! input to the scripted [`Game`].
 
+#[cfg(target_os = "android")]
+mod android;
+
 use std::sync::Arc;
 
 use kulisa_core::Vec2;
-#[cfg(any(target_os = "android", target_os = "ios"))]
+#[cfg(target_os = "ios")]
 use kulisa_lua::Orientation;
 use kulisa_lua::{Device, FormFactor, Game};
 use kulisa_platform::Assets;
@@ -130,6 +133,10 @@ impl App {
             return o;
         }
         #[cfg(target_os = "android")]
+        if let Some(insets) = android::insets(&self.android) {
+            return insets;
+        }
+        #[cfg(target_os = "android")]
         if let Some(w) = &self.window {
             let r = self.android.content_rect();
             let s = w.inner_size();
@@ -164,7 +171,7 @@ impl App {
         #[cfg(any(target_os = "android", target_os = "ios"))]
         if let Some(o) = r.orientation {
             #[cfg(target_os = "android")]
-            android_orientation(&self.android, o);
+            android::set_orientation(&self.android, o);
             #[cfg(target_os = "ios")]
             {
                 use winit::platform::ios::{ValidOrientations, WindowExtIOS};
@@ -397,50 +404,6 @@ impl App {
             }
             _ => {}
         }
-    }
-}
-
-/// Locks the activity's orientation (`setRequestedOrientation`) through JNI.
-#[cfg(target_os = "android")]
-fn android_orientation(app: &AndroidApp, o: Orientation) {
-    use jni_sys::{JNI_OK, JNIEnv, JavaVM, jvalue};
-    // ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE / SENSOR_PORTRAIT / FULL_SENSOR.
-    let value = match o {
-        Orientation::Landscape => 6,
-        Orientation::Portrait => 7,
-        _ => 10,
-    };
-    let vm = app.vm_as_ptr() as *mut JavaVM;
-    let activity = app.activity_as_ptr() as jni_sys::jobject;
-    // SAFETY: android-activity hands out valid VM and activity pointers for the app's
-    // lifetime; every JNI function is checked before use and exceptions are cleared.
-    unsafe {
-        let mut env: *mut JNIEnv = std::ptr::null_mut();
-        let Some(attach) = (**vm).AttachCurrentThread else { return };
-        if attach(vm, &mut env as *mut _ as *mut *mut std::ffi::c_void, std::ptr::null_mut()) != JNI_OK {
-            return log::warn!("orientation: cannot attach to the JVM");
-        }
-        let e = &**env;
-        let (Some(get_class), Some(get_method), Some(call), Some(check), Some(clear), Some(delete)) = (
-            e.GetObjectClass,
-            e.GetMethodID,
-            e.CallVoidMethodA,
-            e.ExceptionCheck,
-            e.ExceptionClear,
-            e.DeleteLocalRef,
-        ) else {
-            return;
-        };
-        let class = get_class(env, activity);
-        let method = get_method(env, class, c"setRequestedOrientation".as_ptr(), c"(I)V".as_ptr());
-        if !method.is_null() {
-            call(env, activity, method, &jvalue { i: value });
-        }
-        if check(env) != 0 {
-            clear(env);
-            log::warn!("orientation: setRequestedOrientation failed");
-        }
-        delete(env, class);
     }
 }
 
