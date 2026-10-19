@@ -1534,6 +1534,8 @@ fn audio_api(lua: &Lua) -> mlua::Result<Table> {
                 o.volume = opts.get::<Option<f32>>("volume")?.unwrap_or(1.0);
                 o.fade_in = opts.get::<Option<f32>>("fade")?.unwrap_or(0.0);
                 o.crossfade = opts.get::<Option<f32>>("crossfade")?.unwrap_or(0.0);
+                o.rate = opts.get::<Option<f32>>("rate")?.unwrap_or(1.0);
+                o.pan = opts.get::<Option<f32>>("pan")?.unwrap_or(0.0);
             }
             with(lua, |st| rt(st.play(&channel, &path, o)))
         })?,

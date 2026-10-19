@@ -84,11 +84,15 @@ pub struct PlayOptions {
     pub fade_in: f32,
     /// On single-sound channels: seconds to fade out what was playing.
     pub crossfade: f32,
+    /// Playback speed, which also shifts the pitch: 1 is normal, 2 an octave up (0.25 to 4).
+    pub rate: f32,
+    /// Stereo position from -1 (left) to 1 (right).
+    pub pan: f32,
 }
 
 impl Default for PlayOptions {
     fn default() -> Self {
-        Self { volume: 1.0, looping: false, fade_in: 0.0, crossfade: 0.0 }
+        Self { volume: 1.0, looping: false, fade_in: 0.0, crossfade: 0.0, rate: 1.0, pan: 0.0 }
     }
 }
 
@@ -189,9 +193,11 @@ where
         }
         let volume = to_decibels(opts.volume);
         let fade = (opts.fade_in > 0.0).then(|| tween(opts.fade_in));
+        let rate = f64::from(opts.rate.clamp(0.25, 4.0));
+        let pan = opts.pan.clamp(-1.0, 1.0);
         let handle = match &sound.0 {
             Kind::Static(data) => {
-                let mut d = data.volume(volume).fade_in_tween(fade);
+                let mut d = data.volume(volume).playback_rate(rate).panning(pan).fade_in_tween(fade);
                 if opts.looping {
                     d = d.loop_region(..);
                 }
@@ -202,6 +208,8 @@ where
                 let mut d = StreamingSoundData::from_cursor(Cursor::new(bytes.clone()))
                     .map_err(|e| e.to_string())?
                     .volume(volume)
+                    .playback_rate(rate)
+                    .panning(pan)
                     .fade_in_tween(fade);
                 if opts.looping {
                     d = d.loop_region(..);
@@ -298,6 +306,17 @@ mod tests {
             a.manager.backend_mut().on_start_processing();
             a.manager.backend_mut().process();
         }
+    }
+
+    #[test]
+    fn rate_and_pan_are_accepted_and_clamped() {
+        let mut a = audio();
+        let s = Sound::decode(wav::blip(440.0, 5.0, 22050)).unwrap();
+        for (rate, pan) in [(1.5, -0.5), (100.0, 9.0), (0.0, -9.0)] {
+            a.play("sound", &s, PlayOptions { rate, pan, ..Default::default() }).unwrap();
+        }
+        process(&mut a);
+        assert!(a.is_playing("sound"));
     }
 
     #[test]

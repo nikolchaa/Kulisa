@@ -475,8 +475,9 @@ zero for other nodes). See
 
 Channels: `music` and `voice` (one sound at a time, crossfading) and `sound` (overlapping).
 
-- `kulisa.audio.play(channel, path, { loop, volume, fade, crossfade })`. WAV, OGG, MP3,
-  FLAC.
+- `kulisa.audio.play(channel, path, { loop, volume, fade, crossfade, rate, pan })`. WAV, OGG, MP3,
+  FLAC. `rate` is the playback speed, which also shifts the pitch (1 normal, 2 an octave up,
+  clamped to 0.25 to 4); `pan` runs from -1 (left) to 1 (right).
 - `kulisa.audio.stop(channel, fade?)`, `kulisa.audio.playing(channel)`.
 - `kulisa.audio.volume(channel, v?, fade?)` reads or sets a channel's volume; channel
   `"master"` is the whole mix.
