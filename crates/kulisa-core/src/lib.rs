@@ -7,6 +7,7 @@ mod color;
 mod frame;
 mod save;
 mod scene;
+mod tween;
 mod value;
 mod viewport;
 
@@ -19,5 +20,6 @@ pub use scene::{
     BlendMode, Effect, Layer, Material, Node, NodeId, NodeKind, Params, Quad, Rect, Scene, ShaderId, Sprite,
     Target, TextureId, Transform,
 };
+pub use tween::{Ease, Prop, Tween};
 pub use value::Value;
 pub use viewport::{ScaleMode, ViewLayout, Viewport};
