@@ -1,6 +1,6 @@
 //! Triangle meshes: per-vertex positions, UVs and colors that scripts can edit every frame.
 
-use glam::Vec2;
+use glam::{Vec2, Vec4};
 
 use crate::{Color, Rect, TextureId};
 
@@ -14,6 +14,9 @@ pub struct Mesh {
     pub uvs: Vec<Vec2>,
     /// Multiplied with the node's inherited tint and opacity.
     pub colors: Vec<Color>,
+    /// Per-vertex numbers handed to shaders as `in.data` (normals, heights, flags...), not color
+    /// managed and not touched by tint or opacity.
+    pub data: Vec<Vec4>,
     /// Triangle list into the vertex arrays.
     pub indices: Vec<u32>,
     /// Columns and rows of cells when this was built as a regular grid.
@@ -47,15 +50,25 @@ impl Mesh {
                 indices.extend([a, b, e, a, e, d]);
             }
         }
-        Mesh { texture, positions, uvs, colors: vec![Color::WHITE; n], indices, grid: Some((cols, rows)) }
+        Mesh {
+            texture,
+            positions,
+            uvs,
+            colors: vec![Color::WHITE; n],
+            data: vec![Vec4::ZERO; n],
+            indices,
+            grid: Some((cols, rows)),
+        }
     }
 
-    /// A mesh from raw arrays. `uvs` and `colors` are filled in (zero and white) when empty.
+    /// A mesh from raw arrays. `uvs`, `colors` and `data` are filled in (zero, white, zero)
+    /// when empty.
     pub fn from_parts(
         texture: TextureId,
         positions: Vec<Vec2>,
         mut uvs: Vec<Vec2>,
         mut colors: Vec<Color>,
+        mut data: Vec<Vec4>,
         indices: Vec<u32>,
     ) -> Result<Mesh, String> {
         if uvs.is_empty() {
@@ -64,7 +77,10 @@ impl Mesh {
         if colors.is_empty() {
             colors = vec![Color::WHITE; positions.len()];
         }
-        let m = Mesh { texture, positions, uvs, colors, indices, grid: None };
+        if data.is_empty() {
+            data = vec![Vec4::ZERO; positions.len()];
+        }
+        let m = Mesh { texture, positions, uvs, colors, data, indices, grid: None };
         m.validate()?;
         Ok(m)
     }
@@ -79,11 +95,12 @@ impl Mesh {
         if n > MAX_VERTICES {
             return Err(format!("a mesh can have at most {MAX_VERTICES} vertices, not {n}"));
         }
-        if self.uvs.len() != n || self.colors.len() != n {
+        if self.uvs.len() != n || self.colors.len() != n || self.data.len() != n {
             return Err(format!(
-                "mesh arrays differ in length: {n} positions, {} uvs, {} colors",
+                "mesh arrays differ in length: {n} positions, {} uvs, {} colors, {} data",
                 self.uvs.len(),
-                self.colors.len()
+                self.colors.len(),
+                self.data.len()
             ));
         }
         if !self.indices.len().is_multiple_of(3) {
@@ -164,13 +181,16 @@ mod tests {
     #[test]
     fn from_parts_checks_its_arrays() {
         let pos = vec![Vec2::ZERO, Vec2::X, Vec2::Y];
-        let ok = Mesh::from_parts(TextureId(1), pos.clone(), vec![], vec![], vec![0, 1, 2]).unwrap();
-        assert_eq!(ok.colors.len(), 3);
-        let err = Mesh::from_parts(TextureId(1), pos.clone(), vec![], vec![], vec![0, 1, 3]).unwrap_err();
+        let ok = Mesh::from_parts(TextureId(1), pos.clone(), vec![], vec![], vec![], vec![0, 1, 2]).unwrap();
+        assert_eq!((ok.colors.len(), ok.data.len()), (3, 3));
+        let err =
+            Mesh::from_parts(TextureId(1), pos.clone(), vec![], vec![], vec![], vec![0, 1, 3]).unwrap_err();
         assert!(err.contains("index 4 is out of range"), "{err}");
-        let err = Mesh::from_parts(TextureId(1), pos.clone(), vec![], vec![], vec![0, 1]).unwrap_err();
+        let err =
+            Mesh::from_parts(TextureId(1), pos.clone(), vec![], vec![], vec![], vec![0, 1]).unwrap_err();
         assert!(err.contains("threes"), "{err}");
-        let err = Mesh::from_parts(TextureId(1), pos, vec![Vec2::ZERO], vec![], vec![0, 1, 2]).unwrap_err();
+        let err =
+            Mesh::from_parts(TextureId(1), pos, vec![Vec2::ZERO], vec![], vec![], vec![0, 1, 2]).unwrap_err();
         assert!(err.contains("differ in length"), "{err}");
     }
 }

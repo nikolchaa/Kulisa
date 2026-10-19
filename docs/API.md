@@ -158,17 +158,21 @@ local tri = kulisa.mesh{ positions = { 0, 0, 100, 0, 0, 100 }, indices = { 1, 2,
 ```
 
 - Options: `image` (default a white pixel), grid: `cols`, `rows` (cells), `width`, `height`
-  (default the image size, or 100); raw: `positions`, `uvs`, `colors`, `indices`.
+  (default the image size, or 100); raw: `positions`, `uvs`, `colors`, `indices`; both: `data`.
 - Read-only: `vertex_count`, `triangle_count`, `cols` and `rows` (grids; nil otherwise).
   `width`/`height` are the far edge of the vertices. `image` can be changed.
 - Bulk setters take a flat table or a Luau `buffer` of 32-bit floats (indices: `u32`) and need
-  one entry per vertex: `mesh:set_positions(data)`, `set_uvs`, `set_colors`, `set_indices`.
-  `mesh:positions(buf?)`, `uvs(buf?)`, `colors(buf?)` return a flat table, or fill `buf`.
-  Reusing one buffer per frame avoids allocating.
+  one entry per vertex: `mesh:set_positions(data)`, `set_uvs`, `set_colors`, `set_data`,
+  `set_indices`. `mesh:positions(buf?)`, `uvs(buf?)`, `colors(buf?)`, `data(buf?)` return a flat
+  table, or fill `buf`. Reusing one buffer per frame avoids allocating.
+- `data` is four numbers per vertex (default zeros) that shaders read as `in.data`, interpolated
+  across triangles: surface normals, heights, flags, anything a custom shader wants. They are
+  passed as they are (not color managed, unaffected by `tint` and `opacity`) and stored as 16-bit
+  floats on the GPU, so keep values within about �1000 and expect three decimals near 1.
 - Per vertex (numbered from 1): `mesh:vertex(i)` → `x, y, u, v`; `mesh:set_vertex(i, x, y, u?,
   v?)` (UVs change only when both are given); `mesh:set_color(i, color)`;
   `mesh:vertex_at(col, row)` → the number of a grid vertex (columns `0..cols`).
-- `mesh:set_geometry{ positions, uvs, colors, indices }` replaces everything, including the
+- `mesh:set_geometry{ positions, uvs, colors, data, indices }` replaces everything, including the
   vertex count (the mesh stops being a grid).
 - A mesh has at most 65,536 vertices. Small images share atlas pages, so UVs outside 0..1
   would read a neighbour's pixels: keep meshes inside 0..1, or use an image larger than 512
@@ -461,7 +465,9 @@ Properties every widget takes:
 WGSL defining `fn fragment(in: VertexOut) -> vec4<f32>` (premultiplied linear color),
 optionally `fn vertex(in: VertexIn) -> VertexOut`. The engine provides `tex`, `samp`,
 `mask_tex`, `mask_samp` (the node's `mask`, white without one), `globals.time`,
-`globals.resolution` and `params.p[0..4]` (the 16 numbers as four `vec4`s). See
+`globals.resolution`, `params.p[0..4]` (the 16 numbers as four `vec4`s) and, in `fragment`, the
+interpolated `in.uv`, `in.color`, `in.pixel` (target pixels) and `in.data` (a mesh's `data`,
+zero for other nodes). See
 `demos/smoke/shaders`. `effects` lists are `{ shader, ... }` or
 `{ { shader = s, params = { ... }, mask = image }, ... }` and run in order.
 

@@ -3,7 +3,7 @@
 // User shaders define:
 //   fn fragment(in: VertexOut) -> vec4<f32>          required, returns premultiplied linear color
 //   fn vertex(in: VertexIn) -> VertexOut             optional, defaults to kulisa_vertex
-// and may read: globals (time, resolution), params.p[0..4], tex/samp (the bound texture) and
+// and may read: in.data (a mesh's per-vertex data), globals (time, resolution), params.p[0..4], tex/samp (the bound texture) and
 // mask_tex/mask_samp (the material's mask; white when it has none).
 
 struct Globals {
@@ -32,6 +32,8 @@ struct VertexIn {
     @location(1) uv: vec2<f32>,
     // Premultiplied linear tint.
     @location(2) color: vec4<f32>,
+    // A mesh's per-vertex data (zero for everything else).
+    @location(3) data: vec4<f32>,
 }
 
 struct VertexOut {
@@ -40,6 +42,8 @@ struct VertexOut {
     @location(1) color: vec4<f32>,
     // Target pixels, for screen-space effects.
     @location(2) pixel: vec2<f32>,
+    // A mesh's per-vertex data, interpolated.
+    @location(3) data: vec4<f32>,
 }
 
 fn kulisa_vertex(in: VertexIn) -> VertexOut {
@@ -48,6 +52,7 @@ fn kulisa_vertex(in: VertexIn) -> VertexOut {
     out.uv = in.uv;
     out.color = in.color;
     out.pixel = in.pos;
+    out.data = in.data;
     return out;
 }
 

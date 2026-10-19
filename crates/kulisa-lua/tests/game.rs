@@ -402,6 +402,56 @@ fn free_form_meshes_take_raw_geometry() {
     assert_eq!(g.eval::<f32>("t", "return tri.vertex_count").unwrap(), 4.0);
 }
 
+#[test]
+fn mesh_data_reaches_shaders() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.screen.clear = "#000000"
+        local show = kulisa.load_shader("data.wgsl")
+        -- A grid whose left column carries (0.25, 0.5, 1, 1) and right column (1, 0.5, 0.25, 1),
+        -- drawn as the data itself (premultiplied linear: the display re-encodes it).
+        grid = kulisa.mesh{ cols = 1, rows = 1, width = 32, height = 64, x = 0, shader = show,
+            data = { 0.25, 0.5, 1, 1, 1, 0.5, 0.25, 1, 0.25, 0.5, 1, 1, 1, 0.5, 0.25, 1 } }
+        free = kulisa.mesh{ positions = { 0, 0, 32, 0, 0, 64 }, indices = { 1, 2, 3 }, x = 32, shader = show,
+            data = { 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1 } }
+    "##,
+    "data.wgsl" => "fn fragment(in: VertexOut) -> vec4<f32> { return vec4<f32>(in.data.rgb, 1.0); }");
+    g.frame(0.016);
+    g.render();
+    let img = g.renderer().read_pixels().unwrap();
+    let px = |x: u32, y: u32| {
+        let i = ((y * img.width + x) * 4) as usize;
+        (img.pixels[i], img.pixels[i + 1], img.pixels[i + 2])
+    };
+    // Interpolated across the grid: red rises and blue falls from the left column to the right.
+    let (left, mid, right) = (px(1, 32), px(16, 32), px(30, 32));
+    assert!(left.0 < left.2 && right.0 > right.2, "data differs across the mesh: {left:?} {right:?}");
+    assert!(left.0 < mid.0 && mid.0 < right.0, "red rises smoothly: {left:?} {mid:?} {right:?}");
+    assert!(left.1.abs_diff(right.1) <= 2, "the middle channel is constant");
+    // A free-form mesh (a triangle) takes data too; its covered corner is pure green.
+    assert_eq!(px(40, 5), (0, 255, 0));
+    // Replace and read back: half precision keeps three decimals around 1.
+    g.eval::<()>(
+        "t",
+        r#"
+        local d = buffer.create(16 * 4)
+        for i = 0, 15 do buffer.writef32(d, i * 4, 0.5) end
+        grid:set_data(d)
+        local out = grid:data()
+        assert(#out == 16 and out[1] == 0.5, "data round trip")
+        "#,
+    )
+    .unwrap();
+    for (code, want) in [
+        ("grid:set_data({ 1, 2, 3, 4 })", "has 1 vertices but the mesh has 4"),
+        ("grid:set_data({ 1, 2, 3 })", "groups of four"),
+        ("kulisa.mesh{ cols = 2, rows = 2, data = { 0, 0, 0, 0 } }", "has 1 vertices but the mesh has 9"),
+    ] {
+        let err = g.eval::<()>("t", code).unwrap_err();
+        assert!(err.contains(want), "{code}: {err}");
+    }
+}
+
 /// A PNG whose left half is opaque and right half transparent.
 fn half_png(w: u32, h: u32) -> Vec<u8> {
     let px: Vec<u8> = (0..w * h)

@@ -13,13 +13,50 @@ use crate::{
     BlendMode, Color, Effect, Material, Mesh, NodeId, NodeKind, Rect, Scene, Sprite, TextureId, ViewLayout,
 };
 
-/// Vertex in pass pixel space. `color` is linear, premultiplied, 8-bit.
+/// Vertex in pass pixel space. `color` is linear, premultiplied, 8-bit. `data` is four
+/// half-precision floats (see [`f16_bits`]) that only meshes fill; shaders read them as `in.data`.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
 pub struct Vertex {
     pub pos: [f32; 2],
     pub uv: [f32; 2],
     pub color: [u8; 4],
+    pub data: [u16; 4],
+}
+
+/// The IEEE half-precision bits of `v` (round to nearest even; out of range saturates to
+/// infinity, tiny values flush through the subnormals).
+pub fn f16_bits(v: f32) -> u16 {
+    let b = v.to_bits();
+    let sign = ((b >> 16) & 0x8000) as u16;
+    let exp = ((b >> 23) & 0xff) as i32;
+    let man = b & 0x7f_ffff;
+    if exp == 0xff {
+        // Infinity or NaN (keep a quiet NaN a NaN).
+        return sign | 0x7c00 | if man != 0 { 0x200 } else { 0 };
+    }
+    let e = exp - 127 + 15;
+    if e >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if e <= 0 {
+        if e < -10 {
+            return sign;
+        }
+        // Subnormal: shift the implicit-one mantissa into place, rounding to nearest even.
+        let m = man | 0x80_0000;
+        let shift = (14 - e) as u32;
+        let half = m >> shift;
+        let rem = m & ((1 << shift) - 1);
+        let mid = 1 << (shift - 1);
+        let round = (rem > mid || (rem == mid && half & 1 == 1)) as u32;
+        return sign | (half + round) as u16;
+    }
+    let half = ((e as u32) << 10) | (man >> 13);
+    let rem = man & 0x1fff;
+    let round = (rem > 0x1000 || (rem == 0x1000 && half & 1 == 1)) as u32;
+    // A carry out of the mantissa correctly bumps the exponent (and saturates to infinity).
+    sign | (half + round) as u16
 }
 
 /// What a draw samples.
@@ -324,7 +361,12 @@ impl Walker<'_> {
         let v0 = self.frame.vertices.len() as u32;
         let i0 = self.frame.indices.len() as u32;
         for k in 0..4 {
-            self.frame.vertices.push(Vertex { pos: p[k].to_array(), uv: uvs[k].to_array(), color });
+            self.frame.vertices.push(Vertex {
+                pos: p[k].to_array(),
+                uv: uvs[k].to_array(),
+                color,
+                data: [0; 4],
+            });
         }
         self.frame.indices.extend([0, 1, 2, 0, 2, 3].map(|i| v0 + i));
         DrawItem { texture, blend, material, clip: None, vertices: v0..v0 + 4, indices: i0..i0 + 6 }
@@ -345,7 +387,7 @@ impl Walker<'_> {
         }
         let v0 = self.frame.vertices.len() as u32;
         let i0 = self.frame.indices.len() as u32;
-        for ((p, uv), col) in mesh.positions.iter().zip(&mesh.uvs).zip(&mesh.colors) {
+        for (((p, uv), col), data) in mesh.positions.iter().zip(&mesh.uvs).zip(&mesh.colors).zip(&mesh.data) {
             let t = c.tint * *col;
             let t = Color { a: t.a * c.opacity, ..t };
             let color = t.premultiplied().map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
@@ -353,6 +395,7 @@ impl Walker<'_> {
                 pos: m.transform_point2(*p).to_array(),
                 uv: uv.to_array(),
                 color,
+                data: data.to_array().map(f16_bits),
             });
         }
         let n = mesh.positions.len() as u32;
@@ -595,6 +638,7 @@ mod tests {
         assert_eq!(f.vertices[0].pos, [100.0, 45.0]);
         assert_eq!(f.vertices[0].color, [128, 128, 128, 128], "opacity premultiplied");
         assert_eq!(f.vertices[1].color, [128, 0, 0, 128], "vertex color multiplies the tint");
+        assert_eq!(f.vertices[0].data, [0; 4]);
         // The sprite's indices point at its own vertices, after the mesh's.
         assert_eq!(f.indices[12], 6);
         assert!(f.indices[..12].iter().all(|&i| i < 6));
@@ -653,5 +697,43 @@ mod tests {
         let parts = sprite_parts(&small);
         assert_eq!(parts.len(), 2, "the empty middle column is dropped");
         assert_eq!(parts[0].0.max.x, 10.0);
+    }
+
+    #[test]
+    fn mesh_data_reaches_the_vertices_as_half_floats() {
+        let mut s = Scene::new(DESIGN);
+        let mut mesh = Mesh::grid(tex(1), 1, 1, Vec2::splat(10.0), Rect::UNIT);
+        mesh.data[2] = crate::Vec4::new(0.5, -1.0, 2.0, 0.25);
+        let mut node = Node::mesh(mesh);
+        node.opacity = 0.5; // data is not color: opacity leaves it alone
+        s.add(s.root(), node);
+        let f = run(&s);
+        assert_eq!(f.vertices[2].data, [0x3800, 0xbc00, 0x4000, 0x3400]);
+        assert_eq!(f.vertices[0].data, [0; 4]);
+    }
+
+    #[test]
+    fn half_float_conversion_rounds_and_saturates() {
+        assert_eq!(f16_bits(0.0), 0);
+        assert_eq!(f16_bits(-0.0), 0x8000);
+        assert_eq!(f16_bits(1.0), 0x3c00);
+        assert_eq!(f16_bits(-2.0), 0xc000);
+        assert_eq!(f16_bits(65504.0), 0x7bff, "largest finite half");
+        assert_eq!(f16_bits(70000.0), 0x7c00, "too big becomes infinity");
+        assert_eq!(f16_bits(f32::INFINITY), 0x7c00);
+        assert_eq!(f16_bits(f32::NAN) & 0x7c00, 0x7c00);
+        assert_eq!(f16_bits(6.1035156e-5), 0x0400, "smallest normal");
+        assert_eq!(f16_bits(5.9604645e-8), 0x0001, "smallest subnormal");
+        assert_eq!(f16_bits(1e-9), 0, "underflow");
+        // 1 + 2^-11 is halfway between two halves: ties go to the even one.
+        assert_eq!(f16_bits(1.0 + 1.0 / 2048.0), 0x3c00);
+        assert_eq!(f16_bits(1.0 + 3.0 / 2048.0), 0x3c02);
+        // Every normal half survives a trip through f32.
+        for bits in (0x0400u16..0x7c00).step_by(7) {
+            let exp = (bits >> 10) as i32 - 15;
+            let man = (bits & 0x3ff) as f32;
+            let v = (1.0 + man / 1024.0) * 2f32.powi(exp);
+            assert_eq!(f16_bits(v), bits);
+        }
     }
 }

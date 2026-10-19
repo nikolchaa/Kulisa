@@ -752,13 +752,16 @@ impl UserData for NodeRef {
             ("set_positions", "positions"),
             ("set_uvs", "uvs"),
             ("set_colors", "colors"),
+            ("set_data", "data"),
             ("set_indices", "indices"),
         ] {
             m.add_method(method, move |lua, this, data: LuaValue| {
                 with(lua, |st| mesh::set_array(st, this.0, array, &data))
             });
         }
-        for (method, array) in [("positions", "positions"), ("uvs", "uvs"), ("colors", "colors")] {
+        for (method, array) in
+            [("positions", "positions"), ("uvs", "uvs"), ("colors", "colors"), ("data", "data")]
+        {
             m.add_method(method, move |lua, this, buf: Option<mlua::Buffer>| {
                 with(lua, |st| mesh::get_array(lua, st, this.0, array, buf))
             });

@@ -1,6 +1,6 @@
 //! Mesh nodes: `kulisa.mesh{}` and the methods that edit vertices every frame.
 
-use kulisa_core::{Color, Mesh, NodeId, NodeKind, Rect, Vec2};
+use kulisa_core::{Color, Mesh, NodeId, NodeKind, Rect, Vec2, Vec4};
 use mlua::{Buffer, Lua, Table, Value as LuaValue};
 
 use super::State;
@@ -68,6 +68,14 @@ fn colors(v: &LuaValue) -> mlua::Result<Vec<Color>> {
     Ok(f.as_chunks::<4>().0.iter().map(|c| Color::srgb(c[0], c[1], c[2], c[3])).collect())
 }
 
+fn quads(v: &LuaValue) -> mlua::Result<Vec<Vec4>> {
+    let f = floats(v, "data")?;
+    if !f.len().is_multiple_of(4) {
+        return Err(mlua::Error::runtime(format!("`data` holds groups of four numbers; got {}", f.len())));
+    }
+    Ok(f.as_chunks::<4>().0.iter().map(|c| Vec4::from_array(*c)).collect())
+}
+
 fn expect(what: &str, got: usize, want: usize) -> mlua::Result<()> {
     if got == want {
         return Ok(());
@@ -78,7 +86,7 @@ fn expect(what: &str, got: usize, want: usize) -> mlua::Result<()> {
 }
 
 /// Builds the mesh a `kulisa.mesh{}` call describes: a grid (`cols`, `rows`, `width`,
-/// `height`) or raw arrays (`positions`, `uvs`, `colors`, `indices`).
+/// `height`) or raw arrays (`positions`, `uvs`, `colors`, `indices`); `data` fits both.
 pub(super) fn make(st: &mut State, opts: &Table) -> mlua::Result<Mesh> {
     let image = match opts.get::<LuaValue>("image")? {
         LuaValue::Nil => st.white,
@@ -109,18 +117,32 @@ pub(super) fn make(st: &mut State, opts: &Table) -> mlua::Result<Mesh> {
             LuaValue::Nil => Vec::new(),
             v => colors(&v)?,
         };
+        let data = match opts.get::<LuaValue>("data")? {
+            LuaValue::Nil => Vec::new(),
+            v => quads(&v)?,
+        };
         let idx = match opts.get::<LuaValue>("indices")? {
             LuaValue::Nil => return Err(mlua::Error::runtime("a mesh with `positions` needs `indices`")),
             v => indices(&v)?,
         };
-        Mesh::from_parts(image.id, positions, uvs, cols, idx).map_err(mlua::Error::runtime)?
+        Mesh::from_parts(image.id, positions, uvs, cols, data, idx).map_err(mlua::Error::runtime)?
     };
+    let mut mesh = mesh;
+    // Grids take per-vertex data too (raw meshes already read it above).
+    if mesh.grid.is_some() {
+        let d = opts.get::<LuaValue>("data")?;
+        if !d.is_nil() {
+            let d = quads(&d)?;
+            expect("data", d.len(), mesh.vertex_count())?;
+            mesh.data = d;
+        }
+    }
     Ok(mesh)
 }
 
 /// Option names `kulisa.mesh` handles itself (the rest are node properties).
 pub(super) const OPTIONS: &[&str] =
-    &["image", "cols", "rows", "width", "height", "positions", "uvs", "colors", "indices"];
+    &["image", "cols", "rows", "width", "height", "positions", "uvs", "colors", "data", "indices"];
 
 /// Mesh-only read properties: `Some(None)` is a nil (`cols` of a free-form mesh).
 pub(super) fn get(st: &State, id: NodeId, key: &str) -> Option<Option<f64>> {
@@ -154,6 +176,11 @@ pub(super) fn set_array(st: &mut State, id: NodeId, name: &str, v: &LuaValue) ->
             expect(name, c.len(), n)?;
             m.colors = c;
         }
+        "data" => {
+            let d = quads(v)?;
+            expect(name, d.len(), n)?;
+            m.data = d;
+        }
         _ => {
             let idx = indices(v)?;
             if !idx.len().is_multiple_of(3) || idx.iter().any(|&i| i as usize >= n) {
@@ -182,8 +209,12 @@ fn make_from_arrays(o: &Table, texture: kulisa_core::TextureId) -> mlua::Result<
         LuaValue::Nil => Vec::new(),
         v => colors(&v)?,
     };
+    let data = match o.get::<LuaValue>("data")? {
+        LuaValue::Nil => Vec::new(),
+        v => quads(&v)?,
+    };
     let idx = indices(&o.get::<LuaValue>("indices")?)?;
-    Mesh::from_parts(texture, positions, uvs, cols, idx).map_err(mlua::Error::runtime)
+    Mesh::from_parts(texture, positions, uvs, cols, data, idx).map_err(mlua::Error::runtime)
 }
 
 /// `mesh:positions()` / `mesh:uvs()` / `mesh:colors()`: a flat table, or written into `buf`.
@@ -198,6 +229,7 @@ pub(super) fn get_array(
     let data: Vec<f32> = match name {
         "positions" => m.positions.iter().flat_map(|p| [p.x, p.y]).collect(),
         "uvs" => m.uvs.iter().flat_map(|p| [p.x, p.y]).collect(),
+        "data" => m.data.iter().flat_map(|d| d.to_array()).collect(),
         _ => m.colors.iter().flat_map(|c| linear_to_srgb(*c)).collect(),
     };
     match buf {

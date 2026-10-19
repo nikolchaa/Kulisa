@@ -301,7 +301,7 @@ fn ortho_quad(size: UVec2, frame: &mut Frame) -> std::ops::Range<u32> {
     for (pos, uv) in
         [([0.0, 0.0], [0.0, 0.0]), ([w, 0.0], [1.0, 0.0]), ([w, h], [1.0, 1.0]), ([0.0, h], [0.0, 1.0])]
     {
-        frame.vertices.push(Vertex { pos, uv, color: [255; 4] });
+        frame.vertices.push(Vertex { pos, uv, color: [255; 4], data: [0; 4] });
     }
     frame.indices.extend([0, 1, 2, 0, 2, 3].map(|i| v0 + i));
     i0..i0 + 6
@@ -752,7 +752,9 @@ impl Renderer {
                 buffers: &[Some(wgpu::VertexBufferLayout {
                     array_stride: size_of::<Vertex>() as u64,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Unorm8x4],
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x2, 1 => Float32x2, 2 => Unorm8x4, 3 => Float16x4
+                    ],
                 })],
             },
             fragment: Some(wgpu::FragmentState {
