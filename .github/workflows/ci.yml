@@ -44,10 +44,16 @@ jobs:
           - { name: Linux, os: ubuntu-latest }
           - { name: macOS, os: macos-latest }
     runs-on: ${{ matrix.os }}
+    env:
+      # Headless GPU tests must run, not skip: software Vulkan (lavapipe) on Linux,
+      # WARP on Windows, Metal on macOS.
+      KULISA_REQUIRE_GPU: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers
       - run: cargo test --workspace 2>&1 | tee -a ci.log
       - run: cargo build -p kulisa-player 2>&1 | tee -a ci.log
       - if: failure()
