@@ -3,7 +3,9 @@
 mod logo;
 mod sfx;
 mod smoke;
+mod story;
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use kulisa_audio::{Audio, PlayOptions};
@@ -13,9 +15,10 @@ use kulisa_render::Renderer;
 use kulisa_text::TextSystem;
 use sfx::Sfx;
 use smoke::Smoke;
+use story::{AudioCmd, StoryPlayer};
 use web_time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -24,6 +27,7 @@ use winit::window::{Window, WindowId};
 pub use winit::platform::android::activity::AndroidApp;
 
 const HELLO: &str = include_str!("scripts/hello.luau");
+const MUSIC_VOLUME: f32 = 0.35;
 
 pub enum UserEvent {
     RendererReady(Result<Renderer, String>),
@@ -40,12 +44,15 @@ struct App {
     renderer: Option<Renderer>,
     creating_renderer: bool,
     script: Option<Script>,
+    story: Option<StoryPlayer>,
     smoke: Option<Smoke>,
     text: TextSystem,
     /// Created at startup on native; on the web only after the first user gesture, as
     /// browsers require.
     audio: Option<Audio>,
     sfx: Option<Sfx>,
+    /// Looping track per channel, as the story wants it (played once audio is available).
+    tracks: BTreeMap<String, String>,
     music_on: bool,
     viewport: Viewport,
     /// Last pointer position in window pixels.
@@ -63,16 +70,24 @@ impl App {
                 None
             }
         };
+        let story = script.as_ref().map(|s| {
+            StoryPlayer::new(&s.vm).unwrap_or_else(|e| {
+                log::error!("{e}");
+                StoryPlayer::failed(&s.vm, e)
+            })
+        });
         Self {
             proxy,
             window: None,
             renderer: None,
             creating_renderer: false,
             script,
+            story,
             smoke: None,
             text: load_fonts(),
             audio: None,
             sfx: None,
+            tracks: BTreeMap::new(),
             music_on: true,
             viewport: Viewport { design: smoke::DESIGN, mode: ScaleMode::Expand },
             pointer: None,
@@ -86,30 +101,89 @@ impl App {
             return;
         }
         let started = Audio::new().and_then(|mut audio| {
-            let sfx = Sfx::new()?;
-            audio.set_volume("music", 0.35, 0.0)?;
-            audio.play(
-                "music",
-                &sfx.pad,
-                PlayOptions { looping: true, fade_in: 2.0, ..Default::default() },
-            )?;
-            Ok((audio, sfx))
+            audio.set_volume("music", MUSIC_VOLUME, 0.0)?;
+            Ok((audio, Sfx::new()?))
         });
         match started {
-            Ok((audio, sfx)) => (self.audio, self.sfx) = (Some(audio), Some(sfx)),
+            Ok((audio, sfx)) => {
+                (self.audio, self.sfx) = (Some(audio), Some(sfx));
+                // Start whatever the story already asked for.
+                let tracks: Vec<_> = self.tracks.iter().map(|(c, f)| (c.clone(), f.clone())).collect();
+                for (channel, file) in tracks {
+                    self.play(&channel, &file, 1.0, true);
+                }
+            }
             // No output device (e.g. a headless machine): keep running silently.
             Err(e) => log::warn!("audio unavailable: {e}"),
         }
     }
 
-    /// Click, tap, space or enter.
+    fn play(&mut self, channel: &str, file: &str, fade: f32, looping: bool) {
+        let (Some(audio), Some(sfx)) = (&mut self.audio, &self.sfx) else { return };
+        let Some(sound) = sfx.get(file) else {
+            log::warn!("smoke scene has no sound `{file}`");
+            return;
+        };
+        let opts = PlayOptions { looping, fade_in: fade, crossfade: fade.max(0.3), ..Default::default() };
+        if let Err(e) = audio.play(channel, sound, opts) {
+            log::warn!("{e}");
+        }
+    }
+
+    /// Applies the story's audio requests.
+    fn apply_audio(&mut self) {
+        let cmds = self.story.as_mut().map(|s| std::mem::take(&mut s.audio)).unwrap_or_default();
+        for cmd in cmds {
+            match cmd {
+                AudioCmd::Play { channel, file, fade, looping } => {
+                    if looping {
+                        self.tracks.insert(channel.clone(), file.clone());
+                    }
+                    self.play(&channel, &file, fade, looping);
+                }
+                AudioCmd::Stop { channel, fade } => {
+                    self.tracks.remove(&channel);
+                    if let Some(audio) = &mut self.audio {
+                        let _ = audio.stop(&channel, fade);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Click, tap, space or enter: pick the choice under the pointer, or continue.
     fn interact(&mut self) {
         self.start_audio();
         if let (Some(audio), Some(sfx)) = (&mut self.audio, &self.sfx) {
             let _ = audio.play("sound", &sfx.blip, PlayOptions { volume: 0.6, ..Default::default() });
         }
-        if let (Some(r), Some(smoke)) = (&mut self.renderer, &mut self.smoke) {
-            smoke.advance(r, &mut self.text);
+        let pointer = self.pointer_design();
+        let (Some(story), Some(smoke), Some(r)) = (&mut self.story, &mut self.smoke, &mut self.renderer)
+        else {
+            return;
+        };
+        match pointer.and_then(|p| smoke.menu_hit(p)) {
+            Some(index) => story.choose(smoke, r, &mut self.text, index),
+            None => story.advance(smoke, r, &mut self.text),
+        }
+    }
+
+    fn story_action(&mut self, action: StoryAction) {
+        let (Some(story), Some(smoke), Some(r)) = (&mut self.story, &mut self.smoke, &mut self.renderer)
+        else {
+            return;
+        };
+        let text = &mut self.text;
+        match action {
+            StoryAction::Choose(n) => {
+                if let Some(index) = story.menu_item(n) {
+                    story.choose(smoke, r, text, index);
+                }
+            }
+            StoryAction::Rollback => story.rollback(smoke, r, text, &self.tracks),
+            StoryAction::RollForward => story.roll_forward(smoke, r, text, &self.tracks),
+            StoryAction::Save => story.quicksave(),
+            StoryAction::Load => story.quickload(smoke, r, text, &self.tracks),
         }
     }
 
@@ -117,8 +191,15 @@ impl App {
         self.start_audio();
         self.music_on = !self.music_on;
         if let Some(audio) = &mut self.audio {
-            let _ = audio.set_volume("music", if self.music_on { 0.35 } else { 0.0 }, 0.6);
+            let _ = audio.set_volume("music", if self.music_on { MUSIC_VOLUME } else { 0.0 }, 0.6);
         }
+    }
+
+    /// The pointer in design units (where the UI lives).
+    fn pointer_design(&self) -> Option<Vec2> {
+        let r = self.renderer.as_ref()?;
+        let layout = self.viewport.layout(r.size());
+        self.pointer.map(|p| layout.to_pixels.inverse().transform_point2(p))
     }
 
     fn create_renderer(&mut self, window: Arc<Window>) {
@@ -150,16 +231,28 @@ impl App {
                 }
             }
         }
+        let pointer = self.pointer_design();
         let (Some(renderer), Some(window), Some(smoke)) = (&mut self.renderer, &self.window, &mut self.smoke)
         else {
             return;
         };
-        let layout = self.viewport.layout(renderer.size());
-        let pointer = self.pointer.map(|p| layout.to_pixels.inverse().transform_point2(p));
-        smoke.update(renderer, &mut self.text, layout.scale, t, dt, tint, angle, pointer);
+        if let Some(story) = &mut self.story {
+            story.tick(dt, smoke, renderer, &mut self.text);
+        }
+        let scale = self.viewport.layout(renderer.size()).scale;
+        smoke.update(renderer, &mut self.text, scale, t, dt, tint, angle, pointer);
         window.pre_present_notify();
         renderer.render(&smoke.scene, &self.viewport, t);
+        self.apply_audio();
     }
+}
+
+enum StoryAction {
+    Choose(usize),
+    Rollback,
+    RollForward,
+    Save,
+    Load,
 }
 
 fn load_fonts() -> TextSystem {
@@ -205,7 +298,7 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         // Android destroys the native window on suspend; the surface must go with it.
-        // M0 rebuilds the whole renderer on resume.
+        // The renderer and scene are rebuilt on resume; the story keeps its place.
         if cfg!(target_os = "android") {
             self.renderer = None;
             self.smoke = None;
@@ -218,17 +311,22 @@ impl ApplicationHandler<UserEvent> for App {
                 self.creating_renderer = false;
                 match result {
                     Ok(mut r) => {
-                        // Glyph textures belonged to the previous renderer, if any.
-                        self.text.clear_glyph_cache();
-                        let scale = self.viewport.layout(r.size()).scale;
-                        match Smoke::build(&mut r, &mut self.text, scale) {
-                            Ok(s) => self.smoke = Some(s),
-                            Err(e) => log::error!("{e}"),
-                        }
                         if let Some(w) = &self.window {
                             let size = w.inner_size();
                             r.resize(size.width, size.height);
                             w.request_redraw();
+                        }
+                        // Glyph textures belonged to the previous renderer, if any.
+                        self.text.clear_glyph_cache();
+                        let scale = self.viewport.layout(r.size()).scale;
+                        match Smoke::build(&mut r, scale) {
+                            Ok(mut smoke) => {
+                                if let Some(story) = &mut self.story {
+                                    story.resume(&mut smoke, &mut r, &mut self.text, &self.tracks);
+                                }
+                                self.smoke = Some(smoke);
+                            }
+                            Err(e) => log::error!("{e}"),
                         }
                         self.renderer = Some(r);
                     }
@@ -259,12 +357,36 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 self.interact()
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let y = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32,
+                };
+                if y > 0.0 {
+                    self.story_action(StoryAction::Rollback);
+                } else if y < 0.0 {
+                    self.story_action(StoryAction::RollForward);
+                }
+            }
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && !event.repeat =>
             {
                 match event.logical_key.as_ref() {
                     Key::Named(NamedKey::Space | NamedKey::Enter) => self.interact(),
+                    Key::Named(NamedKey::ArrowLeft | NamedKey::PageUp) => {
+                        self.story_action(StoryAction::Rollback)
+                    }
+                    Key::Named(NamedKey::ArrowRight | NamedKey::PageDown) => {
+                        self.story_action(StoryAction::RollForward)
+                    }
+                    Key::Named(NamedKey::F5) => self.story_action(StoryAction::Save),
+                    Key::Named(NamedKey::F9) => self.story_action(StoryAction::Load),
                     Key::Character(c) if c.eq_ignore_ascii_case("m") => self.toggle_music(),
+                    Key::Character(c) => {
+                        if let Some(d) = c.chars().next().and_then(|d| d.to_digit(10)).filter(|d| *d > 0) {
+                            self.story_action(StoryAction::Choose(d as usize - 1));
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -308,6 +430,9 @@ pub fn run() {
 pub fn run_android(app: AndroidApp) {
     use winit::platform::android::EventLoopBuilderExtAndroid;
     kulisa_platform::init_logging();
+    if let Some(dir) = app.internal_data_path() {
+        kulisa_platform::set_android_data_dir(dir);
+    }
     let event_loop =
         EventLoop::with_user_event().with_android_app(app).build().expect("failed to create event loop");
     run_with(event_loop);

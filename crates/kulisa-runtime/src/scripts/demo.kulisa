@@ -1,0 +1,35 @@
+# Smoke-test story for the Kulisa runtime.
+
+define k = Character("Kulisa", { color = "#ff6a3d" })
+default visits = 0
+default spins = 0
+
+label start:
+    $ visits += 1
+    scene dusk
+    show logo
+    play music "pad" fadein 2.0
+    k "Welcome{w=0.3} to the {b}Kulisa{/b} smoke test. This is visit [visits]."
+    k "Everything here is driven by a {color=#ff6a3d}.kulisa{/color} script: the lines, the choices and what is on stage."
+    menu:
+        k "What should happen next?"
+        "Spin the logo":
+            show logo spin
+            $ spins += 1
+            k "{wave}Wheee.{/wave} That was spin number [spins]."
+        "Change the music":
+            play music "night" fadein 1.5
+            scene night
+            k "Same channel, new track: the old one fades out as the new one fades in."
+        "Hide the logo" if visits > 1:
+            hide logo
+            k "Gone. It comes back when the story starts over."
+    k "Roll back with the mouse wheel or the Left arrow. {b}F5{/b} quicksaves, {b}F9{/b} quickloads."
+    call aside
+    k "That was a {b}call{/b}; now we are back. Starting over."
+    jump start
+
+label aside:
+    "A narrator line from another label, with a pause after it."
+    pause 0.8
+    return

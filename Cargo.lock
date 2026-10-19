@@ -1284,6 +1284,7 @@ dependencies = [
  "kulisa-lua",
  "kulisa-platform",
  "kulisa-render",
+ "kulisa-story",
  "kulisa-text",
  "log",
  "pollster",

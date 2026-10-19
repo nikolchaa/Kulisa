@@ -1,8 +1,10 @@
 //! Smoke scene: exercises layers, parallax, a render target, a custom sprite shader,
-//! clipping, a screen effect chain (M1) and a typewriter dialogue box (M2). Built in Rust
-//! until the Luau API (M4) can build it.
+//! clipping, a screen effect chain (M1), a typewriter dialogue box (M2) and a choice menu
+//! driven by a `.kulisa` script (M3). Built in Rust until the Luau API (M4) can build it.
 
-use kulisa_core::{BlendMode, Color, Material, Node, NodeId, NodeKind, Quad, Rect, Scene, UVec2, Vec2};
+use kulisa_core::{
+    BlendMode, Color, Material, Node, NodeId, NodeKind, Quad, Rect, Scene, TextureId, UVec2, Vec2,
+};
 use kulisa_render::{Image, Renderer};
 use kulisa_text::{TextBox, TextStyle, TextSystem, Typewriter};
 
@@ -10,31 +12,46 @@ use crate::logo;
 
 pub const DESIGN: Vec2 = Vec2::new(1920.0, 1080.0);
 
-const LINES: &[&str] = &[
-    "{b}Kulisa{/b} draws {color=#ff6a3d}styled{/color}, {wave}waving{/wave} and {shake}shaking{/shake} text.{w=0.4} Click to continue.",
-    "Ruby sits above its base: {ruby=stage scenery}kulisa{/ruby}.{w=0.3} Pauses,{w=0.6} {speed=0.35}slow parts{/speed} and {size=1.4}sizes{/size} are inline tags.",
-    "Glyphs share the sprite atlas, so this whole box batches with the scene. Press {b}M{/b} to toggle the music.",
-];
+const TYPEWRITER: Typewriter = Typewriter { cps: 38.0, fade: 0.08 };
+const INSTANT: Typewriter = Typewriter { cps: 0.0, fade: 0.0 };
+
+/// A menu choice card: where it is, and its nodes.
+struct Choice {
+    index: usize,
+    rect: Rect,
+    backing: NodeId,
+    label: NodeId,
+    markup: String,
+    text: TextBox,
+}
 
 pub struct Smoke {
     pub scene: Scene,
+    white: TextureId,
+    sky: NodeId,
     logo: NodeId,
+    logo_spin: bool,
     mini: NodeId,
     name: NodeId,
     dialogue: NodeId,
+    menu: NodeId,
+    name_markup: String,
+    name_color: Color,
+    line_markup: String,
     name_box: TextBox,
     line_box: TextBox,
-    line: usize,
+    choices: Vec<Choice>,
+    scale: f32,
     quads: Vec<Quad>,
 }
 
-fn name_style() -> TextStyle {
-    TextStyle {
-        font: Some("Inter".into()),
-        size: 30.0,
-        color: Color::hex("#ff6a3d").unwrap(),
-        ..Default::default()
-    }
+/// Escapes text so it shows literally inside markup.
+fn literal(s: &str) -> String {
+    s.replace('{', "{{").replace('}', "}}")
+}
+
+fn name_style(color: Color) -> TextStyle {
+    TextStyle { font: Some("Inter".into()), size: 30.0, color, ..Default::default() }
 }
 
 fn line_style() -> TextStyle {
@@ -42,6 +59,17 @@ fn line_style() -> TextStyle {
         font: Some("Inter".into()),
         size: 34.0,
         width: Some(1520.0),
+        color: Color::hex("#f4f1ea").unwrap(),
+        ..Default::default()
+    }
+}
+
+fn choice_style() -> TextStyle {
+    TextStyle {
+        font: Some("Inter".into()),
+        size: 30.0,
+        width: Some(700.0),
+        align: kulisa_text::Align::Center,
         color: Color::hex("#f4f1ea").unwrap(),
         ..Default::default()
     }
@@ -82,11 +110,11 @@ fn gradient(top: [u8; 3], bottom: [u8; 3]) -> Image {
 }
 
 impl Smoke {
-    pub fn build(r: &mut Renderer, text: &mut TextSystem, scale: f32) -> Result<Smoke, String> {
+    pub fn build(r: &mut Renderer, scale: f32) -> Result<Smoke, String> {
         let mut scene = Scene::new(DESIGN);
         scene.clear = Color::hex("#111116").unwrap();
         let white = r.create_texture(&Image::solid(4, 4, [255; 4]));
-        let sky = r.create_texture(&gradient([17, 17, 22], [58, 40, 52]));
+        let sky_tex = r.create_texture(&gradient([17, 17, 22], [58, 40, 52]));
         let logo_tex = r.create_texture(&logo::image(256));
         let halo = r.create_texture(&radial(128));
         let wave = r.create_shader("wave.wgsl", include_str!("shaders/wave.wgsl"))?;
@@ -95,7 +123,7 @@ impl Smoke {
 
         // Far backdrop: a gradient wider than any screen, barely moving.
         let back = scene.add(root, Node::layer(0.1));
-        scene.add(back, Node::sprite(sky, Vec2::new(4000.0, 1600.0)).at(-1040.0, -260.0));
+        let sky = scene.add(back, Node::sprite(sky_tex, Vec2::new(4000.0, 1600.0)).at(-1040.0, -260.0));
 
         // Stage flats at three depths; all share one texture, so they batch.
         for (depth, parallax, color, count) in
@@ -112,9 +140,12 @@ impl Smoke {
             }
         }
 
-        // World: the logo (driven by Luau) and a render target shown through a wave shader.
+        // World: the logo (shown by the story, animated by Luau) and a render target shown
+        // through a wave shader.
         let world = scene.add(root, Node::layer(1.0).with_z(10));
-        let logo = scene.add(world, Node::sprite(logo_tex, Vec2::splat(320.0)).centered().at(960.0, 520.0));
+        let mut logo = Node::sprite(logo_tex, Vec2::splat(320.0)).centered().at(960.0, 520.0);
+        logo.visible = false;
+        let logo = scene.add(world, logo);
         // A soft additive halo behind the logo (a child with negative z draws behind it).
         let mut glow = Node::sprite(halo, Vec2::splat(620.0)).centered().at(160.0, 160.0).with_z(-1);
         glow.blend = BlendMode::Add;
@@ -143,7 +174,7 @@ impl Smoke {
         scene.add(panel, bar);
         scene.add(panel, Node::sprite(logo_tex, Vec2::splat(48.0)).at(8.0, 8.0));
 
-        // Dialogue box: a typical visual novel textbox, built from the same primitives.
+        // Dialogue box and menu: a typical visual novel UI, built from the same primitives.
         let ui = scene.add(root, Node::layer(0.0).with_z(30));
         let mut backing = Node::sprite(white, Vec2::new(1600.0, 236.0)).at(160.0, 800.0);
         backing.tint = Color::hex("#111116").unwrap();
@@ -151,13 +182,28 @@ impl Smoke {
         scene.add(ui, backing);
         let name = scene.add(ui, Node::quads(Vec::new()).at(200.0, 816.0));
         let dialogue = scene.add(ui, Node::quads(Vec::new()).at(200.0, 866.0));
+        let menu = scene.add(ui, Node::group());
 
         scene.effects.push(Material { shader: vignette, params: params([0.35, 0.85, 0.0, 0.55]) });
-        let name_box =
-            Self::lay_out(text, r, "{b}Kulisa{/b}", &name_style(), scale, Typewriter { cps: 0.0, fade: 0.0 });
-        let line_box =
-            Self::lay_out(text, r, LINES[0], &line_style(), scale, Typewriter { cps: 38.0, fade: 0.08 });
-        Ok(Smoke { scene, logo, mini, name, dialogue, name_box, line_box, line: 0, quads: Vec::new() })
+        Ok(Smoke {
+            scene,
+            white,
+            sky,
+            logo,
+            logo_spin: false,
+            mini,
+            name,
+            dialogue,
+            menu,
+            name_markup: String::new(),
+            name_color: Color::WHITE,
+            line_markup: String::new(),
+            name_box: TextBox::default(),
+            line_box: TextBox::default(),
+            choices: Vec::new(),
+            scale,
+            quads: Vec::new(),
+        })
     }
 
     fn lay_out(
@@ -168,33 +214,131 @@ impl Smoke {
         scale: f32,
         tw: Typewriter,
     ) -> TextBox {
-        let rich = kulisa_text::parse(markup).unwrap_or_else(|e| panic!("smoke line markup: {e}"));
+        // Story text is markup; a mistake in it shows the error instead of the line.
+        let rich = kulisa_text::parse(markup).unwrap_or_else(|e| {
+            let msg = format!(
+                "{{color=#ff6a3d}}Markup error at byte {}:{{/color}} {}",
+                e.offset,
+                literal(&e.message)
+            );
+            kulisa_text::parse(&msg).expect("escaped error text is valid markup")
+        });
         TextBox::new(text.layout(r, &rich, style, scale), tw)
     }
 
-    /// Click/tap/space: finish the current line, or go to the next one.
-    pub fn advance(&mut self, r: &mut Renderer, text: &mut TextSystem) {
-        if !self.line_box.is_complete() {
-            self.line_box.skip();
-            return;
+    /// Shows a line of dialogue, with the speaker's name and color if any.
+    pub fn set_line(
+        &mut self,
+        r: &mut Renderer,
+        text: &mut TextSystem,
+        who: Option<(String, Color)>,
+        markup: &str,
+    ) {
+        let (name, color) =
+            who.map_or((String::new(), Color::WHITE), |(n, c)| (format!("{{b}}{}{{/b}}", literal(&n)), c));
+        self.name_markup = name;
+        self.name_color = color;
+        self.line_markup = markup.to_string();
+        self.name_box = Self::lay_out(text, r, &self.name_markup, &name_style(color), self.scale, INSTANT);
+        self.line_box = Self::lay_out(text, r, markup, &line_style(), self.scale, TYPEWRITER);
+    }
+
+    /// Shows a script error in the dialogue box.
+    pub fn set_error(&mut self, r: &mut Renderer, text: &mut TextSystem, error: &str) {
+        let first = error.lines().next().unwrap_or(error);
+        let who = Some(("Story error".to_string(), Color::hex("#ff6a3d").unwrap()));
+        self.set_line(r, text, who, &literal(first));
+        self.line_box.skip();
+    }
+
+    pub fn line_complete(&self) -> bool {
+        self.line_box.is_complete()
+    }
+
+    pub fn skip_line(&mut self) {
+        self.line_box.skip();
+    }
+
+    /// Shows menu choices as cards above the dialogue box.
+    pub fn set_menu(&mut self, r: &mut Renderer, text: &mut TextSystem, items: &[(usize, String)]) {
+        self.clear_menu();
+        let top = 440.0 - items.len() as f32 * 46.0;
+        for (i, (index, markup)) in items.iter().enumerate() {
+            let rect = Rect::new(580.0, top + i as f32 * 92.0, 760.0, 72.0);
+            let mut card = Node::sprite(self.white, rect.size()).at(rect.min.x, rect.min.y);
+            card.tint = Color::hex("#111116").unwrap();
+            card.opacity = 0.88;
+            let backing = self.scene.add(self.menu, card);
+            let label =
+                self.scene.add(self.menu, Node::quads(Vec::new()).at(rect.min.x + 30.0, rect.min.y + 16.0));
+            let text = Self::lay_out(text, r, markup, &choice_style(), self.scale, INSTANT);
+            self.choices.push(Choice { index: *index, rect, backing, label, markup: markup.clone(), text });
         }
-        self.line = (self.line + 1) % LINES.len();
-        let scale = self.line_box.layout.scale;
-        self.line_box =
-            Self::lay_out(text, r, LINES[self.line], &line_style(), scale, self.line_box.typewriter);
+    }
+
+    pub fn clear_menu(&mut self) {
+        for c in self.choices.drain(..) {
+            self.scene.remove(c.backing);
+            self.scene.remove(c.label);
+        }
+    }
+
+    /// The menu choice under `p` (design units), if any.
+    pub fn menu_hit(&self, p: Vec2) -> Option<usize> {
+        self.choices.iter().find(|c| c.rect.contains(p)).map(|c| c.index)
+    }
+
+    /// Stage: the scene backdrop. `dusk` (default) and `night` are known.
+    pub fn set_scene(&mut self, image: &[String]) {
+        let tint = match image.first().map(String::as_str) {
+            Some("night") => Color::hex("#6f7fb8").unwrap(),
+            Some("dusk") | None => Color::WHITE,
+            Some(other) => {
+                log::warn!("smoke scene has no backdrop `{other}`");
+                Color::WHITE
+            }
+        };
+        self.scene[self.sky].tint = tint;
+        self.hide("logo"); // a new scene clears what was shown
+    }
+
+    /// Stage: shows an image. The smoke scene knows `logo` (attribute `spin`).
+    pub fn show(&mut self, image: &[String], _at: Option<&str>) {
+        match image.first().map(String::as_str) {
+            Some("logo") => {
+                self.scene[self.logo].visible = true;
+                self.logo_spin = image.iter().any(|a| a == "spin");
+            }
+            other => log::warn!("smoke scene has no image `{}`", other.unwrap_or_default()),
+        }
+    }
+
+    pub fn hide(&mut self, tag: &str) {
+        if tag == "logo" {
+            self.scene[self.logo].visible = false;
+            self.logo_spin = false;
+        }
+    }
+
+    /// Clears the stage before rebuilding it from saved state.
+    pub fn reset_stage(&mut self) {
+        self.set_scene(&[]);
     }
 
     /// Re-rasterizes text when the window's pixel scale changes, keeping reveal progress.
     fn relayout(&mut self, r: &mut Renderer, text: &mut TextSystem, scale: f32) {
-        if (self.line_box.layout.scale - scale).abs() / scale < 0.01 {
+        if (self.scale - scale).abs() / scale < 0.01 {
             return;
         }
+        self.scale = scale;
         let elapsed = self.line_box.elapsed;
         self.name_box =
-            Self::lay_out(text, r, "{b}Kulisa{/b}", &name_style(), scale, self.name_box.typewriter);
-        self.line_box =
-            Self::lay_out(text, r, LINES[self.line], &line_style(), scale, self.line_box.typewriter);
+            Self::lay_out(text, r, &self.name_markup, &name_style(self.name_color), scale, INSTANT);
+        self.line_box = Self::lay_out(text, r, &self.line_markup, &line_style(), scale, TYPEWRITER);
         self.line_box.elapsed = elapsed;
+        for c in &mut self.choices {
+            c.text = Self::lay_out(text, r, &c.markup, &choice_style(), scale, INSTANT);
+        }
     }
 
     /// `pointer` is in design units; the camera drifts toward it. `scale` is the window's
@@ -213,15 +357,21 @@ impl Smoke {
     ) {
         self.relayout(r, text, scale);
         self.line_box.advance(dt);
-        for (node, b) in [(self.name, &self.name_box), (self.dialogue, &self.line_box)] {
+        let boxes = [(self.name, &self.name_box), (self.dialogue, &self.line_box)];
+        let choices = self.choices.iter().map(|c| (c.label, &c.text));
+        for (node, b) in boxes.into_iter().chain(choices) {
             b.quads(t, &mut self.quads);
             if let NodeKind::Quads(q) = &mut self.scene[node].kind {
                 std::mem::swap(q, &mut self.quads);
             }
         }
+        for c in &self.choices {
+            let hover = pointer.is_some_and(|p| c.rect.contains(p));
+            self.scene[c.backing].tint = Color::hex(if hover { "#3b2a2a" } else { "#111116" }).unwrap();
+        }
 
         let logo = &mut self.scene[self.logo];
-        logo.transform.rotation = angle;
+        logo.transform.rotation = if self.logo_spin { t * 2.5 } else { angle };
         logo.tint = Color::rgba(tint[0], tint[1], tint[2], tint[3]);
         self.scene[self.mini].transform.rotation = t;
 
