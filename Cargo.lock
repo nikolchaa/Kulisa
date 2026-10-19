@@ -1358,6 +1358,7 @@ dependencies = [
  "ndk-sys",
  "objc2 0.5.3",
  "objc2-core-motion",
+ "objc2-foundation 0.2.2",
  "objc2-ui-kit",
  "pollster",
  "wasm-bindgen-futures",

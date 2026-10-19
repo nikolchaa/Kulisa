@@ -1,9 +1,9 @@
 //! iOS haptics (UIKit) and motion (CoreMotion).
 
 use kulisa_platform::Motion;
-use objc2::MainThreadMarker;
 use objc2::rc::Retained;
 use objc2_core_motion::CMMotionManager;
+use objc2_foundation::MainThreadMarker;
 use objc2_ui_kit::{UIImpactFeedbackGenerator, UIImpactFeedbackStyle};
 
 const G: f64 = 9.80665;
