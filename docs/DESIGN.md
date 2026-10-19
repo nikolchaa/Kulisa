@@ -18,7 +18,7 @@ tests passing and this document updated.
 | M3 | Story language and VM | `.kulisa` parser and compiler, bytecode VM, clear errors, rollback, update-safe saves, platform storage, portable stage (§7, §10) | Done |
 | M4 | Luau API | The `kulisa` API over the whole engine, sandbox, tasks, registered state, save slots and migrations; the player runs game folders/`.kpak`s; the smoke scene became `demos/smoke` (§8, [API.md](API.md)) | Done |
 | M5 | UI system and classic-vn template | Reactive declarative screens (`kulisa-ui`), layout, widgets (incl. sliders, moved from M6), nine-slice; `templates/classic-vn` (textbox, namebox, choices, history, save/load with thumbnails, settings, quick menu, touch gestures, Ren'Py skip/auto/rollback); transitions; display profiles, aspect clamp, safe areas, anchors and orientation (§3, §9) | Done |
-| M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing, drag and drop with snap zones, multi-touch, gamepad (with keyboard/gamepad focus navigation for UI), gyro, haptics, text input. Basic sliders moved to M5 | Planned |
+| M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing and picking, drag and drop with drop zones, hotspots, multi-touch with pinch/rotate, timers, gamepad (gilrs) with keyboard/gamepad focus navigation of UI screens (classic-vn playable without a pointer), text input (`ui.input`, soft keyboards, IME), haptics, motion sensors; `demos/interact` (§9) | Done |
 | M7 | PC unwrap demo | `demos/pc-unwrap`: peeling and applying plastic film (curling mesh, squeegee, bubbles, glossy plastic shading), public API only | Planned |
 | M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT) | Planned |
 | M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`[display]` etc.), quality tiers | Planned |
@@ -200,8 +200,8 @@ Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame
   space of their pass target (4 vertices per sprite is cheaper than per-draw
   uniforms and lets everything batch). Offscreen sprites are culled.
   - Vertex: `pos: vec2<f32>`, `uv: vec2<f32>`, `color: unorm8x4`
-    (linear, premultiplied), 20 bytes. Meshes (M6) reuse it with their own
-    index ranges.
+    (linear, premultiplied), 20 bytes. Meshes (M6) reuse it: their vertices go through the
+    same extraction and batching (see Meshes below).
   - `Target` nodes become their own pass, pushed before the pass that contains
     them. A target sampled by another target must come earlier in the tree;
     otherwise it shows the previous frame.
@@ -447,19 +447,21 @@ Implemented in M4; the reference is [API.md](API.md).
 | Namespace | Purpose |
 |---|---|
 | `group`, `sprite`, `text`, `layer`, `target` | Scene nodes: transforms, opacity, tint, blend, clip, z, shaders (M4) |
-| `mesh` | Vertex grids: positions, UVs, colors, indices editable per frame |
+| `mesh` | Vertex grids and raw triangle meshes: positions, UVs, colors, indices editable per frame (M6) |
 | `load_shader`, `effects`, `target` | WGSL shaders, params, effect chains, render targets (M4) |
 | `camera`, `screen` | Pan, zoom, rotate, shake; design size, clear color, screen effects (M4) |
 | `node:tween`, `spawn`/`wait`/`await` | Easing, delay, repeat, yoyo, coroutine tasks (M4); timelines later |
 | `text`, `load_font` | Rich text nodes, typewriter, effects, fonts (M4) |
 | `audio` | Channels, play/stop/fade, volumes (M4) |
-| `on`, `input`, `node:contains` | Pointer, keys, wheel, hit testing (M4); gamepad, gyro, drag and drop later |
+| `on`, `input`, `pick`, `node:contains` | Pointers with ids, keys, wheel, pinch/rotate, text, gamepads, alpha-aware hit testing and picking (M4, M6) |
+| `drag`, `drop_zone`, `hotspot`, `after`, `every` | Drag and drop, hotspots, timers (M6) |
+| `sensors`, `haptics` | Gyro, gravity, tilt; vibration and rumble (M6) |
 | `ui` | Reactive screens, layout, widgets, signals, gestures (M5) |
 | `display`, `screen`, `window` | Display profiles, safe area, orientation, transitions, captures, fullscreen, quit (M5) |
 | `persist` | Data outside saves and rollback: settings, unlocks (M5) |
 | `story` | Load, start, next, choose, rollback, variables; events via `on` (M4) |
 | `state`, `save` | Registered state, save/load slots, migrations (M4) |
-| `platform` | Haptics, OS info, quality tier |
+| `platform` | OS info, quality tier |
 
 - **Custom displayables** are Luau tables with `update(dt)`/`draw`
   hooks built from the same node/mesh/shader primitives.
@@ -504,9 +506,66 @@ Implemented in M5 (`kulisa-ui`, bound in `kulisa-lua/src/game/ui.rs`; API in
 - **classic-vn** (`templates/classic-vn`, its README) is built only on this and
   the rest of the public API; a headless test (`kulisa-lua/tests/template.rs`)
   plays through it on every CI run.
-- **Not yet:** keyboard and gamepad focus navigation (with gamepad, M6), multi-
-  touch (M6), text input (M6), per-widget animation (tween the nodes from
-  `ui.find`, or the screen layer from `ui.layer`).
+- **Not yet:** multi-touch UI (the UI follows the primary pointer; see below),
+  per-widget animation (tween the nodes from `ui.find`, or the screen layer from
+  `ui.layer`).
+
+### Meshes, hit testing and interaction (M6)
+
+- **Meshes** (`kulisa_core::Mesh`, `NodeKind::Mesh`). Positions, UVs, vertex colors and a
+  triangle list in local units; `Mesh::grid` builds the regular case. Extraction transforms
+  the vertices into pass pixels and emits one draw item, so a mesh batches with sprites of
+  the same texture and state. Scripts edit vertices through bulk setters that take flat
+  tables or Luau buffers (no per-vertex userdata) or per-vertex calls. Limits: 65,536
+  vertices; UVs outside 0..1 read neighbours of atlased images (as for custom shaders).
+- **Hit testing.** `Scene::hit_alpha` tests a sprite rectangle, mesh triangles (so deformed
+  meshes are hit where drawn) or text boxes, and with a threshold also the pixel under the
+  point through the `AlphaSource` trait. `kulisa-lua` implements it by decoding the alpha of
+  the asset a texture came from on first use (nothing is decoded for games that do not ask);
+  textures that are not files count as opaque. `Scene::pick_all` walks the tree backwards in
+  draw order, honouring visibility, opacity, `clip`, layer parallax and skipping render
+  targets; `paint_order` ranks overlapping candidates.
+- **Pointers.** The mouse is pointer 0 and each finger gets its own id. The primary pointer
+  (the first finger down, else the mouse) drives hover, UI and the tap/long-press/swipe
+  gestures; other fingers produce `press`/`move`/`release` with their id and, when two free
+  fingers are down (neither taken by the UI, a draggable or a hotspot), `pinch` and `rotate`.
+  Order for a press: UI, then draggables and hotspots, then the game.
+- **Interaction** (`kulisa-lua/src/game/interact.rs`). `drag`, `drop_zone` and `hotspot`
+  attach to nodes; their area is the drawn area of the node or its descendants, or a rect or
+  polygon in the node's space, optionally alpha-tested. The engine decides what is grabbed,
+  entered, accepted or clicked and snaps accepted items with a tween; everything else is
+  callbacks (`on_drop`, `on_reject`, ...). Zone `accept` functions are Luau, so a release is
+  decided in phases (collect candidates, ask with the state free, apply) and callbacks run
+  after the state borrow ends, like every handler.
+- **Focus navigation** (`kulisa-ui/src/focus.rs`, `kulisa-lua/src/game/pad.rs`). The topmost
+  screen with `nav` (modal screens by default) takes arrows, d-pad, left stick (repeating
+  while held), Enter/Space/A, Page Up/Down and the right stick. Focus moves to the nearest
+  button or slider in the pressed direction, sliders take their axis, scrolls follow the focus
+  and scroll alone when nothing is focusable. A focused widget gets the `hover` look. Focus
+  appears after the first direction input and for screens that open afterwards, until the
+  mouse or a touch is used. Enter/A on a screen with nothing focused only focuses, so
+  mashing Enter to advance text never picks a choice that just appeared.
+- **Gamepads** (`kulisa-runtime/src/gamepad.rs`) use gilrs on desktop and the web (the
+  Gamepad API), with a dead zone applied and y pointing down; they are not available on
+  Android and iOS (gilrs has no backend there). Games read `pad_*` events and
+  `kulisa.input.pad_*`.
+- **Text input.** Platform text (key `text`, IME commits and preedit) is delivered as `text`
+  and `preedit` events only while a script has called `start_text`; while active, characters
+  are not `key`s and navigation gives its keys back. Fields are Luau (`ui.input` in the
+  prelude: caret, editing keys, `max_length`, `password`, a `value` signal). The runtime
+  turns the IME on (`set_ime_allowed`: the soft keyboard on Android) and, on touch browsers,
+  focuses a hidden `<input>` whose events are queued for the runtime
+  (`kulisa-platform/src/web_text.rs`). Known gaps: IME composition inside NativeActivity is
+  not delivered (Latin keyboards work), the soft keyboard may cover a field near the bottom,
+  winit's web backend does not receive synthetic `insertText` on desktop browsers, no
+  clipboard.
+- **Haptics and sensors.** `kulisa.haptics.pulse` queues pulses the runtime plays while
+  handling input (browsers need a user gesture): Android `VibrationEffect` through JNI,
+  `navigator.vibrate`, UIKit impact feedback, and gilrs rumble on desktop pads.
+  `kulisa.sensors` reads gyro and gravity in the device frame (`tilt` derives from gravity,
+  in the natural orientation): the NDK sensor manager on its own looper thread on Android,
+  CoreMotion on iOS, `devicemotion`/`deviceorientation` events in browsers (with iOS's
+  permission prompt, which needs a tap). iOS haptics and motion are compiled in CI only.
 
 ## 10. Saves and rollback
 
@@ -621,8 +680,10 @@ body:   the VM's save: frames, stage, story variables
    a screenshot and fails unless the process is alive after 10 s and the Luau
    smoke-test line reached the unified log. Not yet run on a physical device
    (needs a signing identity and provisioning profile).
-3. **Android text input.** NativeActivity has weak soft-keyboard/IME support.
-   If M6 text input needs it, switch to GameActivity (requires a Gradle step).
+3. **Android text input — mostly fine in M6.** NativeActivity shows the soft keyboard through
+   winit (`set_ime_allowed`) and Latin keyboards deliver key events, verified on the emulator.
+   IME composition (CJK, predictive text) is not delivered; games needing it would switch to
+   GameActivity (a Gradle step). Not done: it was not needed.
 4. **WebGL2 fallback limits.** No compute, fewer texture formats, uniform
    buffer limits. The renderer must stay within WebGL2 downlevel limits; GPU
    particles need a non-compute path.
@@ -670,3 +731,11 @@ body:   the VM's save: frames, stage, story variables
 | 2026-10-19 | M5: skip, auto-forward and rollback controls are template behaviour over engine primitives (`seen`, `chosen`, `can_rollback`, `block_rollback`), so games can change them; classic-vn follows Ren'Py's defaults. |
 | 2026-10-19 | M5: screen captures read back asynchronously everywhere (the web cannot block); native save writes may wait, the web patches the thumbnail in afterwards. |
 | 2026-10-19 | M5: safe-area insets on Android come from `WindowInsets` through raw `jni-sys` calls (no `jni` crate API), since Android 15 forces edge-to-edge and the content rect no longer excludes the bars. |
+| 2026-10-20 | M6: meshes reuse the sprite vertex format and the existing batcher; scripts edit them through bulk setters (tables or Luau buffers), not per-vertex userdata, so a 48x48 grid per frame stays cheap. |
+| 2026-10-20 | M6: alpha hit testing decodes alpha lazily from the asset a texture came from (no CPU copy kept at load), and treats non-file textures as opaque. |
+| 2026-10-20 | M6: pointers carry ids (mouse 0, fingers 1..); the UI stays single-pointer on the primary pointer, other fingers drive drag/hotspots/pinch. Multi-touch UI is not needed by anything yet. |
+| 2026-10-20 | M6: draggables, drop zones and hotspots are engine mechanisms with Luau callbacks (accept functions included), so templates and games decide every look and rule. |
+| 2026-10-20 | M6: keyboard/gamepad navigation is opt-in per screen (`nav`, modal by default) and only starts from direction input, so Enter/Space/A never pick things the player did not aim at. |
+| 2026-10-20 | M6: gamepads through gilrs (needs libudev-dev on Linux CI); Android/iOS pads are left for later (gilrs has no backend). |
+| 2026-10-20 | M6: text fields are Luau on top of `start_text` + `text`/`key` events; the engine only routes text, IME and the soft keyboard. Stayed on NativeActivity (Latin soft keyboards verified on the emulator). |
+| 2026-10-20 | M6: Android sensors use the NDK on a dedicated looper thread (the activity's looper logs queue events as spurious); haptics call `Vibrator` through the existing raw JNI helpers. |
