@@ -353,6 +353,38 @@ impl Scene {
         true
     }
 
+    /// Node-local to design-space transform, including ancestors, camera and the nearest
+    /// layer's parallax. `None` for removed nodes and nodes inside a render target (they
+    /// are not on screen directly).
+    pub fn to_design(&self, id: NodeId) -> Option<Affine2> {
+        let mut model = Affine2::IDENTITY;
+        let mut parallax = None;
+        let mut cur = Some(id);
+        while let Some(n) = cur {
+            let node = self.get(n)?;
+            match &node.kind {
+                NodeKind::Target(_) if n != id => return None,
+                NodeKind::Layer(l) if parallax.is_none() => parallax = Some(l.parallax),
+                _ => {}
+            }
+            model = node.transform.to_affine() * model;
+            cur = node.parent;
+        }
+        Some(self.camera.view(parallax.unwrap_or(1.0)) * model)
+    }
+
+    /// Whether design-space point `p` is inside the node's drawn area (sprite rectangle or
+    /// any of its quads). Groups and layers have no area of their own.
+    pub fn hit(&self, id: NodeId, p: Vec2) -> bool {
+        let Some(m) = self.to_design(id) else { return false };
+        let local = m.inverse().transform_point2(p);
+        match &self[id].kind {
+            NodeKind::Sprite(s) => Rect { min: Vec2::ZERO, max: s.size }.contains(local),
+            NodeKind::Quads(q) => q.iter().any(|q| q.rect.contains(local)),
+            _ => false,
+        }
+    }
+
     /// Number of live nodes, including the root.
     pub fn len(&self) -> usize {
         self.slots.len() - self.free.len()
@@ -408,6 +440,23 @@ mod tests {
         assert!(s.reparent(b, s.root()));
         assert_eq!(s[b].parent(), Some(s.root()));
         assert!(s[a].children().is_empty());
+    }
+
+    #[test]
+    fn hit_tests_through_transforms_parallax_and_targets() {
+        let mut s = scene();
+        let layer = s.add(s.root(), Node::layer(0.5));
+        let g = s.add(layer, Node::group().at(100.0, 100.0));
+        let sprite = s.add(g, Node::sprite(TextureId(1), Vec2::new(50.0, 20.0)).at(10.0, 0.0));
+        assert!(s.hit(sprite, Vec2::new(115.0, 105.0)));
+        assert!(!s.hit(sprite, Vec2::new(105.0, 105.0)));
+        assert!(!s.hit(g, Vec2::new(115.0, 105.0)), "groups have no area");
+        s.camera.position.x += 100.0; // the layer moves by half: 50 px left
+        assert!(s.hit(sprite, Vec2::new(65.0, 105.0)));
+        let t = s.add(s.root(), Node::target(TextureId(2), UVec2::new(64, 64)));
+        let inside = s.add(t, Node::sprite(TextureId(1), Vec2::splat(10.0)));
+        assert!(s.to_design(inside).is_none());
+        assert!(!s.hit(inside, Vec2::new(5.0, 5.0)));
     }
 
     #[test]
