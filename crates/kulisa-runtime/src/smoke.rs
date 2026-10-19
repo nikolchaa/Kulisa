@@ -29,11 +29,22 @@ pub struct Smoke {
 }
 
 fn name_style() -> TextStyle {
-    TextStyle { font: Some("Inter".into()), size: 30.0, color: Color::hex("#ff6a3d").unwrap(), ..Default::default() }
+    TextStyle {
+        font: Some("Inter".into()),
+        size: 30.0,
+        color: Color::hex("#ff6a3d").unwrap(),
+        ..Default::default()
+    }
 }
 
 fn line_style() -> TextStyle {
-    TextStyle { font: Some("Inter".into()), size: 34.0, width: Some(1520.0), color: Color::hex("#f4f1ea").unwrap(), ..Default::default() }
+    TextStyle {
+        font: Some("Inter".into()),
+        size: 34.0,
+        width: Some(1520.0),
+        color: Color::hex("#f4f1ea").unwrap(),
+        ..Default::default()
+    }
 }
 
 fn params(p0: [f32; 4]) -> [f32; 16] {
@@ -142,12 +153,21 @@ impl Smoke {
         let dialogue = scene.add(ui, Node::quads(Vec::new()).at(200.0, 866.0));
 
         scene.effects.push(Material { shader: vignette, params: params([0.35, 0.85, 0.0, 0.55]) });
-        let name_box = Self::lay_out(text, r, "{b}Kulisa{/b}", &name_style(), scale, Typewriter { cps: 0.0, fade: 0.0 });
-        let line_box = Self::lay_out(text, r, LINES[0], &line_style(), scale, Typewriter { cps: 38.0, fade: 0.08 });
+        let name_box =
+            Self::lay_out(text, r, "{b}Kulisa{/b}", &name_style(), scale, Typewriter { cps: 0.0, fade: 0.0 });
+        let line_box =
+            Self::lay_out(text, r, LINES[0], &line_style(), scale, Typewriter { cps: 38.0, fade: 0.08 });
         Ok(Smoke { scene, logo, mini, name, dialogue, name_box, line_box, line: 0, quads: Vec::new() })
     }
 
-    fn lay_out(text: &mut TextSystem, r: &mut Renderer, markup: &str, style: &TextStyle, scale: f32, tw: Typewriter) -> TextBox {
+    fn lay_out(
+        text: &mut TextSystem,
+        r: &mut Renderer,
+        markup: &str,
+        style: &TextStyle,
+        scale: f32,
+        tw: Typewriter,
+    ) -> TextBox {
         let rich = kulisa_text::parse(markup).unwrap_or_else(|e| panic!("smoke line markup: {e}"));
         TextBox::new(text.layout(r, &rich, style, scale), tw)
     }
@@ -160,7 +180,8 @@ impl Smoke {
         }
         self.line = (self.line + 1) % LINES.len();
         let scale = self.line_box.layout.scale;
-        self.line_box = Self::lay_out(text, r, LINES[self.line], &line_style(), scale, self.line_box.typewriter);
+        self.line_box =
+            Self::lay_out(text, r, LINES[self.line], &line_style(), scale, self.line_box.typewriter);
     }
 
     /// Re-rasterizes text when the window's pixel scale changes, keeping reveal progress.
@@ -169,8 +190,10 @@ impl Smoke {
             return;
         }
         let elapsed = self.line_box.elapsed;
-        self.name_box = Self::lay_out(text, r, "{b}Kulisa{/b}", &name_style(), scale, self.name_box.typewriter);
-        self.line_box = Self::lay_out(text, r, LINES[self.line], &line_style(), scale, self.line_box.typewriter);
+        self.name_box =
+            Self::lay_out(text, r, "{b}Kulisa{/b}", &name_style(), scale, self.name_box.typewriter);
+        self.line_box =
+            Self::lay_out(text, r, LINES[self.line], &line_style(), scale, self.line_box.typewriter);
         self.line_box.elapsed = elapsed;
     }
 

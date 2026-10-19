@@ -91,7 +91,12 @@ impl TextBox {
                 offset += Vec2::new(jitter(k, frame), jitter(k ^ 0xABCD, frame)) * amp * g.em;
             }
             let rect = Rect { min: g.rect.min + offset, max: g.rect.max + offset };
-            out.push(Quad { texture: g.texture, rect, uv: Rect::UNIT, color: Color { a: g.color.a * alpha, ..g.color } });
+            out.push(Quad {
+                texture: g.texture,
+                rect,
+                uv: Rect::UNIT,
+                color: Color { a: g.color.a * alpha, ..g.color },
+            });
         }
     }
 }

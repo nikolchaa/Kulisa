@@ -16,8 +16,8 @@ use smoke::Smoke;
 use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
-use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
+use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
 #[cfg(target_os = "android")]
@@ -88,7 +88,11 @@ impl App {
         let started = Audio::new().and_then(|mut audio| {
             let sfx = Sfx::new()?;
             audio.set_volume("music", 0.35, 0.0)?;
-            audio.play("music", &sfx.pad, PlayOptions { looping: true, fade_in: 2.0, ..Default::default() })?;
+            audio.play(
+                "music",
+                &sfx.pad,
+                PlayOptions { looping: true, fade_in: 2.0, ..Default::default() },
+            )?;
             Ok((audio, sfx))
         });
         match started {
@@ -252,8 +256,12 @@ impl ApplicationHandler<UserEvent> for App {
                     self.interact();
                 }
             }
-            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => self.interact(),
-            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed && !event.repeat => {
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                self.interact()
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed && !event.repeat =>
+            {
                 match event.logical_key.as_ref() {
                     Key::Named(NamedKey::Space | NamedKey::Enter) => self.interact(),
                     Key::Character(c) if c.eq_ignore_ascii_case("m") => self.toggle_music(),
