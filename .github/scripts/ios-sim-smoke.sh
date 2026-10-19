@@ -56,5 +56,13 @@ if ! grep -q "hello from Luau" "$out/app.log"; then
     echo "error: \"hello from Luau\" missing from the simulator log"
     status=1
 fi
-[ "$status" = 0 ] && echo "ok: $(grep -m1 "hello from Luau" "$out/app.log")"
+if [ "$status" = 0 ]; then
+    # As an annotation so the result is readable without signing in to GitHub.
+    line=$(grep -m1 "hello from Luau" "$out/app.log" | cut -c1-240)
+    errors=$(grep -E "\] .*(error|renderer:)" "$out/app.log" | sort -u | head -n 5 | cut -c1-240 || true)
+    msg="${line}"$'\n'"${errors}"
+    msg="${msg//'%'/'%25'}"
+    msg="${msg//$'\n'/'%0A'}"
+    echo "::notice title=iOS simulator run::$msg"
+fi
 exit "$status"
