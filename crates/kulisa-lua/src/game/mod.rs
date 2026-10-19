@@ -12,6 +12,7 @@ mod media;
 mod mesh;
 mod pad;
 mod pointer;
+mod sensors;
 mod typing;
 mod ui;
 
@@ -119,6 +120,7 @@ pub(crate) struct State {
     pub pinch: Option<pointer::Pinch>,
     pub pads: pad::Gamepads,
     pub typing: typing::Typing,
+    pub sensors: sensors::Sensors,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -506,6 +508,7 @@ impl Game {
             pinch: None,
             pads: Default::default(),
             typing: Default::default(),
+            sensors: Default::default(),
         };
         state.display.device = device;
         let shared = Rc::new(RefCell::new(state));

@@ -4,6 +4,8 @@ mod assets;
 mod device;
 mod storage;
 #[cfg(target_arch = "wasm32")]
+mod web_motion;
+#[cfg(target_arch = "wasm32")]
 mod web_text;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,7 +13,7 @@ pub use assets::build_pack;
 #[cfg(target_arch = "wasm32")]
 pub use assets::fetch;
 pub use assets::{Assets, Pack, normalize};
-pub use device::{profile_override, safe_area_override};
+pub use device::{Motion, profile_override, safe_area_override};
 #[cfg(target_arch = "wasm32")]
 pub use device::{web_safe_area, web_touch};
 pub use storage::Storage;
@@ -19,6 +21,8 @@ pub use storage::Storage;
 pub use storage::data_dir;
 #[cfg(target_os = "android")]
 pub use storage::set_android_data_dir;
+#[cfg(target_arch = "wasm32")]
+pub use web_motion::{web_motion, web_motion_start, web_motion_stop, web_vibrate};
 #[cfg(target_arch = "wasm32")]
 pub use web_text::{TextEvent, web_text_events, web_text_focus};
 

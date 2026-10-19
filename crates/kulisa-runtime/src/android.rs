@@ -170,3 +170,64 @@ pub fn insets(app: &AndroidApp) -> Option<[f32; 4]> {
     env.drop_ref(root);
     result
 }
+
+impl Env {
+    fn new_string(&self, s: &CStr) -> Option<jobject> {
+        // SAFETY: `s` is a valid C string; the local reference is freed by the caller.
+        let r = unsafe { ((**self.env).NewStringUTF?)(self.env, s.as_ptr()) };
+        (!self.failed() && !r.is_null()).then_some(r)
+    }
+
+    /// Calls a static method returning an object.
+    fn static_object(&self, class: &CStr, name: &CStr, sig: &CStr, args: &[jvalue]) -> Option<jobject> {
+        // SAFETY: names are valid C strings, `args` match `sig`, references are freed.
+        unsafe {
+            let e = &**self.env;
+            let c = (e.FindClass?)(self.env, class.as_ptr());
+            if self.failed() || c.is_null() {
+                return None;
+            }
+            let m = (e.GetStaticMethodID?)(self.env, c, name.as_ptr(), sig.as_ptr());
+            if self.failed() || m.is_null() {
+                self.drop_ref(c);
+                return None;
+            }
+            let r = (e.CallStaticObjectMethodA?)(self.env, c, m, args.as_ptr());
+            self.drop_ref(c);
+            (!self.failed() && !r.is_null()).then_some(r)
+        }
+    }
+}
+
+/// Vibrates the phone for `secs` at `strength` (0..1) through the system `Vibrator`.
+pub fn vibrate(app: &AndroidApp, strength: f32, secs: f32) {
+    let Some(env) = Env::attach(app) else { return log::warn!("haptics: cannot attach to the JVM") };
+    let activity = app.activity_as_ptr() as jobject;
+    let ms = ((secs * 1000.0) as i64).max(1);
+    let amplitude = ((strength.clamp(0.0, 1.0) * 254.0) as jint + 1).clamp(1, 255);
+    let Some(name) = env.new_string(c"vibrator") else { return };
+    let service = env.call_object(
+        activity,
+        c"getSystemService",
+        c"(Ljava/lang/String;)Ljava/lang/Object;",
+        &[jvalue { l: name }],
+    );
+    env.drop_ref(name);
+    let Some(vibrator) = service else { return log::warn!("haptics: no vibrator service") };
+    // VibrationEffect.createOneShot(millis, amplitude), API 26 (our minimum).
+    let effect = env.static_object(
+        c"android/os/VibrationEffect",
+        c"createOneShot",
+        c"(JI)Landroid/os/VibrationEffect;",
+        &[jvalue { j: ms }, jvalue { i: amplitude }],
+    );
+    if let Some(effect) = effect {
+        let ok =
+            env.call_void(vibrator, c"vibrate", c"(Landroid/os/VibrationEffect;)V", &[jvalue { l: effect }]);
+        env.drop_ref(effect);
+        if ok.is_none() {
+            log::warn!("haptics: vibrate failed");
+        }
+    }
+    env.drop_ref(vibrator);
+}

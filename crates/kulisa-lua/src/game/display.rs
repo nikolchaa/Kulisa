@@ -88,6 +88,10 @@ pub struct Device {
     pub can_lock: bool,
     /// The game can close itself (desktop).
     pub can_quit: bool,
+    /// Motion sensors (gyroscope, accelerometer) can be read.
+    pub sensors: bool,
+    /// The platform can vibrate (or has a gamepad to rumble).
+    pub haptics: bool,
 }
 
 /// Things scripts asked for that the runtime does (see [`crate::Game::take_requests`]).

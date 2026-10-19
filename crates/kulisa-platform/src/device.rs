@@ -74,3 +74,38 @@ pub fn web_safe_area() -> [f32; 4] {
     };
     get().unwrap_or([0.0; 4])
 }
+
+/// A reading of the motion sensors, in the device frame: x to the right of the screen, y
+/// up the screen, z out of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Motion {
+    /// Rotation speed around the x, y and z axes in radians per second.
+    pub rate: [f32; 3],
+    /// The direction gravity pulls, in m/s² (about 9.8 long): a device lying face up reads
+    /// `[0, 0, -9.8]`, one held upright `[0, -9.8, 0]`.
+    pub gravity: [f32; 3],
+}
+
+impl Motion {
+    /// Gravity from the W3C `deviceorientation` angles (degrees): `beta` is the front-back
+    /// tilt (0 flat, 90 upright), `gamma` the left-right tilt (positive: right side down).
+    pub fn gravity_from_angles(beta: f32, gamma: f32) -> [f32; 3] {
+        const G: f32 = 9.80665;
+        let (b, g) = (beta.to_radians(), gamma.to_radians());
+        [G * g.sin() * b.cos(), -G * b.sin(), -G * g.cos() * b.cos()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gravity_follows_the_w3c_angles() {
+        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-3);
+        let g = 9.80665;
+        assert!(near(Motion::gravity_from_angles(0.0, 0.0), [0.0, 0.0, -g]), "flat, face up");
+        assert!(near(Motion::gravity_from_angles(90.0, 0.0), [0.0, -g, 0.0]), "upright");
+        assert!(near(Motion::gravity_from_angles(0.0, 90.0), [g, 0.0, 0.0]), "right side down");
+    }
+}

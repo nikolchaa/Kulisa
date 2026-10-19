@@ -922,6 +922,53 @@ fn text_fields_take_text_and_editing_keys() {
     assert!(err.contains("needs an `id`"), "{err}");
 }
 
+#[test]
+fn sensors_and_haptics_go_through_the_runtime() {
+    let Some(r) = renderer() else { return };
+    let dir = folder(&[("main.luau", b"kulisa.display(64, 64, 'fit')")]);
+    let device = kulisa_lua::Device { sensors: true, haptics: true, ..Default::default() };
+    let mut g = Game::with_device(Assets::dir(dir), r, device).unwrap_or_else(|e| panic!("{e}"));
+
+    assert!(g.eval::<bool>("t", "return kulisa.sensors.available() and kulisa.haptics.available()").unwrap());
+    // No readings until enabled and fed by the runtime.
+    assert_eq!(g.eval::<Option<f32>>("t", "return (kulisa.sensors.gyro())").unwrap(), None);
+    assert!(!g.sensors_wanted() && g.take_sensor_request().is_none());
+    g.eval::<()>("t", "kulisa.sensors.enable(true); kulisa.sensors.enable(true)").unwrap();
+    assert!(g.sensors_wanted());
+    assert_eq!(g.take_sensor_request(), Some(true));
+    assert_eq!(g.take_sensor_request(), None, "asked once");
+
+    let g98 = 9.80665_f32;
+    // Held upright, then leaning right at 45 degrees with the top edge pushed back at 30.
+    g.set_motion(Some(kulisa_platform::Motion { rate: [0.1, -0.2, 0.3], gravity: [0.0, -g98, 0.0] }));
+    let (tx, ty): (f32, f32) = g.eval("t", "return kulisa.sensors.tilt()").unwrap();
+    assert!(tx.abs() < 1e-4 && ty.abs() < 1e-4, "{tx} {ty}");
+    assert_eq!(g.eval::<(f32, f32, f32)>("t", "return kulisa.sensors.gyro()").unwrap(), (0.1, -0.2, 0.3));
+    let lean = std::f32::consts::FRAC_PI_4;
+    g.set_motion(Some(kulisa_platform::Motion {
+        rate: [0.0; 3],
+        gravity: [g98 * lean.sin(), 0.0, -g98 * 0.3],
+    }));
+    let (tx, ty): (f32, f32) = g.eval("t", "return kulisa.sensors.tilt()").unwrap();
+    assert!((tx - 1.0).abs() < 1e-4, "45 degrees right edge down is 1: {tx}");
+    assert!((ty - 0.3 / std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4, "{ty}");
+    let gz: f32 = g.eval("t", "local _, _, z = kulisa.sensors.gravity() return z").unwrap();
+    assert!((gz + g98 * 0.3).abs() < 1e-4);
+    g.eval::<()>("t", "kulisa.sensors.enable(false)").unwrap();
+    assert_eq!(g.take_sensor_request(), Some(false));
+    assert_eq!(g.eval::<Option<f32>>("t", "return (kulisa.sensors.tilt())").unwrap(), None, "readings stop");
+
+    // Haptics: clamped, defaulted and handed over once.
+    g.eval::<()>("t", "kulisa.haptics.pulse(); kulisa.haptics.pulse(3, 9); kulisa.haptics.pulse(0.25, 0.1)")
+        .unwrap();
+    assert_eq!(g.take_haptics(), [(0.5, 0.05), (1.0, 2.0), (0.25, 0.1)]);
+    assert!(g.take_haptics().is_empty());
+    g.eval::<()>("t", "for i = 1, 100 do kulisa.haptics.pulse(1, 0.01) end").unwrap();
+    assert_eq!(g.take_haptics().len(), 16, "a script cannot flood the queue");
+    let err = g.eval::<()>("t", "kulisa.haptics.pulse('hard')").unwrap_err();
+    assert!(err.contains("strength"), "{err}");
+}
+
 const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
 }";

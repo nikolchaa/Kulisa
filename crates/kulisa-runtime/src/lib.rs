@@ -3,7 +3,12 @@
 
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(target_os = "android")]
+mod android_sensors;
 mod gamepad;
+#[cfg(target_os = "ios")]
+mod ios;
+mod sensors;
 
 use std::sync::Arc;
 
@@ -38,6 +43,7 @@ struct App {
     creating_renderer: bool,
     game: Option<Game>,
     pads: gamepad::Pads,
+    sensors: sensors::Sensors,
     last_frame: Instant,
     #[cfg(target_os = "android")]
     android: AndroidApp,
@@ -64,7 +70,14 @@ fn device(w: &Window) -> Device {
     };
     let form =
         kulisa_platform::profile_override().and_then(|p| FormFactor::from_name(&p)).unwrap_or(detected);
-    Device { form, touch, can_lock: mobile, can_quit: !mobile && !cfg!(target_arch = "wasm32") }
+    Device {
+        form,
+        touch,
+        can_lock: mobile,
+        can_quit: !mobile && !cfg!(target_arch = "wasm32"),
+        sensors: sensors::available(touch),
+        haptics: mobile || cfg!(target_arch = "wasm32"),
+    }
 }
 
 /// Key names as scripts see them: "space", "enter", "left", "f5", "a", ...
@@ -124,6 +137,7 @@ impl App {
             creating_renderer: false,
             game: None,
             pads: gamepad::Pads::new(),
+            sensors: sensors::Sensors::new(),
             last_frame: Instant::now(),
             #[cfg(target_os = "android")]
             android,
@@ -170,6 +184,22 @@ impl App {
     /// Does what scripts asked for: orientation lock, window shape, fullscreen, quit.
     fn apply_requests(&mut self, event_loop: &ActiveEventLoop) {
         let (Some(game), Some(window)) = (&mut self.game, &self.window) else { return };
+        // Sensors and vibration are asked for while handling input, which browsers require
+        // (iOS asks permission for motion only in reply to a tap, `vibrate` only after one).
+        if let Some(on) = game.take_sensor_request() {
+            self.sensors.set(on);
+        }
+        for (strength, secs) in game.take_haptics() {
+            #[cfg(target_os = "android")]
+            android::vibrate(&self.android, strength, secs);
+            #[cfg(target_os = "ios")]
+            ios::impact(strength);
+            #[cfg(target_arch = "wasm32")]
+            kulisa_platform::web_vibrate((secs * 1000.0) as u32);
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+            self.pads.rumble(strength, secs);
+            let _ = (strength, secs);
+        }
         let r = game.take_requests();
         if let Some(on) = game.take_ime_request() {
             window.set_ime_allowed(on);
@@ -440,6 +470,9 @@ impl App {
                 }
                 let now = Instant::now();
                 game.frame((now - self.last_frame).as_secs_f32());
+                if game.sensors_wanted() {
+                    game.set_motion(self.sensors.poll());
+                }
                 self.last_frame = now;
                 if let Some(w) = &self.window {
                     w.pre_present_notify();

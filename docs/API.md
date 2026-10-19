@@ -278,6 +278,25 @@ Text fields are made in Luau on top of a few engine pieces, so games can build t
   frame's handlers have run, so a game's own `enter` handler can still check
   `kulisa.input.text_active()` to tell Enter was meant for the field.
 
+## Sensors and haptics
+
+- `kulisa.sensors.available()` → whether the device has motion sensors (phones and tablets;
+  browsers on touch devices; desktops have none). `kulisa.sensors.enable(on?)` starts (default)
+  or stops reading. Browsers on iOS ask the player for permission, which only works when
+  `enable` is called while handling a tap, press or click.
+- Readings are in the device frame (x to the right of the screen, y up it, z out of it) and nil
+  until the first one arrives: `kulisa.sensors.gyro()` → `x, y, z` rotation speed in rad/s;
+  `kulisa.sensors.gravity()` → `x, y, z` m/s², the direction gravity pulls (a device lying face
+  up reads `0, 0, -9.8`, one held upright `0, -9.8, 0`); `kulisa.sensors.tilt()` → `x, y` from
+  -1 to 1 (1 is 45 degrees): x is positive with the right edge down, y with the top edge
+  leaning away from you, 0, 0 when held upright. These do not account for the screen
+  rotating: they are in the device's natural orientation.
+- `kulisa.haptics.available()` and `kulisa.haptics.pulse(strength?, seconds?)`: a vibration on
+  phones (Android: amplitude and duration; browsers: duration, where supported; iOS: an impact
+  of that strength) or a rumble on gamepads that have one. `strength` is 0 to 1 (default 0.5),
+  `seconds` up to 2 (default 0.05). Calls on platforms without haptics do nothing; a script
+  cannot queue more than a few pulses per frame.
+
 ## Timers
 
 - `kulisa.after(secs, fn)` runs `fn` once after `secs` seconds of game time; `kulisa.every(secs,

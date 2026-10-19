@@ -4,6 +4,9 @@
 //!
 //! gilrs has no backend on Android and iOS; there `Gilrs::new` fails and nothing is polled.
 
+use web_time::{Duration, Instant};
+
+use gilrs::ff::{BaseEffect, BaseEffectType, Effect, EffectBuilder, Replay, Ticks};
 use gilrs::{Axis, Button, EventType, Gilrs};
 use kulisa_lua::Game;
 
@@ -12,6 +15,8 @@ const DEAD_ZONE: f32 = 0.15;
 
 pub struct Pads {
     gilrs: Option<Gilrs>,
+    /// Rumble effects still playing, with when they end.
+    effects: Vec<(Effect, Instant)>,
 }
 
 fn button(b: Button) -> Option<&'static str> {
@@ -50,7 +55,44 @@ impl Pads {
                 None
             }
         };
-        Self { gilrs }
+        Self { gilrs, effects: Vec::new() }
+    }
+
+    /// Rumbles every pad that can for `secs` at `strength` (0..1).
+    pub fn rumble(&mut self, strength: f32, secs: f32) {
+        let Some(gilrs) = &mut self.gilrs else { return };
+        let now = Instant::now();
+        self.effects.retain(|(_, until)| *until > now);
+        let ids: Vec<_> = gilrs.gamepads().filter(|(_, p)| p.is_ff_supported()).map(|(id, _)| id).collect();
+        if ids.is_empty() || secs <= 0.0 {
+            return;
+        }
+        let ms = (secs * 1000.0) as u32;
+        let magnitude = (strength.clamp(0.0, 1.0) * f32::from(u16::MAX)) as u16;
+        let play_for = Ticks::from_ms(ms);
+        let scheduling = Replay { play_for, with_delay: Ticks::from_ms(0), after: Ticks::from_ms(0) };
+        let built = EffectBuilder::new()
+            .add_effect(BaseEffect {
+                kind: BaseEffectType::Strong { magnitude },
+                scheduling,
+                ..Default::default()
+            })
+            .add_effect(BaseEffect {
+                kind: BaseEffectType::Weak { magnitude },
+                scheduling,
+                ..Default::default()
+            })
+            .gamepads(&ids)
+            .finish(gilrs);
+        match built {
+            Ok(effect) => {
+                if effect.play().is_ok() {
+                    // Dropping an effect stops it, so keep it until it has played.
+                    self.effects.push((effect, now + Duration::from_millis(ms as u64 + 50)));
+                }
+            }
+            Err(e) => log::debug!("rumble: {e}"),
+        }
     }
 
     /// Forwards what happened since the last call to the game.

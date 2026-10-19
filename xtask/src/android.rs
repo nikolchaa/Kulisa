@@ -21,6 +21,8 @@ const MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="dev.kulisa.player" android:versionCode="1" android:versionName="0.1.0">
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
     <application android:label="Kulisa" android:hasCode="false">
         <activity android:name="android.app.NativeActivity"
             android:exported="true"
