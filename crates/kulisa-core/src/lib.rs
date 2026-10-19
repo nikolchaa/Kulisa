@@ -12,7 +12,7 @@ pub use color::Color;
 pub use frame::{DrawItem, Frame, Pass, PassTarget, TexRef, Vertex, extract};
 pub use glam::{Affine2, UVec2, Vec2};
 pub use scene::{
-    BlendMode, Effect, Layer, Material, Node, NodeId, NodeKind, Params, Rect, Scene, ShaderId, Sprite,
+    BlendMode, Effect, Layer, Material, Node, NodeId, NodeKind, Params, Quad, Rect, Scene, ShaderId, Sprite,
     Target, TextureId, Transform,
 };
 pub use viewport::{ScaleMode, ViewLayout, Viewport};

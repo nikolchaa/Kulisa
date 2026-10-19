@@ -223,6 +223,28 @@ impl Walker<'_> {
                     effects,
                 });
             }
+            NodeKind::Quads(quads) => {
+                let m = self.to_pixels(&c);
+                for q in quads {
+                    let r = q.rect;
+                    let corners = [r.min, Vec2::new(r.max.x, r.min.y), r.max, Vec2::new(r.min.x, r.max.y)];
+                    let tint = c.tint * q.color;
+                    let tint = Color { a: tint.a * c.opacity, ..tint };
+                    if tint.a <= 0.0 {
+                        continue;
+                    }
+                    let item = self.quad(
+                        corners.map(|p| m.transform_point2(p)),
+                        q.uv,
+                        tint,
+                        TexRef::Texture(q.texture),
+                        node.blend,
+                        node.material,
+                    );
+                    self.push(items, item, c.clip, c.bounds);
+                }
+                self.children(id, c, items);
+            }
             NodeKind::Sprite(s) => {
                 let m = self.to_pixels(&c);
                 let (w, h) = (s.size.x, s.size.y);
@@ -362,6 +384,22 @@ mod tests {
         let f = run(&s);
         let order: Vec<_> = f.passes[0].items.iter().map(|i| i.texture).collect();
         assert_eq!(order, vec![TexRef::Texture(tex(2)), TexRef::Texture(tex(1)), TexRef::Texture(tex(3))]);
+    }
+
+    #[test]
+    fn quads_place_tint_and_batch() {
+        let mut s = Scene::new(DESIGN);
+        let q = |x: f32, a: f32| crate::Quad {
+            texture: tex(1),
+            rect: Rect::new(x, 0.0, 4.0, 4.0),
+            uv: Rect::UNIT,
+            color: Color::rgba(1.0, 1.0, 1.0, a),
+        };
+        s.add(s.root(), Node::quads(vec![q(0.0, 1.0), q(10.0, 0.0), q(20.0, 1.0)]).at(100.0, 100.0));
+        let f = run(&s);
+        assert_eq!(f.draw_items(), 1, "one batch; the transparent quad is skipped");
+        assert_eq!(f.vertices.len(), 8);
+        assert_eq!(f.vertices[4].pos, [120.0, 100.0]);
     }
 
     #[test]

@@ -130,10 +130,22 @@ pub struct Target {
     pub effects: Vec<Effect>,
 }
 
+/// One textured quad of a [`NodeKind::Quads`] node, in the node's local space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Quad {
+    pub texture: TextureId,
+    pub rect: Rect,
+    pub uv: Rect,
+    /// Multiplied with the node's inherited tint and opacity.
+    pub color: Color,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeKind {
     Group,
     Sprite(Sprite),
+    /// Many textured quads drawn as one node: text glyphs, nine-slices, tile runs.
+    Quads(Vec<Quad>),
     Layer(Layer),
     Target(Target),
 }
@@ -181,6 +193,10 @@ impl Node {
 
     pub fn sprite(texture: TextureId, size: Vec2) -> Self {
         Self::new(NodeKind::Sprite(Sprite { texture, size, uv: Rect::UNIT }))
+    }
+
+    pub fn quads(quads: Vec<Quad>) -> Self {
+        Self::new(NodeKind::Quads(quads))
     }
 
     pub fn layer(parallax: f32) -> Self {
