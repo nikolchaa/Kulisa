@@ -1235,6 +1235,8 @@ dependencies = [
 name = "kulisa-lua"
 version = "0.1.0"
 dependencies = [
+ "kulisa-core",
+ "kulisa-story",
  "log",
  "mlua",
  "web-time",

@@ -1,11 +1,13 @@
 //! Luau scripting. The only crate that talks to `mlua`; every binding wraps a public Rust API.
 
+mod story;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod web;
 
 use mlua::{FromLuaMulti, IntoLuaMulti, Lua};
 
 pub use mlua::{Error, Result, Table};
+pub use story::StoryHost;
 
 /// A Luau VM with the `kulisa` API installed.
 pub struct Scripting {
@@ -39,6 +41,11 @@ impl Scripting {
     /// Calls `module[name](args...)` on a table returned by a script.
     pub fn call<A: IntoLuaMulti, R: FromLuaMulti>(&self, module: &Table, name: &str, args: A) -> Result<R> {
         module.get::<mlua::Function>(name)?.call(args)
+    }
+
+    /// A story host sharing this VM's Luau state.
+    pub fn story_host(&self) -> Result<StoryHost> {
+        StoryHost::new(&self.lua)
     }
 
     /// Luau version string, e.g. `Luau 0.740`.
