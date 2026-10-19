@@ -294,10 +294,10 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | macOS | `aarch64-apple-darwin` | Metal | `main`, `.app` later | CI |
 | Web | `wasm32-unknown-unknown` (see §12 risk 1) | WebGPU, WebGL2 fallback | `cdylib` + wasm-bindgen + `index.html` | local + CI |
 | Android | `aarch64-linux-android` (+ `x86_64`, `armv7`) | Vulkan (GLES fallback) | `cdylib` with `android-activity` NativeActivity; APK built with `aapt2`/`aapt`/`zipalign`/`apksigner` (no Gradle) | local + CI |
-| iOS | `aarch64-apple-ios` (+ sim) | Metal | `main` in a `.app` bundle | CI |
+| iOS | `aarch64-apple-ios` (+ `aarch64-apple-ios-sim`) | Metal | `main` in a `.app` bundle (Info.plist + ad-hoc signature, no Xcode project); logs via `os_log` | CI (simulator run) |
 
 - CI (GitHub Actions) builds all six on every push; it is the source of truth.
-- Engine-developer builds go through `cargo xtask` (`web`, `apk`), so CI and
+- Engine-developer builds go through `cargo xtask` (`web`, `apk`, `ios-app`), so CI and
   local builds run the same steps. Game-creator builds (`kulisa build <target>`)
   arrive with `kulisa-cli` in M9 and will reuse this logic.
 - Games ship scripts and assets inside the build (App Store safe). Release
@@ -328,8 +328,13 @@ body:   self-describing tagged Value tree (current state + optional rollback log
      error page. Pinning exact minimum versions is an M9 task.
      Verified: eval, runtime and syntax errors, `pcall`, coroutines in Node and
      Chromium; full engine (Luau + WebGPU) in Chromium.
-2. **Luau on iOS.** No JIT needed; C++ is built by the Xcode toolchain. CI builds
-   device and simulator targets. Not yet run on a device or simulator.
+2. **Luau on iOS — resolved in M0 (simulator).** No JIT needed; C++ is built by
+   the Xcode toolchain. CI builds the device target and runs the player in an
+   iOS simulator: `cargo xtask ios-app --sim` assembles `dist/ios/Kulisa.app`,
+   `.github/scripts/ios-sim-smoke.sh` boots a simulator, launches the app, takes
+   a screenshot and fails unless the process is alive after 10 s and the Luau
+   smoke-test line reached the unified log. Not yet run on a physical device
+   (needs a signing identity and provisioning profile).
 3. **Android text input.** NativeActivity has weak soft-keyboard/IME support.
    If M6 text input needs it, switch to GameActivity (requires a Gradle step).
 4. **WebGL2 fallback limits.** No compute, fewer texture formats, uniform
@@ -355,5 +360,6 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | Luau on web via `wasm32-unknown-unknown` + wasi-sdk 34 sysroot with wasm exceptions (risk 1). Requires exnref-capable browsers. |
 | 2026-10-19 | Vendor `mlua` 0.12.2 with a one-line wasm fix rather than switching scripting languages. |
 | 2026-10-19 | Static libc++ on Android (`c++_static` + `c++abi`) so APKs need no extra `.so`. |
-| 2026-10-19 | `cargo xtask` for engine-developer build steps (web, APK). |
+| 2026-10-19 | `cargo xtask` for engine-developer build steps (web, APK, iOS app). |
 | 2026-10-19 | Minimum OS: iOS 15, macOS 11 (Rust's iOS 10 default fails to link Luau's C++ with current Xcode), Android API 26. |
+| 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |
