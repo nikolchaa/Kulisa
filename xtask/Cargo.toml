@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Engine development tasks: web and Android builds."
+description = "Engine development tasks: web, Android and iOS builds."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

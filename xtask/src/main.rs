@@ -2,6 +2,7 @@
 //!
 //!   cargo xtask web [--release] [--serve [PORT]]   build the web player into dist/web
 //!   cargo xtask apk [--release]                    build an Android APK into dist/android
+//!   cargo xtask ios-app [--sim] [--release]        build an iOS .app into dist/ios (macOS only)
 
 use std::env;
 use std::fs;
@@ -11,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod android;
+mod ios;
 
 const WASI_SDK: &str = "34";
 const WASM_BINDGEN: &str = "0.2.129";
@@ -22,7 +24,10 @@ fn main() {
     let result = match args.first().map(String::as_str) {
         Some("web") => web(&args[1..]),
         Some("apk") => android::apk(&args[1..]),
-        _ => Err("usage: cargo xtask web [--release] [--serve [PORT]] | apk [--release]".into()),
+        Some("ios-app") => ios::app(&args[1..]),
+        _ => Err(
+            "usage: cargo xtask web [--release] [--serve [PORT]] | apk [--release] | ios-app [--sim] [--release]".into(),
+        ),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");

@@ -2,7 +2,7 @@
 
 /// Installs the platform logger once. Safe to call more than once.
 pub fn init_logging() {
-    #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
     {
         let env = env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn");
         let _ = env_logger::Builder::from_env(env).try_init();
@@ -12,6 +12,11 @@ pub fn init_logging() {
     android_logger::init_once(
         android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("kulisa"),
     );
+
+    #[cfg(target_os = "ios")]
+    {
+        let _ = oslog::OsLogger::new("dev.kulisa.player").level_filter(log::LevelFilter::Info).init();
+    }
 
     #[cfg(target_arch = "wasm32")]
     {

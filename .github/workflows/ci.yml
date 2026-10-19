@@ -62,9 +62,19 @@ jobs:
           targets: aarch64-apple-ios, aarch64-apple-ios-sim
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p kulisa-player --target aarch64-apple-ios 2>&1 | tee -a ci.log
-      - run: cargo build -p kulisa-player --target aarch64-apple-ios-sim 2>&1 | tee -a ci.log
+      - run: cargo xtask ios-app --sim 2>&1 | tee -a ci.log
+      # Boots a simulator, launches the app and checks the Luau log line.
+      - run: .github/scripts/ios-sim-smoke.sh 2>&1 | tee -a ci.log
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kulisa-ios-sim
+          path: |
+            dist/ios/*.png
+            dist/ios/*.log
+          if-no-files-found: ignore
 
   android:
     name: Android
