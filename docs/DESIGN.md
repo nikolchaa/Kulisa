@@ -1,0 +1,335 @@
+# Kulisa design
+
+Living document. Architecture, crate boundaries and the decisions behind them.
+When a decision changes, update the relevant section and add a line to the
+[decision log](#13-decision-log).
+
+## 1. Principles
+
+1. **The engine has no look.** Core provides rendering, text, input, audio,
+   scripting, saves/rollback and a scene graph. Nothing visual is hardcoded.
+2. **Templates are just scripts.** The classic VN UI is a starter template in
+   `.kulisa` + Luau. It can be edited or deleted.
+3. **Public API rule.** Templates and demos use only public API. If a demo needs
+   something, it becomes a general engine feature.
+4. **Fast.** Batched GPU rendering, instant startup, small builds, 60 fps on
+   mid-range phones, smooth at 4K.
+5. **Lean.** Few dependencies, small focused crates, simple code.
+
+Building blocks we depend on: `winit`, `wgpu`, `cosmic-text`, `kira`, `mlua`
+(Luau), `image`, `serde`, `gilrs`. Everything above them is ours.
+
+## 2. Crate map
+
+```
+                         kulisa-player   (entry points: main, android_main, wasm start)
+                               |
+                         kulisa-runtime  (frame loop, owns all subsystems)
+             ______________/  |   |   \______________
+            /           /     |   |     \            \
+   kulisa-story  kulisa-lua  kulisa-ui  kulisa-audio  kulisa-text
+        |            |  \______|___________|______________|
+        |            |         |
+        +------> kulisa-core <-+--- kulisa-render
+                     |
+               kulisa-platform  (fs, paths, haptics, gyro, logging; no engine deps)
+
+   kulisa-cli  (new | run | build <target>; host-only tool, not shipped in games)
+```
+
+| Crate | Owns | Depends on |
+|---|---|---|
+| `kulisa-platform` | Asset/file access, save paths, haptics, gyro, logging, safe areas | std, per-OS crates |
+| `kulisa-core` | Scene graph, nodes, transforms, camera, tweens/timelines, `Value` type, game state, rollback log | `glam` |
+| `kulisa-render` | wgpu device, batcher, textures/atlases, meshes, shaders, render targets, post-fx | `wgpu`, `kulisa-core` |
+| `kulisa-text` | cosmic-text shaping, glyph atlas, rich text tags, effects, ruby | `cosmic-text`, `kulisa-render` |
+| `kulisa-audio` | Channels, music/sound/voice, crossfades, volume groups | `kira` |
+| `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM | `kulisa-core` |
+| `kulisa-lua` | Luau VM, sandbox, the `kulisa.*` API binding | `mlua`, engine crates |
+| `kulisa-ui` | Reactive declarative screens, layout, widgets | `kulisa-core`, `kulisa-text` |
+| `kulisa-runtime` | Frame loop, event dispatch, live reload, wiring | all of the above |
+| `kulisa-player` | Per-target entry points, `cdylib` for Android/web | `kulisa-runtime` |
+| `kulisa-cli` | `kulisa new/run/build`, packaging (APK, web bundle, .app) | host-only |
+
+Rules:
+
+- Lower crates never depend on higher ones. `kulisa-core` has no GPU, audio or
+  scripting code, so story/VM/rollback logic is testable headless.
+- `kulisa-story` does not know about Luau. Expressions and `$` lines compile to
+  opaque chunk IDs that the runtime hands to `kulisa-lua`.
+- `kulisa-lua` is the only crate that touches `mlua`. Every binding is a thin
+  wrapper over a public Rust API in a lower crate.
+- Crates are created when a milestone needs them, not before.
+
+## 3. Runtime and frame loop
+
+One `winit` event loop on the main thread. Per frame:
+
+1. **Input** — winit + gilrs events are normalized into `kulisa_core::input`
+   (unified pointer for mouse/touch, keys, gamepad, gyro), hit tested against
+   the scene/UI, then dispatched.
+2. **Script** — resume Luau coroutines whose waits are due, run `update(dt)`
+   callbacks, advance the story VM until it blocks (on `say`, `menu`, `pause`,
+   a transition, or a script wait).
+3. **Animate** — tweens and timelines step; dirty transforms propagate.
+4. **Extract** — the scene graph is walked into a flat draw list.
+5. **Render** — the batcher builds GPU buffers and records passes.
+6. **Audio** — kira runs on its own thread; the runtime only sends commands.
+
+Time is a fixed `dt` per rendered frame (clamped), plus an accumulated
+`time` exposed to shaders and scripts. Asset decoding runs on worker threads on
+native and async browser APIs on web.
+
+### Coordinate system
+
+Games declare a **design resolution** (e.g. 1920×1080). The window maps to it
+with a scale mode (`fit`, `fill`, `expand`). `expand` grows the visible area on
+wider/taller screens (16:9 to 20:9, tablets, portrait) instead of letterboxing.
+Safe-area insets (notches, rounded corners, home indicator) are exposed to
+layout and scripts in design units.
+
+## 4. Render pipeline
+
+- **Backends.** Vulkan on Windows, Linux and Android; Metal on macOS and iOS;
+  WebGPU on web with WebGL2 fallback. DX12 (Windows) and GLES (Linux, old
+  Android) are fallbacks only when Vulkan is unavailable.
+- **Retained scene, immediate draw list.** Nodes live in a slot-map arena in
+  `kulisa-core` (generational IDs, no `Rc<RefCell>`). Each frame the visible
+  tree is flattened into `DrawItem`s: `{pipeline, textures, blend, clip,
+  target, vertex range}`.
+- **Batching.** Items are sorted by target, then layer/z (stable), and adjacent
+  items with the same pipeline, bind group, blend and clip merge into one draw
+  call. Sprites go through a shared quad vertex format
+  (`pos, uv, color, extra`); small images are packed into atlases so most
+  sprite scenes are a handful of draw calls. Meshes use the same vertex format
+  with their own index ranges, so deformable meshes batch too.
+- **Camera and parallax.** A 2D camera (pan, zoom, rotate, shake, dolly). Each
+  layer has a `depth`; its view matrix is the camera transform scaled by a
+  parallax factor derived from depth. Pointer/gyro follow are camera
+  behaviours written against public API.
+- **Render targets.** A node can render its subtree into a texture, which any
+  other node can then sample. Transitions, post-fx and thumbnails all use this.
+- **Shaders.** Custom WGSL per node, per layer or per screen. Kulisa prepends a
+  small prelude (frame uniforms: time, resolution, camera; vertex IO structs) so
+  user shaders only write the parts they care about. User uniforms are
+  declared from Luau and packed into a uniform buffer. Pipelines are cached by
+  `(shader, blend, target format)` and rebuilt on shader hot reload.
+- **Post-fx.** An ordered chain of full-screen passes using ping-pong targets.
+  Bloom, blur, color grading, grain and CRT ship as example shaders in
+  templates/demos, not as engine built-ins.
+- **Color.** Blending happens in linear space on sRGB targets. Premultiplied
+  alpha everywhere.
+- **Quality tiers.** `low/medium/high` chosen from adapter info, limits and
+  platform; overridable. Tiers scale render-target resolution, MSAA and which
+  post-fx chains a scene enables. Scenes can declare fallbacks per tier.
+
+## 5. Text
+
+`cosmic-text` shapes and lays out; Kulisa owns rasterized glyph caching in a
+GPU atlas (one R8 atlas for masks, one RGBA for color emoji). Each glyph becomes
+a quad in the normal batcher, which makes per-character effects cheap: the
+typewriter reveals glyphs, and effects (wave, shake, color, size) are per-glyph
+vertex offsets/colors computed per frame. Inline tags (`{b}`, `{color=#f00}`,
+`{wave}`, `{ruby=ふりがな}`) are parsed into spans before shaping. Ruby text is
+laid out as a second line anchored to its base span. RTL and CJK come from
+cosmic-text; fallback fonts are configured per game.
+
+## 6. Audio
+
+`kira` with one mixer track per channel. Built-in channels: `music`, `sound`,
+`voice`, plus any number of game-defined channels. Each has a volume group, and
+the settings screen (a template, not the engine) binds to them. Crossfades and
+fades are kira tweens. Voice can drive auto-advance (the VM waits for the voice
+handle to finish). Music position is part of the saved scene state.
+
+## 7. Story language and VM
+
+### Language
+
+```
+define mila = Character("Mila", color="#e8a0bf")
+
+label start:
+    scene cafe_night with fade
+    show mila smile at left
+    mila "You actually came."
+    menu:
+        "Of course.":
+            $ trust += 1
+            jump cafe_talk
+        "Got lost on the way.":
+            jump lost_route
+```
+
+Indentation-based, Ren'Py-like. Statements: `label`, `jump`, `call`/`return`,
+`menu` (with optional `if` guards per choice), `if/elif/else`, `define`,
+`default`, `$` (inline Luau), `lua:` blocks, `scene`, `show`, `hide`,
+`with <transition>`, `at <transform>`, `play/stop/queue music|sound|voice|<channel>`,
+`pause`, and say lines (`who "text"` or narration `"text"`).
+
+### Pipeline
+
+`lexer → parser → AST → resolver → compiler → bytecode`.
+
+- The lexer tracks file, line and column for every token. Errors carry a span
+  and a plain-English message, rendered with the offending line and a caret.
+  The parser recovers at statement boundaries so one run reports many errors.
+- The resolver checks labels, duplicate definitions and unknown characters
+  before compiling.
+- Expressions and `$`/`lua:` code are not parsed by us: they become Luau chunks
+  compiled once at load time and referenced by chunk ID.
+
+### Bytecode
+
+Compact ops, one stream per label:
+
+```
+Say { who, text }        Menu { choices: [(text, guard_chunk?, target)] }
+Scene/Show/Hide { .. }   With { transition }       Play/Stop { channel, .. }
+Pause { secs? }          Jump { label }            Call { label } / Return
+JumpIfNot { chunk, off } Lua { chunk }             Checkpoint
+```
+
+The VM is a small state machine: a call stack of `(label, pc)` frames. It runs
+until an op **blocks** and returns an event to the runtime. The engine never
+draws dialogue itself: `Say` and `Menu` events call handlers that the game
+registers from Luau (`kulisa.story.on_say`, `kulisa.story.on_menu`). The
+classic-vn template registers handlers that drive its textbox and choice
+screen. No handler is an error, not a fallback UI.
+
+### Positions that survive updates
+
+A story position is saved as `(label, statement_index, statement_hash)`, not as
+a raw program counter. On load, if the hash at that index still matches, resume
+there; otherwise resume at the nearest earlier statement in that label whose
+hash matches, falling back to the label start. This keeps saves working when
+writers edit scripts.
+
+## 8. Luau
+
+Luau via `mlua` with the `luau` feature. Chosen over Rhai for speed, coroutines,
+gradual typing, sandboxing and no-JIT operation on iOS.
+
+- **Sandboxed.** No `io`/`os`/`loadfile`; files go through `kulisa.assets`.
+  Each game script runs in its own environment. Mod loading (desktop only) uses
+  the same sandbox.
+- **Coroutines for sequencing.** Waits (`kulisa.wait(secs)`, `tween:await()`,
+  `kulisa.input.await_click()`) yield the current coroutine; the runtime
+  resumes it when due.
+- **API outline** (all under the `kulisa` global):
+
+| Namespace | Purpose |
+|---|---|
+| `node`, `sprite`, `layer`, `group` | Create and modify scene nodes; transforms, opacity, tint, blend, clip, z |
+| `mesh` | Vertex grids: positions, UVs, colors, indices editable per frame |
+| `shader`, `postfx`, `target` | WGSL shaders, uniforms, post-fx chains, render targets |
+| `camera` | Pan, zoom, rotate, shake, follow pointer/gyro |
+| `tween`, `timeline` | Easing, sequences, parallel tracks, loops, callbacks |
+| `text` | Rich text nodes, typewriter, effects, fonts |
+| `audio` | Channels, play/stop/fade, volumes |
+| `input` | Pointer, keys, gamepad, gyro; hit testing, drag and drop |
+| `ui` | Reactive screens, layout, widgets, bindings |
+| `story` | Event handlers, jump/call, story variables |
+| `state`, `save` | Registered state, save/load slots, migrations |
+| `platform` | Haptics, safe areas, OS info, quality tier |
+
+- **Custom displayables** are Luau tables with `update(dt)`/`draw`
+  hooks built from the same node/mesh/shader primitives.
+
+## 9. UI system
+
+Declarative screens defined in Luau. A screen is a function from state to a
+tree of widgets; reading a reactive value (`kulisa.ui.signal`, story variables,
+registered state) subscribes the screen, and changes mark only that screen
+dirty. Layout: stack (h/v), grid, anchors/insets, safe-area aware. Widgets are
+composed from scene nodes (text, sprite, nine-slice, mesh) so the UI renders
+through the same batcher. Templates are built only from this system.
+
+## 10. Saves and rollback
+
+### State model
+
+Everything that must survive save/rollback is **plain data** in a `Value` tree
+(`nil, bool, int, float, string, bytes, list, map`). Never live objects:
+
+- VM call stack (as update-safe positions, see §7).
+- Story variables (a Luau table restricted to plain data).
+- **Scene description**: what is shown, where, with which transforms; music
+  per channel and position. Not GPU objects; the scene is rebuilt from it.
+- Registered Luau state: `kulisa.state.register(name, { save = fn, load = fn })`
+  or the shortcut `kulisa.state.table(name, defaults)` which tracks a plain table.
+
+### Rollback
+
+At every blocking interaction (`Say`, `Menu`, `Pause`) the VM records a
+**checkpoint**: the state above, encoded. Checkpoints form a ring buffer with
+configurable depth (default 100). Story variables and registered state are
+diffed against the previous checkpoint and only changes are stored, so deep
+history is cheap. Rolling back restores a checkpoint and rebuilds the scene
+from its description; rolling forward replays recorded menu choices.
+
+### Save format
+
+```
+"KSAV" | format_version u16 | header len u32 | header | body
+header: game id, game version, timestamp, slot name, playtime, thumbnail (PNG)
+body:   self-describing tagged Value tree (current state + optional rollback log)
+```
+
+- Self-describing encoding (type tag + length per value, string-keyed maps), so
+  unknown fields are skipped and missing fields fall back to defaults. No
+  type-name serialization, no pickling, no code in saves.
+- **Migrations**: games declare a save version and register
+  `kulisa.save.migrate(from, fn)` hooks that transform the `Value` tree.
+- Engine format changes bump `format_version` with Rust-side migrations.
+- Platform-correct paths from `kulisa-platform` (AppData, XDG, Application
+  Support, app sandbox, IndexedDB/OPFS on web).
+
+## 11. Platforms and builds
+
+| Target | Triple | Graphics | Entry / packaging | Built |
+|---|---|---|---|---|
+| Windows | `x86_64-pc-windows-msvc` | Vulkan (DX12 fallback) | `main` | local + CI |
+| Linux | `x86_64-unknown-linux-gnu` | Vulkan (GLES fallback) | `main` | CI (no WSL on dev host) |
+| macOS | `aarch64-apple-darwin` | Metal | `main`, `.app` later | CI |
+| Web | see §12 risk 1 | WebGPU, WebGL2 fallback | `cdylib` + JS loader + `index.html` | local + CI |
+| Android | `aarch64-linux-android` (+ `armv7`, `x86_64`) | Vulkan (GLES fallback) | `cdylib` with `android-activity` NativeActivity; APK built by `kulisa-cli` with `aapt2`/`zipalign`/`apksigner` (no Gradle) | local + CI |
+| iOS | `aarch64-apple-ios` (+ sim) | Metal | `main` in a `.app` bundle | CI |
+
+- CI (GitHub Actions) builds all six on every push; it is the source of truth.
+- Games ship scripts and assets inside the build (App Store safe). Release
+  builds pack assets into a single archive (`.kpak`: index + blobs).
+- Mod loading is desktop only.
+
+## 12. Risks
+
+1. **Luau on web.** Luau is C++. `mlua` only documents wasm support through
+   `wasm32-unknown-emscripten`, while `winit` and wgpu's WebGPU backend need
+   `wasm32-unknown-unknown` with `wasm-bindgen`. Options, investigated in M0:
+   1. Build Luau for `wasm32-unknown-unknown` with clang and a minimal libc
+      (wasi-libc headers, no WASI imports), using wasm exception handling or
+      `setjmp`/`longjmp` lowering for `lua_error`. Keeps one stack. Preferred.
+   2. Whole engine on Emscripten: Luau works, but no winit and no WebGPU in
+      wgpu (WebGL2 only). Needs our own web platform layer.
+   3. Two wasm modules (engine + Emscripten Luau) bridged through JS. A second
+      binding layer and shared-memory problems. Last resort.
+   Status and findings: see §13.
+2. **Luau on iOS.** Should be fine (no JIT needed, C++ via Xcode clang). Verified
+   in CI during M0.
+3. **Android text input.** NativeActivity has weak soft-keyboard/IME support.
+   If M6 text input needs it, switch to GameActivity (requires a Gradle step).
+4. **WebGL2 fallback limits.** No compute, fewer texture formats, uniform
+   buffer limits. The renderer must stay within WebGL2 downlevel limits; GPU
+   particles need a non-compute path.
+5. **Build size on web.** wgpu + cosmic-text + Luau. Track wasm size per
+   milestone; use `opt-level = "z"`, LTO and `wasm-opt` for release.
+
+## 13. Decision log
+
+| Date | Decision |
+|---|---|
+| 2026-10-19 | `.kulisa` for story files (`.kul` clashes with existing software). |
+| 2026-10-19 | Separate `kulisa-runtime` (frame loop) and `kulisa-player` (entry points) so `kulisa-platform` stays a leaf crate with no engine deps. |
+| 2026-10-19 | Own self-describing save encoding instead of bincode/postcard: those are not tolerant of unknown or missing fields. |
+| 2026-10-19 | Android packaging without Gradle (NativeActivity + SDK build-tools) to stay lean; revisit for IME. |
+| 2026-10-19 | `winit` 0.30 (stable) rather than the 0.31 beta. |
