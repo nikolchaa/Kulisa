@@ -45,7 +45,8 @@ fn run(cmd: &mut Command) -> Result {
     if status.success() { Ok(()) } else { Err(format!("{:?} failed with {status}", cmd.get_program())) }
 }
 
-/// Downloads and unpacks `url` into `dir` unless `marker` already exists.
+/// Downloads and unpacks `url` into `dir` unless `marker` (a file the archive contains)
+/// already exists. A file, not a directory: partial restores must trigger a re-download.
 fn fetch(url: &str, dir: &Path, marker: &Path) -> Result {
     if marker.exists() {
         return Ok(());
@@ -59,12 +60,14 @@ fn fetch(url: &str, dir: &Path, marker: &Path) -> Result {
 
 /// The wasi sysroot provides libc, libc++ (with wasm exceptions) and libunwind for Luau.
 fn wasi_sdk() -> Result<(PathBuf, PathBuf)> {
-    let dir = root().join("target").join(format!("wasi-sdk-{WASI_SDK}"));
+    // Outside `target/`: CI's cargo cache prunes target/ and could leave a partial sysroot.
+    let dir = root().join(".tools").join(format!("wasi-sdk-{WASI_SDK}"));
     let base = format!("https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-{WASI_SDK}");
     let sysroot = dir.join(format!("wasi-sysroot-{WASI_SDK}.0"));
     let rt = dir.join(format!("libclang_rt-{WASI_SDK}.0")).join("wasm32-unknown-wasip1");
-    fetch(&format!("{base}/wasi-sysroot-{WASI_SDK}.0.tar.gz"), &dir, &sysroot)?;
-    fetch(&format!("{base}/libclang_rt-{WASI_SDK}.0.tar.gz"), &dir, &rt)?;
+    let libcxxabi = sysroot.join("lib/wasm32-wasip1/eh/libc++abi.a");
+    fetch(&format!("{base}/wasi-sysroot-{WASI_SDK}.0.tar.gz"), &dir, &libcxxabi)?;
+    fetch(&format!("{base}/libclang_rt-{WASI_SDK}.0.tar.gz"), &dir, &rt.join("libclang_rt.builtins.a"))?;
     Ok((sysroot, rt))
 }
 

@@ -1,5 +1,7 @@
 # Rust
 /target/
+# Downloaded build tools (cargo xtask)
+/.tools/
 **/*.rs.bk
 *.pdb
 
