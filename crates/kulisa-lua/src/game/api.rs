@@ -25,26 +25,42 @@ use crate::story::{from_value, to_value};
 
 /// Event names `kulisa.on` accepts.
 const EVENTS: &[&str] = &[
-    "update", "press", "release", "move", "key", "key_up", "wheel", "resize", "error", "say", "menu",
-    "pause", "end", "stage", "restore",
+    "update",
+    "press",
+    "release",
+    "move",
+    "key",
+    "key_up",
+    "wheel",
+    "resize",
+    "error",
+    "say",
+    "menu",
+    "pause",
+    "end",
+    "stage",
+    "restore",
+    "tap",
+    "long_press",
+    "swipe",
 ];
 
-fn shared(lua: &Lua) -> Shared {
+pub(crate) fn shared(lua: &Lua) -> Shared {
     lua.app_data_ref::<Shared>().expect("kulisa game state").clone()
 }
 
-fn rt<T>(r: Result<T, String>) -> mlua::Result<T> {
+pub(crate) fn rt<T>(r: Result<T, String>) -> mlua::Result<T> {
     r.map_err(mlua::Error::runtime)
 }
 
 /// Runs `f` with the engine state. Never call Luau inside `f`.
-fn with<R>(lua: &Lua, f: impl FnOnce(&mut State) -> mlua::Result<R>) -> mlua::Result<R> {
+pub(crate) fn with<R>(lua: &Lua, f: impl FnOnce(&mut State) -> mlua::Result<R>) -> mlua::Result<R> {
     let shared = shared(lua);
     let mut st = shared.try_borrow_mut().map_err(|_| mlua::Error::runtime("the engine is busy"))?;
     f(&mut st)
 }
 
-fn number(v: &LuaValue, what: &str) -> mlua::Result<f32> {
+pub(crate) fn number(v: &LuaValue, what: &str) -> mlua::Result<f32> {
     match v {
         LuaValue::Number(n) => Ok(*n as f32),
         #[allow(clippy::unnecessary_cast)]
@@ -53,7 +69,7 @@ fn number(v: &LuaValue, what: &str) -> mlua::Result<f32> {
     }
 }
 
-fn color(v: &LuaValue, what: &str) -> mlua::Result<Color> {
+pub(crate) fn color(v: &LuaValue, what: &str) -> mlua::Result<Color> {
     let parsed = match v {
         LuaValue::String(s) => Color::hex(&s.to_string_lossy()),
         LuaValue::Table(t) => {
@@ -473,7 +489,7 @@ fn get_prop(lua: &Lua, st: &State, id: NodeId, key: &str) -> mlua::Result<LuaVal
 }
 
 /// An image from a handle or an asset path.
-fn image_arg(st: &mut State, v: &LuaValue) -> mlua::Result<ImageInfo> {
+pub(crate) fn image_arg(st: &mut State, v: &LuaValue) -> mlua::Result<ImageInfo> {
     match v {
         LuaValue::UserData(ud) => Ok(ud.borrow::<ImageRef>()?.0),
         LuaValue::String(s) => rt(load_image(st, &s.to_string_lossy())),
@@ -1600,5 +1616,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     k.set("state", state_api(lua)?)?;
     k.set("save", save_api(lua)?)?;
     k.set("persist", persist_api(lua)?)?;
+    k.set("ui", super::ui::api(lua)?)?;
     lua.globals().set("kulisa", k)
 }

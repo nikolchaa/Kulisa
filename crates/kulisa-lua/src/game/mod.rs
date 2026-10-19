@@ -6,6 +6,7 @@
 
 mod api;
 mod media;
+mod ui;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -18,6 +19,7 @@ use kulisa_platform::{Assets, Storage};
 use kulisa_render::{Image, Renderer, SurfaceTarget};
 use kulisa_story::{Event, Program, Stage, Vm};
 use kulisa_text::{TextBox, TextStyle, TextSystem};
+use kulisa_ui::Gesture;
 use mlua::{Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
 
 use crate::story::{StoryHost, from_value};
@@ -100,6 +102,7 @@ pub(crate) struct State {
     pub seen_flushed: f64,
     /// Whether the current line had been seen before it was shown.
     pub line_seen: bool,
+    pub ui: ui::UiState,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -129,7 +132,7 @@ impl State {
         self.seen.clear();
         let Some(p) = &self.persist else { return };
         if let Ok(Some(b)) = p.read("seen") {
-            self.seen.extend(b.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())));
+            self.seen.extend(b.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)));
         }
     }
 
@@ -397,7 +400,10 @@ fn dispatch(lua: &Lua, shared: &Shared, events: Vec<Event>, seen: &Seen) -> mlua
         }
     }
     // A freeze nobody used must not leak into a later transition.
-    shared.borrow_mut().media.frozen = None;
+    let mut st = shared.borrow_mut();
+    st.media.frozen = None;
+    // Screens may show story state: rebuild them.
+    ui::refresh_all(&mut st);
     Ok(())
 }
 
@@ -471,6 +477,7 @@ impl Game {
             seen_dirty: false,
             seen_flushed: 0.0,
             line_seen: false,
+            ui: Default::default(),
         };
         let shared = Rc::new(RefCell::new(state));
         let lua = Lua::new();
@@ -548,6 +555,15 @@ impl Game {
         if due && let Err(e) = story_advance(&self.lua, &self.state) {
             report(&self.state, &e);
         }
+        let long_press = {
+            let mut st = self.state.borrow_mut();
+            let t = st.time;
+            st.ui.gestures.tick(t)
+        };
+        if let Some(Gesture::LongPress(p)) = long_press {
+            emit(&self.state, "long_press", (p.x, p.y));
+        }
+        ui::update(&self.lua, &self.state);
 
         let mut st = self.state.borrow_mut();
         let st = &mut *st;
@@ -637,20 +653,74 @@ impl Game {
     /// Pointer position in window pixels (`None` when it left the window).
     pub fn pointer_moved(&mut self, window: Option<Vec2>) {
         let p = window.map(|w| self.to_design(w));
-        self.state.borrow_mut().pointer = p;
+        let events = {
+            let mut st = self.state.borrow_mut();
+            st.pointer = p;
+            match p {
+                Some(p) => {
+                    st.ui.gestures.moved(p);
+                    st.ui.ui.pointer_move(p)
+                }
+                None => {
+                    st.ui.ui.pointer_left();
+                    Vec::new()
+                }
+            }
+        };
+        ui::run_events(&self.state, events);
         if let Some(p) = p {
             emit(&self.state, "move", (p.x, p.y));
         }
     }
 
-    /// A pointer button or touch went down: "left", "right", "middle" or "touch".
+    /// A pointer button or touch went down: "left", "right", "middle" or "touch". Screens
+    /// get the left button and touches first; what they take does not reach `press`.
     pub fn pressed(&mut self, button: &str) {
         let p = self.state.borrow().pointer.unwrap_or_default();
+        if matches!(button, "left" | "touch") {
+            let (taken, events) = {
+                let mut st = self.state.borrow_mut();
+                let (taken, events) = st.ui.ui.pointer_down(p);
+                st.ui.pressed_by_ui = taken;
+                let t = st.time;
+                if taken {
+                    st.ui.gestures.cancel();
+                } else {
+                    st.ui.gestures.down(p, t);
+                }
+                (taken, events)
+            };
+            ui::run_events(&self.state, events);
+            if taken {
+                return;
+            }
+        }
         emit(&self.state, "press", (p.x, p.y, button.to_string()));
     }
 
     pub fn released(&mut self, button: &str) {
         let p = self.state.borrow().pointer.unwrap_or_default();
+        if matches!(button, "left" | "touch") {
+            let (taken, events, gesture) = {
+                let mut st = self.state.borrow_mut();
+                let by_ui = std::mem::take(&mut st.ui.pressed_by_ui);
+                let (taken, events) = st.ui.ui.pointer_up(p);
+                let t = st.time;
+                let gesture = if taken || by_ui { None } else { st.ui.gestures.up(p, t) };
+                (taken || by_ui, events, gesture)
+            };
+            ui::run_events(&self.state, events);
+            if taken {
+                return;
+            }
+            emit(&self.state, "release", (p.x, p.y, button.to_string()));
+            match gesture {
+                Some(Gesture::Tap(p)) => emit(&self.state, "tap", (p.x, p.y)),
+                Some(Gesture::Swipe(dir, p)) => emit(&self.state, "swipe", (dir.name(), p.x, p.y)),
+                _ => {}
+            }
+            return;
+        }
         emit(&self.state, "release", (p.x, p.y, button.to_string()));
     }
 
@@ -669,7 +739,14 @@ impl Game {
 
     /// Scroll wheel; positive is up (away from the player).
     pub fn wheel(&mut self, dy: f32) {
-        emit(&self.state, "wheel", dy);
+        let taken = {
+            let mut st = self.state.borrow_mut();
+            let p = st.pointer.unwrap_or_default();
+            st.ui.ui.wheel(p, dy)
+        };
+        if !taken {
+            emit(&self.state, "wheel", dy);
+        }
     }
 }
 

@@ -19,6 +19,7 @@ kulisa-lua = { path = "crates/kulisa-lua" }
 kulisa-runtime = { path = "crates/kulisa-runtime" }
 kulisa-story = { path = "crates/kulisa-story" }
 kulisa-text = { path = "crates/kulisa-text" }
+kulisa-ui = { path = "crates/kulisa-ui" }
 
 cosmic-text = "0.19"
 bytemuck = { version = "1.25", features = ["derive"] }

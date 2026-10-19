@@ -137,12 +137,91 @@ end)
 | `press`, `release` | `x, y, button` (`left`, `right`, `middle`, `touch`), design units |
 | `move` | `x, y` |
 | `key`, `key_up` | name: `space`, `enter`, `escape`, `left`, `right`, `up`, `down`, `pageup`, `pagedown`, `f1`…`f12`, `back`, or the character (`a`, `1`) |
+| `tap`, `long_press` | `x, y`: a short press without moving (also a mouse click), or a press held for half a second |
+| `swipe` | `direction` (`left`, `right`, `up`, `down`), `x, y` where it started |
 | `wheel` | lines; positive is up |
 | `resize` | window `width, height` in pixels |
 | `error` | message |
 | `say`, `menu`, `pause`, `end`, `stage`, `restore` | see Story |
 
 `kulisa.input.pointer()` → `x, y` or nil; `kulisa.input.down(key)` → whether a key is held.
+
+Shown screens see the left button and touches first (topmost first). What a button, slider or
+scroll takes, and anything over a modal screen, does not reach `press`, `release`, gestures
+or `wheel`. Other buttons and keys always reach the handlers.
+
+## UI
+
+Screens are functions that return a tree of widgets. They rebuild when a signal they read
+changes, when `show` passes new props, after each story step (so they can show story state),
+and on `kulisa.ui.refresh`. Widgets are matched to the previous build by `key` (or position),
+so their nodes, hover state, scroll position and running typewriter survive rebuilds.
+
+```lua
+local ui = kulisa.ui
+local who = ui.signal("Mila")
+
+ui.screen("say", function(props)
+    return ui.box{ anchor = "bottom", width = "80%", height = 240, margin = 24,
+        background = "gui/frame.png", slice = 24, padding = { 24, 32 },
+        ui.text{ text = who, size = 30, color = "#e8a0bf" },
+        ui.text{ id = "line", text = props.text, size = 34, cps = 40, y = 48 },
+    }
+end, { z = 100, area = "design" })
+
+ui.show("say", { text = "Hello." })
+who:set("Ren") -- the screen rebuilds next frame
+```
+
+- `ui.signal(value)` → a signal: `s()` or `s:get()` reads it (and subscribes the screen being
+  built), `s:peek()` reads without subscribing, `s:set(v)` changes it. A signal can also be
+  given directly as a widget property (`text = who`). Create signals once, not in screens.
+- `ui.screen(name, fn, { z = 100, modal = false, area = "safe" })` defines a screen.
+  `fn(props)` returns one widget. `z` orders screens (higher on top). `modal` screens block
+  pointer input to everything below. `area` is what the screen's root is laid out in:
+  `"safe"` (the visible screen minus notches and system bars), `"screen"` (the whole visible
+  screen) or `"design"` (the design resolution's rectangle, for text boxes that should stay
+  readable on ultrawide screens).
+- `ui.show(name, props?)` shows a screen (or rebuilds it with new props) right away;
+  `ui.hide(name)`, `ui.shown(name)`, `ui.refresh(name?)` (all shown screens without a name),
+  `ui.flush()` (rebuild what is due now instead of next frame).
+- `ui.find(screen, id)` → the node of a widget with that `id`: the text node of a text (with
+  `complete`, `skip()`, ...), the sprite of an image, the group of a box. `ui.bounds(screen,
+  id)` → `x, y, width, height`. `ui.layer(screen)` → the screen's layer (tween its
+  `opacity` to fade a screen).
+
+### Widgets
+
+Each constructor takes one table: properties by name, children in the list part (nested
+lists are flattened; `false`/`nil` entries are skipped, so `cond and ui.text(...)` works).
+
+| Widget | Is |
+|---|---|
+| `ui.box{}` | A container; children are placed by their `anchor` (an overlay). `layout = "row"` or `"column"` makes it a stack. |
+| `ui.row{}`, `ui.column{}` | Stacks: children side by side or top to bottom, with `gap`, `align` (cross axis: `start`, `center`, `end`, `stretch`) and `justify` (`start`, `center`, `end`, `between`). |
+| `ui.grid{ columns = n }` | Rows of `n` equal cells with `gap`; `align` places children in their cells. |
+| `ui.text{ text, size, font, color, align, line_height, cps, fade }` or `ui.text("Hi", { ... })` | Rich text (markup as in `kulisa.text`). Wraps at the width it gets; `align`: `left`, `center`, `right`, `justified`. |
+| `ui.image{ image, tint, slice }` | An image (path or image); sized to the image unless given a size. |
+| `ui.button{ on_click, selected, disabled, ... }` | A box that takes clicks (press and release on it). Any box with `on_click` is a button. |
+| `ui.slider{ value, min = 0, max = 1, step, on_change, vertical, thumb_size = 32, bar, thumb }` | Drag to set a value; `on_change(v)` runs while dragging. `background` is the track, `bar` the filled part, `thumb` the handle (colors or images). |
+| `ui.scroll{ direction = "vertical", start = "end" }` | A clipped viewport; its children stack and scroll with the wheel or by dragging. `start = "end"` keeps it scrolled to the end as content grows (backlogs). |
+| `ui.node{ node = n }` | A node the game made, placed by the layout (custom displayables). It is hidden, not removed, when the widget goes away. |
+| `ui.spacer{}` | Empty space that takes what is left in a row or column. |
+
+Properties every widget takes:
+
+| Property | Meaning |
+|---|---|
+| `key`, `id` | `key` matches the widget across rebuilds (lists that change order); `id` is for `ui.find`. |
+| `width`, `height` | A number, `"50%"` of the parent's content box, `"fill"` (the rest of a row or column, shared by `grow`, default 1; elsewhere the whole parent) or `"auto"` (fit the content, the default). |
+| `min_width`, `min_height`, `max_width`, `max_height` | Limits. |
+| `padding`, `margin` | A number, `{ vertical, horizontal }` or `{ top, right, bottom, left }`. |
+| `anchor` | Where the widget sits in an overlay box: `top_left` (default), `top`, `top_right`, `left`, `center`, `right`, `bottom_left`, `bottom`, `bottom_right`, or `{ x, y }` in 0..1. |
+| `x`, `y` | Moves the widget after layout. |
+| `background`, `tint`, `opacity`, `slice`, `slice_scale` | A color (`"#rrggbb"`, `{ r, g, b, a }`) or image (path or image) behind the widget; image tint; opacity of the widget and its children; nine-slice borders for an image background. |
+| `color` | Text color. |
+| `visible = false` | Leaves the widget out. |
+| `hover_*`, `pressed_*`, `selected_*`, `disabled_*` | Any of `background`, `tint`, `opacity`, `color`, `image`, `bar`, `thumb`, `slice`, `slice_scale` for that state, e.g. `hover_background`, `selected_color`. Widgets inside a button follow the button's state. |
 
 ## Assets
 

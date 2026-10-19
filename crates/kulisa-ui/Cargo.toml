@@ -1,0 +1,11 @@
+[package]
+name = "kulisa-ui"
+description = "Declarative screens for the Kulisa engine: widget trees, layout, reconciliation, input and gestures."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kulisa-core.workspace = true

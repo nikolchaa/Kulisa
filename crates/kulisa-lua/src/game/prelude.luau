@@ -59,3 +59,36 @@ function kulisa._tick(dt)
         end
     end
 end
+
+-- UI widget constructors: plain tables tagged with their kind. Children go in the list part.
+do
+    local ui = kulisa.ui
+    local function kind(k)
+        return function(t)
+            t = t or {}
+            t._kind = k
+            return t
+        end
+    end
+    for _, k in { "box", "row", "column", "grid", "image", "button", "slider", "scroll", "node" } do
+        ui[k] = kind(k)
+    end
+    -- ui.text("Hello", { size = 30 }) or ui.text{ text = "Hello", size = 30 }
+    function ui.text(t, opts)
+        if type(t) ~= "table" then
+            opts = opts or {}
+            opts.text = t
+            t = opts
+        end
+        t._kind = "text"
+        return t
+    end
+    -- Empty space that takes what is left in a row or column.
+    function ui.spacer(t)
+        t = t or {}
+        t._kind = "box"
+        t.width = t.width or "fill"
+        t.height = t.height or "fill"
+        return t
+    end
+end

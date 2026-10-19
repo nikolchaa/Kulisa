@@ -429,3 +429,98 @@ fn thumbnails_persistent_data_and_seen_lines() {
     drop(g);
     let _ = std::fs::remove_dir_all(kulisa_platform::data_dir(&id).unwrap());
 }
+
+#[test]
+fn ui_screens_rebuild_from_signals_and_take_input() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.load_font("Inter.ttf")
+        local ui = kulisa.ui
+        name = ui.signal("Mila")
+        clicks, volume, game_presses, gestures = 0, 0, 0, {}
+        builds = 0
+        ui.screen("hud", function(props)
+            builds += 1
+            return ui.column{ padding = 2, gap = 2,
+                ui.text{ id = "name", text = name, size = 8 },
+                ui.button{ id = "ok", width = 20, height = 10, background = "#202020", hover_background = "#ff0000",
+                    on_click = function() clicks += 1 end },
+                ui.slider{ id = "vol", width = 40, height = 8, thumb_size = 8, value = volume, min = 0, max = 1, step = 0.25,
+                    background = "#111111", bar = "#00ff00", thumb = "#ffffff",
+                    on_change = function(v) volume = v end },
+                props.extra and ui.text("extra", { size = 8 }),
+            }
+        end)
+        ui.screen("dialog", function()
+            return ui.box{ background = "#00000080" }
+        end, { modal = true, z = 200 })
+        kulisa.on("press", function() game_presses += 1 end)
+        kulisa.on("tap", function(x, y) table.insert(gestures, "tap") end)
+        kulisa.on("swipe", function(dir) table.insert(gestures, "swipe " .. dir) end)
+        kulisa.on("long_press", function() table.insert(gestures, "long") end)
+        ui.show("hud", { extra = false })
+    "##,
+    "Inter.ttf" => FONT);
+    let click = |g: &mut Game, x: f32, y: f32| {
+        g.pointer_moved(Some(kulisa_core::Vec2::new(x, y)));
+        g.pressed("left");
+        g.released("left");
+    };
+    g.frame(0.016);
+    let (x, y, w, h): (f32, f32, f32, f32) = g.eval("t", "return kulisa.ui.bounds('hud', 'ok')").unwrap();
+    assert!((w - 20.0).abs() < 1e-3 && (h - 10.0).abs() < 1e-3);
+    assert!((x - 2.0).abs() < 1e-3 && y > 2.0, "below the name: {x} {y}");
+    click(&mut g, x + 5.0, y + 5.0);
+    assert_eq!(
+        g.eval::<(i64, i64)>("t", "return clicks, game_presses").unwrap(),
+        (1, 0),
+        "the button took it"
+    );
+    // Hover changes the look (on the next frame).
+    g.frame(0.016);
+    let hovered: String = g.eval("t", "return kulisa.ui.find('hud', 'ok'):children()[1].tint").unwrap();
+    assert_eq!(hovered, "#ff0000ff");
+    // Empty space goes to the game, as a press and a tap.
+    click(&mut g, 60.0, 60.0);
+    assert_eq!(g.eval::<i64>("t", "return game_presses").unwrap(), 1);
+    assert_eq!(g.eval::<Vec<String>>("t", "return gestures").unwrap(), ["tap"]);
+
+    // Signals rebuild only the screens that read them, keeping widgets (and their nodes).
+    let node_before: String = g.eval("t", "return tostring(kulisa.ui.find('hud', 'name'))").unwrap();
+    let builds: i64 = g.eval("t", "return builds").unwrap();
+    g.eval::<()>("t", "name:set('Ren')").unwrap();
+    g.frame(0.016);
+    assert_eq!(g.eval::<i64>("t", "return builds").unwrap(), builds + 1);
+    assert_eq!(g.eval::<String>("t", "return kulisa.ui.find('hud', 'name').text").unwrap(), "Ren");
+    assert_eq!(g.eval::<String>("t", "return tostring(kulisa.ui.find('hud', 'name'))").unwrap(), node_before);
+    g.eval::<()>("t", "name:set('Ren')").unwrap();
+    g.frame(0.016);
+    assert_eq!(g.eval::<i64>("t", "return builds").unwrap(), builds + 1, "same value, no rebuild");
+
+    // Sliders report snapped values.
+    let (sx, sy, sw, _): (f32, f32, f32, f32) = g.eval("t", "return kulisa.ui.bounds('hud', 'vol')").unwrap();
+    g.pointer_moved(Some(kulisa_core::Vec2::new(sx + sw * 0.55, sy + 4.0)));
+    g.pressed("left");
+    g.pointer_moved(Some(kulisa_core::Vec2::new(sx + sw, sy + 4.0)));
+    g.released("left");
+    assert_eq!(g.eval::<f64>("t", "return volume").unwrap(), 1.0);
+
+    // A modal screen blocks the game and the screens below.
+    g.eval::<()>("t", "kulisa.ui.show('dialog')").unwrap();
+    click(&mut g, x + 5.0, y + 5.0);
+    click(&mut g, 60.0, 60.0);
+    assert_eq!(g.eval::<(i64, i64)>("t", "return clicks, game_presses").unwrap(), (1, 1));
+    g.eval::<()>("t", "kulisa.ui.hide('dialog')").unwrap();
+    assert!(!g.eval::<bool>("t", "return kulisa.ui.shown('dialog')").unwrap());
+
+    // Props rebuild with show; lists may hold false.
+    g.eval::<()>("t", "kulisa.ui.show('hud', { extra = true })").unwrap();
+    assert_eq!(g.eval::<usize>("t", "return #kulisa.ui.layer('hud'):children()[1]:children()").unwrap(), 4);
+
+    // Errors name the screen; the old tree stays.
+    g.eval::<()>("t", "kulisa.ui.screen('bad', function() return ui_missing.x end)").unwrap();
+    let err = g.eval::<()>("t", "kulisa.ui.show('bad')").unwrap_err();
+    assert!(err.contains("in screen `bad`"), "{err}");
+    let err = g.eval::<()>("t", "kulisa.ui.show('nope')").unwrap_err();
+    assert!(err.contains("no screen `nope`"), "{err}");
+}

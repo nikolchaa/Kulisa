@@ -1241,6 +1241,7 @@ dependencies = [
  "kulisa-render",
  "kulisa-story",
  "kulisa-text",
+ "kulisa-ui",
  "log",
  "mlua",
  "pollster",
@@ -1313,6 +1314,13 @@ dependencies = [
  "kulisa-core",
  "kulisa-render",
  "log",
+]
+
+[[package]]
+name = "kulisa-ui"
+version = "0.1.0"
+dependencies = [
+ "kulisa-core",
 ]
 
 [[package]]
