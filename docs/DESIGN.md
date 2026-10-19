@@ -17,8 +17,8 @@ tests passing and this document updated.
 | M2 | Text and audio | Markup, cosmic-text shaping, glyph atlas, typewriter, per-glyph effects, ruby; kira channels (§5, §6) | Done |
 | M3 | Story language and VM | `.kulisa` parser and compiler, bytecode VM, clear errors, rollback, update-safe saves, platform storage, portable stage (§7, §10) | Done |
 | M4 | Luau API | The `kulisa` API over the whole engine, sandbox, tasks, registered state, save slots and migrations; the player runs game folders/`.kpak`s; the smoke scene became `demos/smoke` (§8, [API.md](API.md)) | Done |
-| M5 | UI system and classic-vn template | Reactive declarative screens (`kulisa-ui`), layout, widgets, nine-slice; `templates/classic-vn` (textbox, namebox, choices, history, save/load with thumbnails, settings, quick menu, touch gestures); transitions; display profiles, aspect clamp, anchors and orientation (§3, §9) | Next |
-| M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing, drag and drop with snap zones, multi-touch, gamepad, gyro, haptics, sliders, text input | Planned |
+| M5 | UI system and classic-vn template | Reactive declarative screens (`kulisa-ui`), layout, widgets (incl. sliders, moved from M6), nine-slice; `templates/classic-vn` (textbox, namebox, choices, history, save/load with thumbnails, settings, quick menu, touch gestures, Ren'Py skip/auto/rollback); transitions; display profiles, aspect clamp, safe areas, anchors and orientation (§3, §9) | Done |
+| M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing, drag and drop with snap zones, multi-touch, gamepad (with keyboard/gamepad focus navigation for UI), gyro, haptics, text input. Basic sliders moved to M5 | Planned |
 | M7 | PC unwrap demo | `demos/pc-unwrap`: peeling and applying plastic film (curling mesh, squeegee, bubbles, glossy plastic shading), public API only | Planned |
 | M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT) | Planned |
 | M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`[display]` etc.), quality tiers | Planned |
@@ -56,6 +56,7 @@ Building blocks we depend on: `winit`, `wgpu`, `cosmic-text`, `kira`, `mlua`
 kulisa-story  kulisa-ui  kulisa-audio  kulisa-text --> kulisa-render
     |              |                        |               |
     +--------------+------> kulisa-core <---+---------------+
+   (kulisa-ui needs only kulisa-core: text is measured through a trait)
                                 |
                           kulisa-platform  (files, packs, save paths, logging; no engine deps)
 
@@ -71,7 +72,7 @@ kulisa-story  kulisa-ui  kulisa-audio  kulisa-text --> kulisa-render
 | `kulisa-audio` | Channels (music/sound/voice/custom), crossfades, per-channel volume, placeholder synthesis | `kira` |
 | `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM with rollback and update-safe saves | `kulisa-core` |
 | `kulisa-lua` | Luau VM, sandbox, the `kulisa.*` API (docs/API.md), the scripted `Game` (scene, assets, story, saves, audio) | `mlua`, engine crates |
-| `kulisa-ui` | Reactive declarative screens, layout, widgets | `kulisa-core`, `kulisa-text` |
+| `kulisa-ui` | Widget elements, reconciliation, layout, hit testing, gestures, signal dependencies (draws nothing; `kulisa-lua` turns widgets into nodes) | `kulisa-core` |
 | `kulisa-runtime` | Window, frame loop, finding the game, forwarding input; later live reload | `kulisa-lua`, `winit` |
 | `kulisa-player` | Per-target entry points, `cdylib` for Android/web | `kulisa-runtime` |
 | `kulisa-cli` | `kulisa new/run/build`, packaging (APK, web bundle, .app) | host-only |
@@ -126,33 +127,39 @@ Games declare a **design resolution** (e.g. 1920×1080) and a scale mode
 World space is in design units with **y down**. The camera rests on the design
 center, so with an untouched camera a node at `(x, y)` appears at design `(x, y)`.
 Anchoring UI to the *screen* edges and safe areas (notches, home indicator) is
-the UI system's job (M5); in M1 a HUD layer is anchored to the design area.
+the UI system's job: screens are laid out in the screen, safe or design area (§9).
 
-### Display profiles, aspect and orientation (planned)
+### Display profiles, aspect and orientation
 
-Goal: one design and one layout per game by default, with opt-in support for
-games that want different layouts per device class.
+Implemented in M5 except the build config (M9) and the demo (M8). Goal: one design
+and one layout per game by default, with opt-in support for games that want
+different layouts per device class. API: `kulisa.display{ ... }` (docs/API.md).
 
-- **Aspect clamp** (M5). `Viewport` gains `aspect = { min, max }` (e.g. 4:3 to
-  21:9). The window is first clamped to that range (bars beyond it), then the
-  scale mode applies inside. `Fit` is the special case min = max = design aspect.
-  This keeps 21:9 and 32:9 monitors from revealing areas the art never painted.
-- **Anchors** (M5). UI elements anchor either to the screen/safe area (quick
-  menu, HUD) or to the design area (the textbox, so lines stay readable on
-  ultrawide).
-- **Orientation** (M5): `landscape | portrait | auto | any`. `auto` (default)
-  follows the design aspect. Mobile locks to it (Android manifest
-  `sensorLandscape`/`sensorPortrait`, iOS `UISupportedInterfaceOrientations`);
-  desktop uses it for the default window shape; the web cannot lock, so the
-  engine reports a mismatch and the template shows a "rotate your device"
-  overlay. `any` lets the device rotate and reports changes to scripts.
-- **Profiles by form factor** (M5): `desktop`, `tablet`, `phone`, each optionally
+- **Aspect clamp**. `Viewport::aspect = [min, max]` (e.g. 4:3 to 21:9). The
+  window is first clamped to that range (bars beyond it, centered), then the scale
+  mode applies inside. `Fit` is the special case min = max = design aspect. This
+  keeps 21:9 and 32:9 monitors from revealing areas the art never painted.
+- **Anchors and areas**. Each UI screen is laid out in one area: `screen` (what
+  the window shows), `safe` (screen minus insets) or `design` (the design
+  rectangle); widgets anchor inside it. Safe-area insets come from Android's
+  `WindowInsets` (system bars and cutouts, via JNI; Android 15 draws apps edge to
+  edge), iOS's safe area (winit's inner rect), CSS `env(safe-area-inset-*)` on the
+  web, and `KULISA_SAFE_AREA` / `?safe=` for testing. The classic-vn text box uses
+  the safe area with a width capped at 88% of the design width, so lines stay
+  readable on ultrawide and clear the gesture bar on phones.
+- **Orientation**: `landscape | portrait | auto | any`. `auto` (default)
+  follows the design aspect. The runtime locks it at startup
+  (`setRequestedOrientation` through JNI on Android, `set_valid_orientations` on
+  iOS); desktop windows open in that shape; the web cannot lock, so on touch
+  screens `screen.mismatch` is set and the template shows a "turn your device"
+  overlay. `any` lets the device rotate; `display` events report changes. Writing
+  the orientation into manifests and plists is part of the build config (M9).
+- **Profiles by form factor**: `desktop`, `tablet`, `phone`, each optionally
   overriding design resolution, scale mode, aspect clamp and orientation on top of
-  a base. Form factor comes from the OS and screen size (smallest side under
-  600 logical px with touch = phone); on the web it is decided at runtime.
-  Because a static Android manifest holds one orientation, the manifest carries
-  the base and the runtime corrects it at startup when a profile differs
-  (`setRequestedOrientation` via JNI on Android, `set_valid_orientations` on iOS).
+  a base. Form factor comes from the OS and screen size (touch with the short side
+  under 600 logical px = phone; touch up to 1400 on the long side = tablet, so
+  touch laptops stay desktops); `KULISA_PROFILE` / `?profile=` force one. It is
+  chosen once, at startup.
 - **Portable saves** (M3). Saved scene state stores named positions (`at left`)
   and anchors, resolved against the active profile on load, never raw
   design-unit pixels. A save made on desktop (landscape) loads on a phone
@@ -230,6 +237,18 @@ Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame
   scratch texture and a final pass encodes sRGB, so user shaders never care.
 - **Headless mode** renders offscreen with pixel readback. GPU tests use it and
   run in CI on software adapters; save thumbnails (M3) will too.
+- **Masks** (M5). Materials and effects take an optional second texture
+  (`mask_tex`/`mask_samp`, bind group 3; a 1x1 white texture when unset). Masks
+  that live in an atlas page are copied into their own texture on first use, so
+  shaders sample them with the quad's 0..1 UVs. Image wipes use it.
+- **Nine-slice** (M5). A sprite's `slice` borders (texture pixels, drawn at
+  `scale`) become up to nine quads at extraction; they batch like any sprite.
+  Borders larger than the sprite shrink proportionally.
+- **Capture and readback** (M5). `Renderer::capture` draws a scene into a render
+  target as if it were the window (transition freezes, save thumbnails).
+  `read_texture` + `poll_readback` copy a texture to the CPU without blocking,
+  since browsers deliver mapped buffers only after yielding; native callers may
+  wait. `create_texture_unpacked` + `free_texture` give thumbnails memory back.
 - **Known limits (M1):** linear filtering only (no per-texture nearest/repeat
   yet); no mipmaps; atlas space is not reclaimed when textures are dropped;
   vertex colors are 8-bit, so very dark tint gradients band; custom shaders that
@@ -373,8 +392,22 @@ plain data and name the variable that breaks the rule.
 The engine never draws dialogue itself. `kulisa-lua::Game` runs the VM and
 passes its events to Luau handlers (`say`, `menu`, `stage`, `restore`, ...);
 `play`/`stop` lines go straight to audio. While the VM runs, its state is taken
-out of the shared game state, so `$` lines can call the whole API. Transitions
-(`with`) are reported to handlers but not animated yet (M5).
+out of the shared game state, so `$` lines can call the whole API.
+
+**Transitions** (M5). A transition draws a frozen frame of the screen over the
+live scene, through a shader whose progress goes from 0 to 1
+(`kulisa.screen:freeze()` / `:transition{...}`); templates ship the shaders
+(fade, dissolve, wipes, image dissolve), the engine only the mechanism. The
+engine freezes for story `with` the Ren'Py way: before a statement with its own
+`with`, so only that change transitions, and at the last interaction (or
+transition) before a lone `with` line. The VM does not block on `with`; the
+classic-vn template holds the next line until the transition ends, which looks
+the same to the player.
+
+**Seen lines** (M5). `Vm::line_key` hashes the label and statement hash, so a
+line keeps its identity across sessions and edits that keep its text. The game
+keeps a seen set (and chosen menu choices) in persistent storage; `say` events
+carry `seen`, menu items `chosen`. `Vm::block_rollback` drops the history.
 
 ### Positions that survive updates
 
@@ -421,22 +454,59 @@ Implemented in M4; the reference is [API.md](API.md).
 | `text`, `load_font` | Rich text nodes, typewriter, effects, fonts (M4) |
 | `audio` | Channels, play/stop/fade, volumes (M4) |
 | `on`, `input`, `node:contains` | Pointer, keys, wheel, hit testing (M4); gamepad, gyro, drag and drop later |
-| `ui` | Reactive screens, layout, widgets, bindings |
+| `ui` | Reactive screens, layout, widgets, signals, gestures (M5) |
+| `display`, `screen`, `window` | Display profiles, safe area, orientation, transitions, captures, fullscreen, quit (M5) |
+| `persist` | Data outside saves and rollback: settings, unlocks (M5) |
 | `story` | Load, start, next, choose, rollback, variables; events via `on` (M4) |
 | `state`, `save` | Registered state, save/load slots, migrations (M4) |
-| `platform` | Haptics, safe areas, OS info, quality tier |
+| `platform` | Haptics, OS info, quality tier |
 
 - **Custom displayables** are Luau tables with `update(dt)`/`draw`
   hooks built from the same node/mesh/shader primitives.
 
 ## 9. UI system
 
-Declarative screens defined in Luau. A screen is a function from state to a
-tree of widgets; reading a reactive value (`kulisa.ui.signal`, story variables,
-registered state) subscribes the screen, and changes mark only that screen
-dirty. Layout: stack (h/v), grid, anchors/insets, safe-area aware. Widgets are
-composed from scene nodes (text, sprite, nine-slice, mesh) so the UI renders
-through the same batcher. Templates are built only from this system.
+Implemented in M5 (`kulisa-ui`, bound in `kulisa-lua/src/game/ui.rs`; API in
+[API.md](API.md)).
+
+- **Screens are functions.** `kulisa.ui.screen(name, fn, { z, modal, area })`;
+  `fn(props)` returns a tree of plain tables made by the widget constructors.
+  Reading a signal while a screen builds subscribes it; `signal:set` marks only
+  its readers dirty, and dirty screens rebuild once per frame (or at once on
+  `ui.show` / `ui.flush`). Every shown screen also rebuilds after each story step,
+  which is how screens show story variables without tracking them (Ren'Py
+  re-evaluates screens each interaction the same way).
+- **Reconciliation.** The new tree is matched to the retained one by `key`, or by
+  position among unkeyed siblings with the same kind. Matched widgets keep their
+  scene nodes, hover/press state, scroll offset and typewriter progress; text is
+  laid out again only when its markup, style or wrap width changed.
+- **Layout** (two passes, design units): natural sizes bottom up given the space
+  available (text measured through the `Measure` trait, so `kulisa-ui` has no
+  text or GPU dependency), then positions top down. Boxes are overlays (children
+  placed by anchor) or stacks (row/column with gap, `align`, `justify`, `fill`
+  weights) or grids; sizes are px, percent, fill or auto with min/max; padding and
+  margins. Scroll viewports stack their children, clip them and scroll by wheel
+  or drag (`start = "end"` stays at the end as content grows).
+- **Looks and states.** Visual properties are optional so state overrides
+  (`hover_*`, `pressed_*`, `selected_*`, `disabled_*`) replace just what they
+  name; widgets inside a button follow its state, as Ren'Py's style prefixes do.
+- **Scene sync.** Each screen is a parallax-0 layer; each widget a group
+  positioned relative to its parent, with a background sprite (color or
+  nine-sliced image), text node, image sprite or slider parts. Embedded game
+  nodes (`ui.node`) are placed by the layout and hidden, not removed, with it.
+- **Input routing.** Screens see the left button and touches first, topmost
+  first. Buttons click on press and release on the same widget; sliders report
+  snapped values while dragged; a press inside a scroll that travels past a slop
+  becomes a scroll drag. What the UI takes, and anything over a modal screen,
+  does not reach `press`/`release`/gestures/`wheel`; other buttons and keys always
+  reach the game. Gestures (tap, long press, swipe) are recognized on what is
+  left, for mouse and touch alike.
+- **classic-vn** (`templates/classic-vn`, its README) is built only on this and
+  the rest of the public API; a headless test (`kulisa-lua/tests/template.rs`)
+  plays through it on every CI run.
+- **Not yet:** keyboard and gamepad focus navigation (with gamepad, M6), multi-
+  touch (M6), text input (M6), per-widget animation (tween the nodes from
+  `ui.find`, or the screen layer from `ui.layer`).
 
 ## 10. Saves and rollback
 
@@ -490,8 +560,14 @@ body:   the VM's save: frames, stage, story variables
   `%APPDATA%`, `~/Library/Application Support` or `$XDG_DATA_HOME` (desktop and
   iOS), the app's internal storage on Android, base64 in `localStorage` on the
   web. Names are restricted to `[A-Za-z0-9_-]` and exclude Windows device names.
-- Thumbnails are supported by the format; capturing them arrives with the
-  save/load screens (M5).
+- **Thumbnails** (M5): `save.write(slot, { thumbnail = image })` stores a PNG
+  of a `screen:capture`. Native platforms wait for the pixels; the web writes the
+  save at once and adds the thumbnail when the readback arrives. `save.list()`
+  decodes each thumbnail once per save into a texture that is freed when the
+  slot is overwritten or deleted.
+- **Persistent data** (M5): `kulisa.persist` keeps plain data per game outside
+  saves and rollback (`<data>/<id>/persistent`, or localStorage); the engine keeps
+  the seen set there too, flushed every few seconds and on suspend.
 
 ## 11. Platforms and builds
 
@@ -586,3 +662,11 @@ body:   the VM's save: frames, stage, story variables
 | 2026-10-19 | M4: Luau API handles are userdata with strict property access instead of plain tables, so typos fail loudly and node state lives in one place (the scene). |
 | 2026-10-19 | M4: tasks (`spawn`/`wait`/`await`) are a small Luau prelude over coroutines rather than Rust-side scheduling. |
 | 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |
+| 2026-10-19 | M5: basic sliders moved from M6 into the M5 UI system (the settings screen needs them); drag and drop, multi-touch, gamepad and focus navigation stay in M6. |
+| 2026-10-19 | M5: screens rebuild whole and reconcile by key or position (per-screen granularity, as §9 planned) rather than fine-grained bindings: simpler, and cheap at VN UI sizes. Screens also rebuild after every story step instead of tracking story-variable reads. |
+| 2026-10-19 | M5: `kulisa-ui` depends only on `kulisa-core`; text is measured through a trait and all scene nodes are made by `kulisa-lua`, so layout, reconciliation and input are unit-tested without fonts or a GPU. |
+| 2026-10-19 | M5: transitions are an engine mechanism (freeze + shader overlay with progress) and the shaders live in templates, like the M1 vignette: the engine keeps no look. |
+| 2026-10-19 | M5: the VM does not block on `with`; the engine freezes the screen the Ren'Py way and the template holds the next line until the transition ends. Keeps the VM free of timing. |
+| 2026-10-19 | M5: skip, auto-forward and rollback controls are template behaviour over engine primitives (`seen`, `chosen`, `can_rollback`, `block_rollback`), so games can change them; classic-vn follows Ren'Py's defaults. |
+| 2026-10-19 | M5: screen captures read back asynchronously everywhere (the web cannot block); native save writes may wait, the web patches the thumbnail in afterwards. |
+| 2026-10-19 | M5: safe-area insets on Android come from `WindowInsets` through raw `jni-sys` calls (no `jni` crate API), since Android 15 forces edge-to-edge and the content rect no longer excludes the bars. |
