@@ -1,0 +1,12 @@
+[package]
+name = "kulisa-audio"
+description = "Audio channels for the Kulisa engine (music, sound, voice and custom), built on kira."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kira.workspace = true
+log.workspace = true

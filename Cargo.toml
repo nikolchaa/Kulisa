@@ -11,6 +11,7 @@ license = "MIT"
 repository = "https://github.com/nikolchaa/Kulisa"
 
 [workspace.dependencies]
+kulisa-audio = { path = "crates/kulisa-audio" }
 kulisa-core = { path = "crates/kulisa-core" }
 kulisa-platform = { path = "crates/kulisa-platform" }
 kulisa-render = { path = "crates/kulisa-render" }
@@ -19,6 +20,8 @@ kulisa-runtime = { path = "crates/kulisa-runtime" }
 
 bytemuck = { version = "1.25", features = ["derive"] }
 glam = "0.34"
+# cpal backend without the D-Bus realtime extra (no libdbus needed on Linux).
+kira = { version = "0.12", default-features = false, features = ["cpal", "cpal-realtime", "ogg", "vorbis", "wav", "pcm", "mp3", "flac"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 log = "0.4"
 mlua = { version = "0.12", features = ["luau", "vendored"] }
