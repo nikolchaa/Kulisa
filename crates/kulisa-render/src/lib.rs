@@ -93,7 +93,11 @@ struct Page {
 }
 
 enum Output {
-    Surface { surface: wgpu::Surface<'static>, config: wgpu::SurfaceConfiguration },
+    /// `surface` is `None` while suspended (Android destroys the window on suspend).
+    Surface {
+        surface: Option<wgpu::Surface<'static>>,
+        config: wgpu::SurfaceConfiguration,
+    },
     Headless(GpuTexture),
 }
 
@@ -109,6 +113,8 @@ struct Uniforms {
 
 /// Draws scenes with wgpu. One per window (or one headless instance for tests/thumbnails).
 pub struct Renderer {
+    instance: wgpu::Instance,
+    adapter: wgpu::Adapter,
     device: wgpu::Device,
     queue: wgpu::Queue,
     output: Output,
@@ -311,7 +317,9 @@ impl Renderer {
                 Ok(a) if is_denylisted(&a.get_info()) => {
                     log::warn!("skipping unreliable driver: {}", a.get_info().name)
                 }
-                Ok(adapter) => return Self::init(adapter, Some(surface), UVec2::new(size.0, size.1)).await,
+                Ok(adapter) => {
+                    return Self::init(instance, adapter, Some(surface), UVec2::new(size.0, size.1)).await;
+                }
                 Err(e) => log::warn!("no adapter for {backends:?}: {e}"),
             }
         }
@@ -334,7 +342,7 @@ impl Renderer {
                 if let Ok(adapter) = instance.request_adapter(&options).await
                     && !is_denylisted(&adapter.get_info())
                 {
-                    return Self::init(adapter, None, UVec2::new(width, height)).await;
+                    return Self::init(instance, adapter, None, UVec2::new(width, height)).await;
                 }
             }
         }
@@ -342,6 +350,7 @@ impl Renderer {
     }
 
     async fn init(
+        instance: wgpu::Instance,
         adapter: wgpu::Adapter,
         surface: Option<wgpu::Surface<'static>>,
         size: UVec2,
@@ -444,7 +453,7 @@ impl Renderer {
                     color_space: wgpu::SurfaceColorSpace::Auto,
                 };
                 surface.configure(&device, &config);
-                (Output::Surface { surface, config }, out_format, encode)
+                (Output::Surface { surface: Some(surface), config }, out_format, encode)
             }
             None => (
                 Output::Headless(create_gpu_texture(&device, &texture_layout, &sampler, size, true)),
@@ -469,6 +478,8 @@ impl Renderer {
         let ibuf = buffer("indices", 1 << 16, wgpu::BufferUsages::INDEX);
 
         let mut r = Self {
+            instance,
+            adapter,
             device,
             queue,
             output,
@@ -550,7 +561,9 @@ impl Renderer {
             Output::Surface { surface, config } => {
                 config.width = width;
                 config.height = height;
-                surface.configure(&self.device, config);
+                if let Some(surface) = surface {
+                    surface.configure(&self.device, config);
+                }
             }
             Output::Headless(tex) => *tex = new_headless.unwrap(),
         }
@@ -558,6 +571,37 @@ impl Renderer {
         self.transients.clear();
         self.screen = None;
         self.scratch.retain(|t| t.size != old);
+    }
+
+    /// Drops the window surface (Android destroys the window on suspend). The device,
+    /// textures and pipelines stay, so handles held by scripts remain valid.
+    pub fn suspend(&mut self) {
+        if let Output::Surface { surface, .. } = &mut self.output {
+            *surface = None;
+        }
+    }
+
+    /// Attaches a new window after [`Renderer::suspend`].
+    pub fn resume(&mut self, target: impl SurfaceTarget, width: u32, height: u32) -> Result<(), String> {
+        let Output::Surface { surface, config } = &mut self.output else {
+            return Err("a headless renderer has no window".into());
+        };
+        let new = self.instance.create_surface(target).map_err(|e| e.to_string())?;
+        if !self.adapter.is_surface_supported(&new) {
+            return Err("the new window is not supported by this GPU adapter".into());
+        }
+        config.width = width.max(1);
+        config.height = height.max(1);
+        new.configure(&self.device, config);
+        *surface = Some(new);
+        self.size = UVec2::new(config.width, config.height);
+        self.transients.clear();
+        self.screen = None;
+        Ok(())
+    }
+
+    pub fn is_suspended(&self) -> bool {
+        matches!(self.output, Output::Surface { surface: None, .. })
     }
 
     /// Uploads an image. Small images share atlas pages, which keeps them batchable.
@@ -837,7 +881,11 @@ impl Renderer {
 
         // Acquire the output.
         let surface_tex = match &self.output {
-            Output::Surface { surface, config } => match surface.get_current_texture() {
+            Output::Surface { surface: None, .. } => {
+                self.frame = frame;
+                return;
+            }
+            Output::Surface { surface: Some(surface), config } => match surface.get_current_texture() {
                 wgpu::CurrentSurfaceTexture::Success(t) => Some(t),
                 wgpu::CurrentSurfaceTexture::Suboptimal(_)
                 | wgpu::CurrentSurfaceTexture::Outdated
