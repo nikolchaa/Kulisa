@@ -32,6 +32,27 @@ Scripts run in Luau's sandbox: no `io`, `os.execute` or `loadfile`; library tabl
   `clear` (background color), `effects` (screen post-processing, see Shaders),
   `screen:visible()` → `x, y, width, height` of the design area the window shows (in `"fit"`
   mode, the design area itself).
+- `screen:capture(width, height, image?)` → an image of the screen as it is now, drawn as if
+  the window were `width`×`height` (save thumbnails). Passing an earlier capture of the same
+  size reuses it.
+
+### Transitions
+
+A transition draws a frozen frame of the screen over the live scene and animates it away
+with a shader.
+
+- `screen:freeze()` captures the screen as it is now.
+- `screen:transition{ shader, time = 0.5, ease = "linear", mask, params }` → a handle with
+  `done` and `skip()`. `shader` is a shader or a path. Its `tex` is the frozen frame and
+  `params.p[0].x` the progress from 0 to 1; `params` (up to 15 numbers) fill the rest, from
+  `params.p[0].y` on. `mask` is an image the shader reads as `mask_tex` (image wipes). A new
+  transition ends the running one. Without a freeze, it starts from the current screen.
+
+Story `with` is frozen for you, as in Ren'Py: before a statement with its own `with`
+(`scene bg with fade`), so only that statement's change transitions; and at the last
+interaction (or transition) before a lone `with` line, so everything since then does. The
+`stage` handler starts the transition when the event has `with` (see `templates/classic-vn`).
+
 - `kulisa.camera`: `x`, `y` (the point shown at the design center), `zoom`, `rotation`,
   `shake_x`, `shake_y`; `camera:tween(props, opts)` with `x`, `y`, `zoom`, `rotation`;
   `camera:reset()`.
@@ -161,7 +182,10 @@ looping music start then.
 - `kulisa.story.next()` continues past the current line or pause; false while a menu waits.
 - `kulisa.story.choose(index)` picks a menu item by its `index`.
 - `kulisa.story.rollback()`, `kulisa.story.roll_forward()` → whether it moved;
-  `kulisa.story.can_roll_forward()`, `kulisa.story.ended()`.
+  `kulisa.story.can_rollback()`, `kulisa.story.can_roll_forward()`, `kulisa.story.ended()`.
+- `kulisa.story.block_rollback()`: the player cannot roll back past the current line.
+- `kulisa.story.seen()`: whether the current line had been seen before, in any session (for
+  "skip seen text"). Seen lines are kept with the persistent data (needs `kulisa.save.setup`).
 - `kulisa.story.vars()` (the story variables table), `kulisa.story.define(name, value)`
   (a constant stories can use), `kulisa.story.stage()`.
 
@@ -170,8 +194,8 @@ like:
 
 | Event | Arguments |
 |---|---|
-| `say` | `{ text, who }`; `who` is the `Character` table (`name`, `color`, ...) plus `id` |
-| `menu` | `items` (`{ index, text }`, hidden choices left out), `caption` (a line or nil) |
+| `say` | `{ text, who, seen }`; `who` is the `Character` table (`name`, `color`, ...) plus `id`; `seen` whether the player saw this line before |
+| `menu` | `items` (`{ index, text, chosen }`, hidden choices left out; `chosen` if the player picked it before), `caption` (a line or nil) |
 | `pause` | seconds, or nil to wait for `next()` |
 | `stage` | `{ kind = "scene" \| "show" \| "hide" \| "with", image, at, tag, with }` |
 | `end` | |
@@ -186,14 +210,20 @@ like:
   tables); `load(data)` restores it (`data` is nil for state a save does not have).
 - `kulisa.save.setup({ id, version })`: the game's storage id (letters, digits, `_`, `-`)
   and save data version.
-- `kulisa.save.write(slot, { title?, data? })`: saves the story, registered state and
-  optional extra `data`. The title defaults to the current line.
+- `kulisa.save.write(slot, { title?, data?, thumbnail? })`: saves the story, registered state
+  and optional extra `data`. The title defaults to the current line. `thumbnail` is an image
+  from `screen:capture`.
 - `kulisa.save.load(slot)` → the save's `data`; restores the story (`restore` follows).
-- `kulisa.save.list()` → `{ slot, title, timestamp, playtime, version }` per save;
+- `kulisa.save.list()` → `{ slot, title, timestamp, playtime, version, thumbnail }` per save
+  (`thumbnail` is an image, or nil);
   `kulisa.save.exists(slot)`, `kulisa.save.delete(slot)`.
 - `kulisa.save.migrate(from, fn)`: upgrades saves from version `from` to `from + 1`. `fn`
   gets the save body (`{ story, data }`) and changes it in place or returns a new one.
   Saves from a newer version are refused.
+
+- `kulisa.persist.read(name)`, `kulisa.persist.write(name, data)`: plain data that is not
+  part of any save and does not roll back (settings, unlocks, endings seen). Needs
+  `kulisa.save.setup`.
 
 Saves live in the platform's app data folder (`%APPDATA%\<id>\saves` on Windows,
 `localStorage` on the web, internal storage on Android).

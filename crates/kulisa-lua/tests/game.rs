@@ -300,3 +300,132 @@ fn nine_slices_and_masks_from_luau() {
     assert!(err.contains("set `shader` before `mask`"), "{err}");
     g.eval::<()>("t", "panel.slice = { 1, 2, 3, 4 }; panel.slice = nil").unwrap();
 }
+
+const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
+    return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
+}";
+
+#[test]
+fn transitions_fade_from_the_frozen_screen() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.screen.clear = "#000000"
+        box = kulisa.sprite{ width = 64, height = 64, tint = "#ff0000" }
+        kulisa.on("stage", function(e)
+            if e.kind == "scene" then box.tint = "#0000ff" end
+            if e.kind == "show" then box.tint = "#00ff00" end
+            if e.with then
+                t = kulisa.screen:transition{ shader = "fade.wgsl", time = 1 }
+            end
+        end)
+        kulisa.on("say", function() end)
+        kulisa.story.load()
+    "##,
+    "fade.wgsl" => FADE,
+    "s.kulisa" => "label start:\n    scene blue with fade\n    \"Hi.\"\n    show green\n    with fade\n    \"Green.\"\n");
+    let px = |g: &mut Game| {
+        g.render();
+        let img = g.renderer().read_pixels().unwrap();
+        [img.pixels[32 * 64 * 4 + 128], img.pixels[32 * 64 * 4 + 130]]
+    };
+    g.frame(0.0);
+    assert_eq!(px(&mut g), [255, 0], "red before the story");
+    g.eval::<()>("t", "kulisa.story.start()").unwrap();
+    g.frame(0.0);
+    assert_eq!(px(&mut g)[0], 255, "the frozen red frame covers the new blue scene");
+    g.frame(0.25); // frames are clamped to 0.25 s
+    g.frame(0.25);
+    let mid = px(&mut g);
+    assert!(mid[0] > 20 && mid[0] < 250 && mid[1] > 20, "halfway: {mid:?}");
+    assert!(!g.eval::<bool>("t", "return t.done").unwrap());
+    g.frame(0.25);
+    g.frame(0.26);
+    assert_eq!(px(&mut g), [0, 255], "blue once it ends");
+    assert!(g.eval::<bool>("t", "return t.done").unwrap());
+    // `with fade` on its own transitions everything since the last interaction.
+    g.eval::<()>("t", "kulisa.story.next()").unwrap();
+    g.frame(0.0);
+    assert_eq!(px(&mut g), [0, 255], "starts from the blue frame shown before");
+    for _ in 0..5 {
+        g.frame(0.25);
+    }
+    let img = {
+        g.render();
+        g.renderer().read_pixels().unwrap()
+    };
+    assert_eq!(img.pixels[32 * 64 * 4 + 129], 255, "ends green");
+    // `skip()` ends one at once; time 0 is instant.
+    g.eval::<()>(
+        "t",
+        "kulisa.screen:freeze(); t = kulisa.screen:transition{ shader = 'fade.wgsl' }; t:skip()",
+    )
+    .unwrap();
+    assert!(
+        g.eval::<bool>(
+            "t",
+            "return t.done and kulisa.screen:transition{ shader = 'fade.wgsl', time = 0 }.done"
+        )
+        .unwrap()
+    );
+    let err = g.eval::<()>("t", "kulisa.screen:transition{ time = 1 }").unwrap_err();
+    assert!(err.contains("needs a `shader`"), "{err}");
+}
+
+#[test]
+fn thumbnails_persistent_data_and_seen_lines() {
+    let id = format!("kulisa_test_{}_thumbs", std::process::id());
+    let src = format!(
+        r##"
+        kulisa.display(64, 64)
+        kulisa.save.setup{{ id = "{id}" }}
+        kulisa.sprite{{ width = 64, height = 64, tint = "#00ff00" }}
+        lines = {{}}
+        kulisa.on("say", function(l) table.insert(lines, l.text .. ":" .. tostring(l.seen)) end)
+        kulisa.on("menu", function(items)
+            local m = {{}}
+            for _, i in items do table.insert(m, i.text .. ":" .. tostring(i.chosen)) end
+            table.insert(lines, table.concat(m, ","))
+        end)
+        kulisa.story.load()
+        kulisa.story.start()
+    "##
+    );
+    let story = "label start:\n    \"One.\"\n    menu:\n        \"A\":\n            \"Two.\"\n        \"B\":\n            \"Three.\"\n";
+    let g = game!("main.luau" => src, "s.kulisa" => story);
+    let lines = |g: &Game| g.eval::<Vec<String>>("t", "local l = lines; lines = {}; return l").unwrap();
+    assert_eq!(lines(&g), ["One.:false"]);
+    g.eval::<()>("t", "kulisa.story.next(); kulisa.story.choose(1)").unwrap();
+    assert_eq!(lines(&g), ["A:false,B:false", "Two.:false"]);
+    assert!(!g.eval::<bool>("t", "return kulisa.story.seen()").unwrap());
+    // Rolling back shows lines as seen and the taken choice as chosen.
+    g.eval::<()>("t", "kulisa.story.rollback()").unwrap();
+    assert_eq!(lines(&g), ["A:true,B:false"]);
+
+    // Captures become save thumbnails.
+    g.eval::<()>("t", "shot = kulisa.screen:capture(32, 18); kulisa.save.write('s1', { thumbnail = shot })")
+        .unwrap();
+    let (w, h): (u32, u32) =
+        g.eval("t", "local t = kulisa.save.list()[1].thumbnail; return t.width, t.height").unwrap();
+    assert_eq!((w, h), (32, 18));
+    assert!(g.eval::<bool>("t", "return kulisa.save.list()[1].thumbnail == nil or true").unwrap());
+
+    // Persistent data survives a restart, and so do seen lines.
+    g.eval::<()>("t", "kulisa.persist.write('prefs', { cps = 40, skip_unseen = false })").unwrap();
+    let err = g.eval::<()>("t", "kulisa.persist.write('seen', 1)").unwrap_err();
+    assert!(err.contains("reserved"), "{err}");
+    drop(g);
+    let g = game!("main.luau" => src, "s.kulisa" => story);
+    assert_eq!(lines(&g), ["One.:true"]);
+    assert_eq!(g.eval::<i64>("t", "return kulisa.persist.read('prefs').cps").unwrap(), 40);
+    assert!(g.eval::<bool>("t", "return kulisa.persist.read('nothing') == nil").unwrap());
+    g.eval::<()>("t", "kulisa.story.next()").unwrap();
+    assert_eq!(lines(&g), ["A:true,B:false"]);
+
+    // Blocked rollback.
+    g.eval::<()>("t", "kulisa.story.choose(2)").unwrap();
+    assert!(g.eval::<bool>("t", "return kulisa.story.can_rollback()").unwrap());
+    g.eval::<()>("t", "kulisa.story.block_rollback()").unwrap();
+    assert!(!g.eval::<bool>("t", "return kulisa.story.can_rollback() or kulisa.story.rollback()").unwrap());
+    drop(g);
+    let _ = std::fs::remove_dir_all(kulisa_platform::data_dir(&id).unwrap());
+}

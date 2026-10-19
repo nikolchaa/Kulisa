@@ -16,7 +16,11 @@ use mlua::{
     Variadic,
 };
 
-use super::{ImageInfo, Shared, State, TextNode, Waiting, report, story_advance, story_restored, with_story};
+use super::media::{self, TransitionSpec};
+use super::{
+    ImageInfo, Shared, State, TextNode, Waiting, choice_key, report, story_advance, story_restored,
+    with_story,
+};
 use crate::story::{from_value, to_value};
 
 /// Event names `kulisa.on` accepts.
@@ -185,6 +189,9 @@ pub(crate) struct ShaderRef(pub kulisa_core::ShaderId);
 #[derive(Clone, Copy)]
 pub(crate) struct TweenRef(pub u64);
 
+#[derive(Clone, Copy)]
+pub(crate) struct TransitionRef(pub u64);
+
 struct CameraRef;
 struct ScreenRef;
 
@@ -205,6 +212,53 @@ impl UserData for ShaderRef {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
         m.add_meta_method(MetaMethod::ToString, |_, this, ()| Ok(format!("shader {}", this.0.0)));
     }
+}
+
+impl UserData for TransitionRef {
+    fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+        m.add_meta_method(MetaMethod::Index, |lua, this, key: String| match key.as_str() {
+            "done" => with(lua, |st| Ok(st.media.transition.as_ref().is_none_or(|t| t.id != this.0))),
+            _ => Err(mlua::Error::runtime(format!("transitions have no property `{key}`"))),
+        });
+        m.add_method("skip", |lua, this, ()| {
+            with(lua, |st| {
+                if st.media.transition.as_ref().is_some_and(|t| t.id == this.0) {
+                    media::finish_transition(st);
+                }
+                Ok(())
+            })
+        });
+    }
+}
+
+/// `kulisa.screen.transition{ shader, time, ease, mask, params }`.
+fn transition_spec(st: &mut State, o: &Table) -> mlua::Result<TransitionSpec> {
+    let shader = match o.get::<LuaValue>("shader")? {
+        LuaValue::UserData(ud) => ud.borrow::<ShaderRef>()?.0,
+        LuaValue::String(s) => rt(load_shader(st, &s.to_string_lossy()))?,
+        _ => return Err(mlua::Error::runtime("a transition needs a `shader` (a shader or a path)")),
+    };
+    let time = o.get::<Option<f32>>("time")?.unwrap_or(0.5).max(0.0);
+    let ease = match o.get::<Option<String>>("ease")? {
+        Some(name) => {
+            Ease::from_name(&name).ok_or_else(|| mlua::Error::runtime(format!("unknown ease `{name}`")))?
+        }
+        None => Ease::Linear,
+    };
+    let mask = match o.get::<LuaValue>("mask")? {
+        LuaValue::Nil => None,
+        v => Some(image_arg(st, &v)?.id),
+    };
+    let mut p = [0.0; 16];
+    if let LuaValue::Table(t) = o.get::<LuaValue>("params")? {
+        if t.raw_len() > 15 {
+            return Err(mlua::Error::runtime("transition `params` holds at most 15 numbers"));
+        }
+        for (i, slot) in p.iter_mut().enumerate().skip(1).take(t.raw_len()) {
+            *slot = number(&t.raw_get(i)?, "params")?;
+        }
+    }
+    Ok(TransitionSpec { shader, time, ease, mask, params: p })
 }
 
 impl UserData for TweenRef {
@@ -773,6 +827,19 @@ impl UserData for ScreenRef {
                 Ok(())
             })
         });
+        // Captures the screen for the next transition.
+        m.add_method("freeze", |lua, _, ()| with(lua, |st| rt(media::freeze(st, false)).map(|_| ())));
+        m.add_method("transition", |lua, _, opts: Table| {
+            with(lua, |st| {
+                let spec = transition_spec(st, &opts)?;
+                rt(media::start_transition(st, spec)).map(TransitionRef)
+            })
+        });
+        // capture(width, height, image?): the screen as an image (thumbnails); reuses `image`.
+        m.add_method("capture", |lua, _, (w, h, reuse): (u32, u32, Option<AnyUserData>)| {
+            let reuse = reuse.map(|u| u.borrow::<ImageRef>().map(|i| i.0)).transpose()?;
+            with(lua, |st| rt(media::capture(st, w, h, reuse)).map(ImageRef))
+        });
         // The design-space rectangle the window shows: x, y, width, height.
         m.add_method("visible", |lua, _, ()| {
             with(lua, |st| {
@@ -997,10 +1064,31 @@ fn story_api(lua: &Lua) -> mlua::Result<Table> {
         "choose",
         lua.create_function(|lua, index: usize| {
             let sh = shared(lua);
-            rt(with_story(&sh, true, |s| {
-                s.vm.choose(&mut s.host, index.wrapping_sub(1)).map_err(|e| e.to_string())
+            let key = rt(with_story(&sh, true, |s| {
+                let key = s.vm.line_key();
+                s.vm.choose(&mut s.host, index.wrapping_sub(1)).map_err(|e| e.to_string())?;
+                Ok(key)
             }))?;
+            if let Some(k) = key {
+                let mut st = sh.borrow_mut();
+                st.seen_dirty |= st.seen.insert(choice_key(k, index.wrapping_sub(1)));
+            }
             rt(story_advance(lua, &sh))
+        })?,
+    )?;
+    // Whether the current line had been seen before (in any session).
+    s.set("seen", lua.create_function(|lua, ()| with(lua, |st| Ok(st.line_seen)))?)?;
+    s.set(
+        "can_rollback",
+        lua.create_function(|lua, ()| rt(with_story(&shared(lua), true, |s| Ok(s.vm.can_rollback()))))?,
+    )?;
+    s.set(
+        "block_rollback",
+        lua.create_function(|lua, ()| {
+            rt(with_story(&shared(lua), true, |s| {
+                s.vm.block_rollback();
+                Ok(())
+            }))
         })?,
     )?;
     s.set(
@@ -1089,10 +1177,13 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
             let id: String = opts.get("id")?;
             let version = opts.get::<Option<u32>>("version")?.unwrap_or(1);
             let storage = rt(Storage::new(&id, "saves"))?;
+            let persist = rt(Storage::new(&id, "persistent"))?;
             with(lua, |st| {
                 st.game_id = id;
                 st.storage = Some(storage);
+                st.persist = Some(persist);
                 st.save_version = version;
+                st.load_seen();
                 Ok(())
             })
         })?,
@@ -1112,9 +1203,15 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
         "write",
         lua.create_function(|lua, (slot, opts): (String, Option<Table>)| {
             let sh = shared(lua);
-            let (title, data) = match &opts {
-                Some(o) => (o.get::<Option<String>>("title")?, o.get::<LuaValue>("data")?),
-                None => (None, LuaValue::Nil),
+            let (title, data, thumb) = match &opts {
+                Some(o) => (
+                    o.get::<Option<String>>("title")?,
+                    o.get::<LuaValue>("data")?,
+                    o.get::<Option<AnyUserData>>("thumbnail")?
+                        .map(|u| u.borrow::<ImageRef>().map(|i| i.0.id))
+                        .transpose()?,
+                ),
+                None => (None, LuaValue::Nil, None),
             };
             let data = rt(to_value(&data, "data", true, 0))?;
             let (story, last_line) = rt(with_story(&sh, false, |s| {
@@ -1122,6 +1219,17 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
                 Ok((body, s.last_line.clone()))
             }))?;
             with(lua, |st| {
+                storage(st)?;
+                // Native platforms wait for the pixels; the web writes now and adds the
+                // thumbnail when they arrive.
+                let pixels = match thumb {
+                    Some(id) => rt(media::capture_pixels(st, id, true))?,
+                    None => None,
+                };
+                let thumbnail = pixels.map(|p| rt(p.encode_png())).transpose()?;
+                if let (Some(id), None) = (thumb, &thumbnail) {
+                    st.media.pending_saves.push((slot.clone(), id));
+                }
                 let header = SaveHeader {
                     game_id: st.game_id.clone(),
                     game_version: String::new(),
@@ -1130,7 +1238,7 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
                     slot: slot.clone(),
                     playtime: st.playtime,
                     title: title.unwrap_or_else(|| last_line.chars().take(80).collect()),
-                    thumbnail: None,
+                    thumbnail,
                 };
                 let body = Value::map().with("story", story).with("data", data);
                 rt(storage(st)?.write(&slot, &SaveFile { header, body }.to_bytes()))
@@ -1188,6 +1296,11 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
             let list = lua.create_table()?;
             for h in headers {
                 let t = lua.create_table()?;
+                if let Some(png) = &h.thumbnail
+                    && let Some(img) = with(lua, |st| Ok(media::thumbnail(st, &h.slot, h.timestamp, png)))?
+                {
+                    t.set("thumbnail", ImageRef(img))?;
+                }
                 t.set("slot", h.slot)?;
                 t.set("title", h.title)?;
                 t.set("timestamp", h.timestamp)?;
@@ -1204,7 +1317,83 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
     )?;
     t.set(
         "delete",
-        lua.create_function(|lua, slot: String| with(lua, |st| rt(storage(st)?.delete(&slot))))?,
+        lua.create_function(|lua, slot: String| {
+            with(lua, |st| {
+                media::forget_thumbnail(st, &slot);
+                rt(storage(st)?.delete(&slot))
+            })
+        })?,
+    )?;
+    Ok(t)
+}
+
+/// Rewrites saves whose thumbnail pixels arrived after they were written (web).
+pub(crate) fn finish_pending_saves(shared: &Shared) {
+    let mut st = shared.borrow_mut();
+    let st = &mut *st;
+    if st.media.pending_saves.is_empty() {
+        return;
+    }
+    let pending = std::mem::take(&mut st.media.pending_saves);
+    for (slot, id) in pending {
+        let pixels = match media::capture_pixels(st, id, false) {
+            Ok(Some(p)) => p,
+            Ok(None) => {
+                st.media.pending_saves.push((slot, id));
+                continue;
+            }
+            Err(e) => {
+                log::warn!("thumbnail for `{slot}`: {e}");
+                continue;
+            }
+        };
+        let Some(storage) = &st.storage else { continue };
+        let result = (|| {
+            let bytes = storage.read(&slot)?.ok_or("the save is gone")?;
+            let mut save = SaveFile::from_bytes(&bytes)?;
+            save.header.thumbnail = Some(pixels.encode_png()?);
+            storage.write(&slot, &save.to_bytes())
+        })();
+        if let Err(e) = result {
+            log::warn!("thumbnail for `{slot}`: {e}");
+        }
+    }
+}
+
+/// `kulisa.persist`: plain data that outlives saves and rollback (settings, unlocks).
+fn persist_api(lua: &Lua) -> mlua::Result<Table> {
+    let t = lua.create_table()?;
+    t.set(
+        "read",
+        lua.create_function(|lua, name: String| {
+            let v = with(lua, |st| {
+                let p = st
+                    .persist
+                    .as_ref()
+                    .ok_or_else(|| mlua::Error::runtime("call kulisa.save.setup first"))?;
+                match rt(p.read(&name))? {
+                    Some(bytes) => rt(Value::decode(&mut bytes.as_slice())),
+                    None => Ok(Value::Nil),
+                }
+            })?;
+            from_value(lua, &v)
+        })?,
+    )?;
+    t.set(
+        "write",
+        lua.create_function(|lua, (name, data): (String, LuaValue)| {
+            if name == "seen" {
+                return Err(mlua::Error::runtime("`seen` is reserved for the engine"));
+            }
+            let v = rt(to_value(&data, &name, true, 0))?;
+            with(lua, |st| {
+                let p = st
+                    .persist
+                    .as_ref()
+                    .ok_or_else(|| mlua::Error::runtime("call kulisa.save.setup first"))?;
+                rt(p.write(&name, &v.to_bytes()))
+            })
+        })?,
     )?;
     Ok(t)
 }
@@ -1410,5 +1599,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     k.set("story", story_api(lua)?)?;
     k.set("state", state_api(lua)?)?;
     k.set("save", save_api(lua)?)?;
+    k.set("persist", persist_api(lua)?)?;
     lua.globals().set("kulisa", k)
 }

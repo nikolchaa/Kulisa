@@ -5,6 +5,7 @@
 //! lines) can always call back into the API.
 
 mod api;
+mod media;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -90,9 +91,48 @@ pub(crate) struct State {
     pub migrations: Vec<(u32, Function)>,
     pub playtime: f64,
     pub reporting: bool,
+    pub media: media::Media,
+    /// Persistent data (outside saves and rollback); set up with the save storage.
+    pub persist: Option<Storage>,
+    /// Lines and menu choices the player has seen, across sessions ([`Vm::line_key`]).
+    pub seen: HashSet<u64>,
+    pub seen_dirty: bool,
+    pub seen_flushed: f64,
+    /// Whether the current line had been seen before it was shown.
+    pub line_seen: bool,
+}
+
+/// The seen-set key of choice `index` at the menu `line`.
+pub(crate) fn choice_key(line: u64, index: usize) -> u64 {
+    line ^ (index as u64 + 1).wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }
 
 impl State {
+    /// Writes the seen set to persistent storage.
+    pub fn flush_seen(&mut self) {
+        self.seen_flushed = self.time;
+        let Some(p) = &self.persist else { return };
+        if !self.seen_dirty {
+            return;
+        }
+        let mut keys: Vec<u64> = self.seen.iter().copied().collect();
+        keys.sort_unstable();
+        let bytes: Vec<u8> = keys.iter().flat_map(|k| k.to_le_bytes()).collect();
+        match p.write("seen", &bytes) {
+            Ok(()) => self.seen_dirty = false,
+            Err(e) => log::warn!("saving seen lines: {e}"),
+        }
+    }
+
+    /// Loads the seen set (after `kulisa.save.setup`).
+    pub fn load_seen(&mut self) {
+        self.seen.clear();
+        let Some(p) = &self.persist else { return };
+        if let Ok(Some(b)) = p.read("seen") {
+            self.seen.extend(b.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())));
+        }
+    }
+
     pub fn next_id(&mut self) -> u64 {
         self.next_id += 1;
         self.next_id
@@ -175,9 +215,10 @@ fn table(lua: &Lua, v: &kulisa_core::Value) -> mlua::Result<Table> {
     }
 }
 
-fn line_table(lua: &Lua, line: &kulisa_story::Line) -> mlua::Result<Table> {
+fn line_table(lua: &Lua, line: &kulisa_story::Line, seen: bool) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set("text", line.text.as_str())?;
+    t.set("seen", seen)?;
     if let Some(who) = &line.who {
         let w = table(lua, &who.data)?;
         w.set("id", who.id.as_str())?;
@@ -205,11 +246,12 @@ pub(crate) fn with_story<R>(
 
 /// Runs the story to its next blocking event and passes every event to the handlers.
 pub(crate) fn story_advance(lua: &Lua, shared: &Shared) -> Result<(), String> {
-    let events = with_story(shared, true, |s| {
+    let (events, key) = with_story(shared, true, |s| {
         s.timer = None;
         let mut events = Vec::new();
         loop {
             let ev = s.vm.next(&mut s.host).map_err(|e| e.to_string())?;
+            let key = if ev.blocks() { s.vm.line_key() } else { None };
             let blocks = ev.blocks();
             match &ev {
                 Event::Say(l) => {
@@ -226,11 +268,58 @@ pub(crate) fn story_advance(lua: &Lua, shared: &Shared) -> Result<(), String> {
             }
             events.push(ev);
             if blocks {
-                return Ok(events);
+                return Ok((events, key));
             }
         }
     })?;
-    dispatch(lua, shared, events).map_err(|e| e.to_string())
+    // Seen flags are as of before this display; then the line counts as seen.
+    let seen = {
+        let mut st = shared.borrow_mut();
+        let seen = Seen {
+            line: key.is_some_and(|k| st.seen.contains(&k)),
+            choices: key
+                .map(|k| (0..64).map(|i| st.seen.contains(&choice_key(k, i))).collect())
+                .unwrap_or_default(),
+        };
+        if let Some(k) = key
+            && matches!(events.last(), Some(Event::Say(_) | Event::Menu { .. }))
+        {
+            st.line_seen = seen.line;
+            st.seen_dirty |= st.seen.insert(k);
+        }
+        seen
+    };
+    dispatch(lua, shared, events, &seen).map_err(|e| e.to_string())
+}
+
+/// What the player saw before, for the blocking event that ends a batch.
+struct Seen {
+    line: bool,
+    /// Per menu choice index (the first 64).
+    choices: Vec<bool>,
+}
+
+fn own_with(e: &Event) -> bool {
+    matches!(
+        e,
+        Event::Scene { with: Some(_), .. }
+            | Event::Show { with: Some(_), .. }
+            | Event::Hide { with: Some(_), .. }
+    )
+}
+
+/// Whether a `with` statement follows before the next statement with its own `with`.
+fn with_follows(rest: &[Event]) -> bool {
+    rest.iter().take_while(|e| !own_with(e)).any(|e| matches!(e, Event::With(_)))
+}
+
+/// Freezes the screen for transitions, as in Ren'Py: `x with t` transitions just that
+/// statement's change, and `with t` everything since the last interaction or transition.
+fn story_freeze(shared: &Shared, hide_transition: bool) {
+    let result = media::freeze(&mut shared.borrow_mut(), hide_transition);
+    if let Err(e) = result {
+        log::warn!("freezing the screen: {e}");
+    }
 }
 
 fn stage_event(lua: &Lua, kind: &str, fields: &[(&str, LuaValue)]) -> mlua::Result<Table> {
@@ -242,18 +331,27 @@ fn stage_event(lua: &Lua, kind: &str, fields: &[(&str, LuaValue)]) -> mlua::Resu
     Ok(t)
 }
 
-fn dispatch(lua: &Lua, shared: &Shared, events: Vec<Event>) -> mlua::Result<()> {
+fn dispatch(lua: &Lua, shared: &Shared, events: Vec<Event>, seen: &Seen) -> mlua::Result<()> {
     use mlua::IntoLua;
-    for ev in events {
+    if with_follows(&events) {
+        story_freeze(shared, false);
+    }
+    for i in 0..events.len() {
+        let ev = events[i].clone();
+        let transition = own_with(&ev) || matches!(ev, Event::With(_));
+        if own_with(&ev) {
+            story_freeze(shared, false);
+        }
         match ev {
-            Event::Say(line) => emit(shared, "say", line_table(lua, &line)?),
+            Event::Say(line) => emit(shared, "say", line_table(lua, &line, seen.line)?),
             Event::Menu { caption, items } => {
-                let caption = caption.map(|c| line_table(lua, &c)).transpose()?;
+                let caption = caption.map(|c| line_table(lua, &c, seen.line)).transpose()?;
                 let list = lua.create_table()?;
                 for item in items {
                     let t = lua.create_table()?;
                     t.set("index", item.index + 1)?;
                     t.set("text", item.text)?;
+                    t.set("chosen", seen.choices.get(item.index).copied().unwrap_or(false))?;
                     list.push(t)?;
                 }
                 emit(shared, "menu", (list, caption));
@@ -294,7 +392,12 @@ fn dispatch(lua: &Lua, shared: &Shared, events: Vec<Event>) -> mlua::Result<()> 
                 }
             }
         }
+        if transition && with_follows(&events[i + 1..]) {
+            story_freeze(shared, true);
+        }
     }
+    // A freeze nobody used must not leak into a later transition.
+    shared.borrow_mut().media.frozen = None;
     Ok(())
 }
 
@@ -362,6 +465,12 @@ impl Game {
             migrations: Vec::new(),
             playtime: 0.0,
             reporting: false,
+            media: Default::default(),
+            persist: None,
+            seen: HashSet::new(),
+            seen_dirty: false,
+            seen_flushed: 0.0,
+            line_seen: false,
         };
         let shared = Rc::new(RefCell::new(state));
         let lua = Lua::new();
@@ -414,7 +523,12 @@ impl Game {
             st.playtime += dt as f64;
             let scene = &mut st.scene;
             st.tweens.retain_mut(|(_, t)| !t.step(scene, dt));
+            media::step(st, dt);
+            if st.seen_dirty && st.time - st.seen_flushed > 5.0 {
+                st.flush_seen();
+            }
         }
+        api::finish_pending_saves(&self.state);
         if let Err(e) = self.kulisa().and_then(|k| k.get::<Function>("_tick")).and_then(|f| f.call::<()>(dt))
         {
             report(&self.state, &e.to_string());
@@ -478,7 +592,9 @@ impl Game {
     }
 
     pub fn suspend(&mut self) {
-        self.state.borrow_mut().renderer.suspend();
+        let mut st = self.state.borrow_mut();
+        st.flush_seen();
+        st.renderer.suspend();
     }
 
     pub fn resume(&mut self, target: impl SurfaceTarget, width: u32, height: u32) -> Result<(), String> {
@@ -561,6 +677,7 @@ impl Drop for Game {
     fn drop(&mut self) {
         // The story host and handlers hold Luau references; release them before the VM.
         if let Ok(mut st) = self.state.try_borrow_mut() {
+            st.flush_seen();
             st.story = None;
             st.handlers.clear();
             st.migrations.clear();

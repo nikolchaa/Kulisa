@@ -535,6 +535,34 @@ impl Vm {
         !self.redo.is_empty()
     }
 
+    /// Whether [`Vm::rollback`] would move.
+    pub fn can_rollback(&self) -> bool {
+        self.history.len() >= 2 && matches!(self.state, State::Waiting | State::Choosing | State::Restored)
+    }
+
+    /// Forgets the history, so the player cannot roll back past this point (e.g. after a
+    /// minigame result). The current line stays.
+    pub fn block_rollback(&mut self) {
+        let keep = matches!(self.state, State::Waiting | State::Choosing | State::Restored);
+        let last = if keep { self.history.pop_back() } else { None };
+        self.history.clear();
+        self.history.extend(last);
+        self.redo.clear();
+    }
+
+    /// Identifies the line or menu the story is at, the same way across sessions and script
+    /// edits that keep its text (label plus the statement hash). For "seen" tracking.
+    pub fn line_key(&self) -> Option<u64> {
+        let f = self.frames.last()?;
+        let code = self.program.labels.get(&f.label)?;
+        let stmt = *code.op_stmt.get(f.pc as usize)?;
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in f.label.bytes().chain(code.stmts.get(stmt as usize)?.hash.to_le_bytes()) {
+            h = (h ^ b as u64).wrapping_mul(0x0100_0000_01b3);
+        }
+        Some(h)
+    }
+
     /// The current position, stage and variables as plain data. Only valid while waiting
     /// for the player (where saves happen).
     pub fn save(&self) -> Result<Value, RuntimeError> {
@@ -833,6 +861,40 @@ label leave:
         assert_eq!(next_line(&mut vm, &mut h), "One.");
         assert_eq!(next_line(&mut vm, &mut h), "Two, trust 1.");
         assert!(vm.can_roll_forward(), "still on the recorded path");
+    }
+
+    #[test]
+    fn line_keys_and_blocked_rollback() {
+        let (mut vm, mut h) = vm(STORY);
+        assert_eq!(next_line(&mut vm, &mut h), "One.");
+        let one = vm.line_key().unwrap();
+        assert!(!vm.can_rollback());
+        assert_eq!(next_line(&mut vm, &mut h), "Two, trust 1.");
+        assert_ne!(vm.line_key(), Some(one));
+        assert!(vm.can_rollback());
+        vm.rollback(&mut h).unwrap();
+        assert_eq!(vm.line_key(), Some(one), "the same line has the same key");
+        assert_eq!(next_line(&mut vm, &mut h), "One.");
+        assert_eq!(next_line(&mut vm, &mut h), "Two, trust 1.");
+        assert_eq!(next_line(&mut vm, &mut h), "menu:Kind|Leave");
+        vm.block_rollback();
+        assert!(!vm.can_rollback() && !vm.rollback(&mut h).unwrap());
+        vm.choose(&mut h, 0).unwrap();
+        assert_eq!(next_line(&mut vm, &mut h), "Warm.");
+        assert!(vm.rollback(&mut h).unwrap(), "back to the menu, but no further");
+        assert!(!vm.can_rollback());
+        // Keys survive recompiling an edited script.
+        let edited = STORY.replace(
+            "    scene cafe
+",
+            "    scene cafe
+    \"New line.\"
+",
+        );
+        let (mut vm2, mut h2) = super::tests::vm(&edited);
+        assert_eq!(next_line(&mut vm2, &mut h2), "New line.");
+        assert_eq!(next_line(&mut vm2, &mut h2), "One.");
+        assert_eq!(vm2.line_key(), Some(one));
     }
 
     #[test]
