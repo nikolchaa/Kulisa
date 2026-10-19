@@ -95,6 +95,52 @@ center, so with an untouched camera a node at `(x, y)` appears at design `(x, y)
 Anchoring UI to the *screen* edges and safe areas (notches, home indicator) is
 the UI system's job (M5); in M1 a HUD layer is anchored to the design area.
 
+### Display profiles, aspect and orientation (planned)
+
+Goal: one design and one layout per game by default, with opt-in support for
+games that want different layouts per device class.
+
+- **Aspect clamp** (M5). `Viewport` gains `aspect = { min, max }` (e.g. 4:3 to
+  21:9). The window is first clamped to that range (bars beyond it), then the
+  scale mode applies inside. `Fit` is the special case min = max = design aspect.
+  This keeps 21:9 and 32:9 monitors from revealing areas the art never painted.
+- **Anchors** (M5). UI elements anchor either to the screen/safe area (quick
+  menu, HUD) or to the design area (the textbox, so lines stay readable on
+  ultrawide).
+- **Orientation** (M5): `landscape | portrait | auto | any`. `auto` (default)
+  follows the design aspect. Mobile locks to it (Android manifest
+  `sensorLandscape`/`sensorPortrait`, iOS `UISupportedInterfaceOrientations`);
+  desktop uses it for the default window shape; the web cannot lock, so the
+  engine reports a mismatch and the template shows a "rotate your device"
+  overlay. `any` lets the device rotate and reports changes to scripts.
+- **Profiles by form factor** (M5): `desktop`, `tablet`, `phone`, each optionally
+  overriding design resolution, scale mode, aspect clamp and orientation on top of
+  a base. Form factor comes from the OS and screen size (smallest side under
+  600 logical px with touch = phone); on the web it is decided at runtime.
+  Because a static Android manifest holds one orientation, the manifest carries
+  the base and the runtime corrects it at startup when a profile differs
+  (`setRequestedOrientation` via JNI on Android, `set_valid_orientations` on iOS).
+- **Portable saves** (M3). Saved scene state stores named positions (`at left`)
+  and anchors, resolved against the active profile on load, never raw
+  design-unit pixels. A save made on desktop (landscape) loads on a phone
+  (portrait).
+- **Config** (M9). A `[display]` section in the game config, read by
+  `kulisa build` to write manifests and plists:
+
+  ```toml
+  [display]
+  design = [1920, 1080]
+  scale = "expand"
+  orientation = "auto"
+  aspect = { min = "4:3", max = "21:9" }
+
+  [display.phone]          # optional
+  design = [1080, 1920]
+  orientation = "portrait"
+  ```
+- **Demo** (M8). `demos/parallax` shows the same game as portrait on a phone,
+  landscape on desktop, and 16:9 vs 21:9 (bleed, clamp, anchors).
+
 ## 4. Render pipeline
 
 Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame`
@@ -442,4 +488,5 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | M1: the window always shows sRGB-correct output; GLES surfaces without sRGB views get a final encode pass instead of pushing that into every shader. |
 | 2026-10-19 | M2: glyphs go into the sprite atlas (RGBA) instead of a separate R8 glyph atlas: text batches with sprites and there is one texture path. Costs 4x memory per glyph; revisit if CJK-heavy games hit atlas limits. |
 | 2026-10-19 | M2: audio channels are kira sub-tracks; music streams on native but decodes up front on web (no threads). Web audio starts on first user gesture. |
+| 2026-10-19 | Display profiles: one design by default; opt-in `phone`/`tablet`/`desktop` overrides, aspect clamp, orientation lock. Placed in M3 (portable saves), M5 (clamp, anchors, profiles, orientation), M8 (demo), M9 (config). |
 | 2026-10-19 | iOS `.app` assembled by `cargo xtask ios-app` (plist + ad-hoc `codesign`) instead of an Xcode project; iOS logs go to `os_log` (`oslog` crate) since apps have no visible stderr. |
