@@ -1,0 +1,26 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+
+# Local assistant config (never commit)
+CLAUDE.md
+.claude/
+
+# Platform build outputs
+/dist/
+/web/pkg/
+*.apk
+*.aab
+*.ipa
+*.xcarchive
+DerivedData/
+xcuserdata/
+.gradle/
+local.properties
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+*.swp

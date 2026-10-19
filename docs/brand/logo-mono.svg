@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Kulisa">
+  <rect x="64" y="56" width="36" height="144" rx="4" fill="currentColor"/>
+  <polygon points="112,128 164,56 204,56 152,128" fill="currentColor"/>
+  <polygon points="112,128 152,128 204,200 164,200" fill="currentColor" fill-opacity="0.45"/>
+</svg>
