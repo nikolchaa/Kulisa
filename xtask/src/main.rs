@@ -138,6 +138,10 @@ const INDEX_HTML: &str = r#"<!doctype html>
 <body>
 <script type="module">
   import init from "./kulisa.js";
+  // ?webgl hides WebGPU to exercise the WebGL2 fallback.
+  if (new URLSearchParams(location.search).has("webgl")) {
+    Object.defineProperty(navigator, "gpu", { value: undefined });
+  }
   init().catch((e) => {
     const p = document.createElement("p");
     p.id = "error";

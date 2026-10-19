@@ -292,30 +292,44 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | Windows | `x86_64-pc-windows-msvc` | Vulkan (DX12 fallback) | `main` | local + CI |
 | Linux | `x86_64-unknown-linux-gnu` | Vulkan (GLES fallback) | `main` | CI (no WSL on dev host) |
 | macOS | `aarch64-apple-darwin` | Metal | `main`, `.app` later | CI |
-| Web | see §12 risk 1 | WebGPU, WebGL2 fallback | `cdylib` + JS loader + `index.html` | local + CI |
-| Android | `aarch64-linux-android` (+ `armv7`, `x86_64`) | Vulkan (GLES fallback) | `cdylib` with `android-activity` NativeActivity; APK built by `kulisa-cli` with `aapt2`/`zipalign`/`apksigner` (no Gradle) | local + CI |
+| Web | `wasm32-unknown-unknown` (see §12 risk 1) | WebGPU, WebGL2 fallback | `cdylib` + wasm-bindgen + `index.html` | local + CI |
+| Android | `aarch64-linux-android` (+ `x86_64`, `armv7`) | Vulkan (GLES fallback) | `cdylib` with `android-activity` NativeActivity; APK built with `aapt2`/`aapt`/`zipalign`/`apksigner` (no Gradle) | local + CI |
 | iOS | `aarch64-apple-ios` (+ sim) | Metal | `main` in a `.app` bundle | CI |
 
 - CI (GitHub Actions) builds all six on every push; it is the source of truth.
+- Engine-developer builds go through `cargo xtask` (`web`, `apk`), so CI and
+  local builds run the same steps. Game-creator builds (`kulisa build <target>`)
+  arrive with `kulisa-cli` in M9 and will reuse this logic.
 - Games ship scripts and assets inside the build (App Store safe). Release
   builds pack assets into a single archive (`.kpak`: index + blobs).
 - Mod loading is desktop only.
 
 ## 12. Risks
 
-1. **Luau on web.** Luau is C++. `mlua` only documents wasm support through
-   `wasm32-unknown-emscripten`, while `winit` and wgpu's WebGPU backend need
-   `wasm32-unknown-unknown` with `wasm-bindgen`. Options, investigated in M0:
-   1. Build Luau for `wasm32-unknown-unknown` with clang and a minimal libc
-      (wasi-libc headers, no WASI imports), using wasm exception handling or
-      `setjmp`/`longjmp` lowering for `lua_error`. Keeps one stack. Preferred.
-   2. Whole engine on Emscripten: Luau works, but no winit and no WebGPU in
-      wgpu (WebGL2 only). Needs our own web platform layer.
-   3. Two wasm modules (engine + Emscripten Luau) bridged through JS. A second
-      binding layer and shared-memory problems. Last resort.
-   Status and findings: see §13.
-2. **Luau on iOS.** Should be fine (no JIT needed, C++ via Xcode clang). Verified
-   in CI during M0.
+1. **Luau on web — resolved in M0.** Luau is C++, and `mlua` only documents
+   wasm through `wasm32-unknown-emscripten`, while `winit` and wgpu's WebGPU
+   backend need `wasm32-unknown-unknown`. Kulisa builds Luau for
+   `wasm32-unknown-unknown` directly, keeping one module and one stack:
+   - Luau's C++ is compiled by clang with `--target=wasm32-wasip1` against a
+     pinned wasi-sdk sysroot that ships libc++/libc++abi/libunwind built with
+     **wasm exception handling** (`-fwasm-exceptions`, exnref). Luau errors and
+     its compiler's `CompileError` are real C++ exceptions, so nothing is
+     patched in Luau. `cargo xtask web` downloads the sysroot and sets the flags.
+   - The handful of WASI calls wasi-libc makes (clock, environ, fd_write, exit)
+     are defined in Rust (`kulisa-lua/src/web.rs`), so the module has no WASI
+     imports and wasm-bindgen output loads in any browser.
+   - C++ static constructors run once via an explicit `__wasm_call_ctors`
+     call; referencing it also stops wasm-ld from re-running them on every
+     export, which otherwise loops forever in Luau's flag registration.
+   - `mlua` needed one small patch (a heap-dump helper uses libc stdio); it is
+     vendored in `third_party/mlua` until fixed upstream.
+   - **Cost:** browsers need wasm exception handling with exnref (Chrome/Edge
+     and Firefox current releases, Safari 18.4+). Older browsers get a clear
+     error page. Pinning exact minimum versions is an M9 task.
+     Verified: eval, runtime and syntax errors, `pcall`, coroutines in Node and
+     Chromium; full engine (Luau + WebGPU) in Chromium.
+2. **Luau on iOS.** No JIT needed; C++ is built by the Xcode toolchain. CI builds
+   device and simulator targets. Not yet run on a device or simulator.
 3. **Android text input.** NativeActivity has weak soft-keyboard/IME support.
    If M6 text input needs it, switch to GameActivity (requires a Gradle step).
 4. **WebGL2 fallback limits.** No compute, fewer texture formats, uniform
@@ -323,6 +337,11 @@ body:   self-describing tagged Value tree (current state + optional rollback log
    particles need a non-compute path.
 5. **Build size on web.** wgpu + cosmic-text + Luau. Track wasm size per
    milestone; use `opt-level = "z"`, LTO and `wasm-opt` for release.
+6. **Driver bugs.** Some Android Vulkan drivers crash on valid usage (the
+   emulator's gfxstream driver crashes in `vkQueueSubmit` and on debug object
+   names). The renderer keeps a small adapter denylist that falls through to the
+   next backend (GLES), and Android builds never set debug object names. GLES
+   surfaces may lack sRGB views; the shader then encodes sRGB itself.
 
 ## 13. Decision log
 
@@ -333,3 +352,7 @@ body:   self-describing tagged Value tree (current state + optional rollback log
 | 2026-10-19 | Own self-describing save encoding instead of bincode/postcard: those are not tolerant of unknown or missing fields. |
 | 2026-10-19 | Android packaging without Gradle (NativeActivity + SDK build-tools) to stay lean; revisit for IME. |
 | 2026-10-19 | `winit` 0.30 (stable) rather than the 0.31 beta. |
+| 2026-10-19 | Luau on web via `wasm32-unknown-unknown` + wasi-sdk 34 sysroot with wasm exceptions (risk 1). Requires exnref-capable browsers. |
+| 2026-10-19 | Vendor `mlua` 0.12.2 with a one-line wasm fix rather than switching scripting languages. |
+| 2026-10-19 | Static libc++ on Android (`c++_static` + `c++abi`) so APKs need no extra `.so`. |
+| 2026-10-19 | `cargo xtask` for engine-developer build steps (web, APK). |
