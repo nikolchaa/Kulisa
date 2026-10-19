@@ -1,7 +1,11 @@
 //! Platform services. This crate is a leaf: it must not depend on other engine crates.
 
+mod assets;
 mod storage;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use assets::build_pack;
+pub use assets::{Assets, Pack, normalize};
 pub use storage::Storage;
 #[cfg(not(target_arch = "wasm32"))]
 pub use storage::data_dir;
