@@ -16,8 +16,15 @@ pub struct Storage {
 
 /// Names become file names: keep them simple so a slot can never point outside its folder.
 fn check_name(name: &str) -> Result<(), String> {
+    let lower = name.to_ascii_lowercase();
+    // Device names Windows reserves regardless of folder.
+    let reserved = ["con", "prn", "aux", "nul"].contains(&lower.as_str())
+        || (lower.len() == 4
+            && (lower.starts_with("com") || lower.starts_with("lpt"))
+            && lower.as_bytes()[3].is_ascii_digit());
     let ok = !name.is_empty()
         && name.len() <= 64
+        && !reserved
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
     if ok {
         Ok(())
@@ -241,7 +248,7 @@ mod tests {
     #[test]
     fn refuses_unsafe_names() {
         let s = temp();
-        for bad in ["../evil", "a/b", "", "con.txt", &"x".repeat(65)] {
+        for bad in ["../evil", "a/b", "", "con.txt", "CON", "lpt1", &"x".repeat(65)] {
             assert!(s.write(bad, b"x").is_err(), "{bad}");
         }
         assert!(Storage::new("../x", "saves").is_err());
