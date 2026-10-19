@@ -1,0 +1,12 @@
+[package]
+name = "kulisa-core"
+description = "Scene graph, camera, viewport and frame extraction for the Kulisa engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+glam.workspace = true
