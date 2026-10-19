@@ -44,6 +44,8 @@ pub struct Renderer {
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    /// Format of the views we render into (always sRGB when the platform allows it).
+    format: wgpu::TextureFormat,
     pipeline: wgpu::RenderPipeline,
     globals: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -122,12 +124,10 @@ impl Renderer {
             .map_err(|e| e.to_string())?;
 
         let caps = surface.get_capabilities(&adapter);
-        let format = caps
-            .formats
-            .iter()
-            .copied()
-            .find(|f| f.is_srgb())
-            .unwrap_or(caps.formats[0]);
+        // Render through an sRGB view so blending happens in linear space. Canvases (WebGPU)
+        // only offer non-sRGB formats but allow an sRGB view of them.
+        let surface_format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
+        let format = surface_format.add_srgb_suffix();
         let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
             wgpu::CompositeAlphaMode::Opaque
         } else {
@@ -135,13 +135,13 @@ impl Renderer {
         };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format,
+            format: surface_format,
             width: size.0.max(1),
             height: size.1.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
             desired_maximum_frame_latency: 2,
             alpha_mode,
-            view_formats: vec![],
+            view_formats: if format == surface_format { vec![] } else { vec![format] },
             color_space: wgpu::SurfaceColorSpace::Auto,
         };
         surface.configure(&device, &config);
@@ -246,6 +246,7 @@ impl Renderer {
             queue,
             surface,
             config,
+            format,
             pipeline,
             globals,
             bind_group,
@@ -256,7 +257,7 @@ impl Renderer {
     /// Sets the clear color from sRGB components.
     pub fn set_clear_srgb(&mut self, r: f64, g: f64, b: f64) {
         let lin = |c: f64| if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) };
-        let srgb_target = self.config.format.is_srgb();
+        let srgb_target = self.format.is_srgb();
         let f = |c: f64| if srgb_target { lin(c) } else { c };
         self.clear = wgpu::Color { r: f(r), g: f(g), b: f(b), a: 1.0 };
     }
@@ -287,7 +288,10 @@ impl Renderer {
                 return;
             }
         };
-        let view = frame.texture.create_view(&Default::default());
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(self.format),
+            ..Default::default()
+        });
 
         let (w, h) = (self.config.width as f32, self.config.height as f32);
         let globals = Globals {

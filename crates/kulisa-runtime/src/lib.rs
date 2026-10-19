@@ -97,15 +97,15 @@ impl ApplicationHandler<UserEvent> for App {
         let window = match &self.window {
             Some(w) => w.clone(),
             None => {
-                #[allow(unused_mut)]
-                let mut attrs = Window::default_attributes()
-                    .with_title("Kulisa")
-                    .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+                let attrs = Window::default_attributes().with_title("Kulisa");
+                // On the web the page's CSS sizes the canvas.
+                #[cfg(not(target_arch = "wasm32"))]
+                let attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
                 #[cfg(target_arch = "wasm32")]
-                {
+                let attrs = {
                     use winit::platform::web::WindowAttributesExtWebSys;
-                    attrs = attrs.with_append(true);
-                }
+                    attrs.with_append(true)
+                };
                 let w = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
                 self.window = Some(w.clone());
                 w
