@@ -1235,10 +1235,15 @@ dependencies = [
 name = "kulisa-lua"
 version = "0.1.0"
 dependencies = [
+ "kulisa-audio",
  "kulisa-core",
+ "kulisa-platform",
+ "kulisa-render",
  "kulisa-story",
+ "kulisa-text",
  "log",
  "mlua",
+ "pollster",
  "web-time",
 ]
 
