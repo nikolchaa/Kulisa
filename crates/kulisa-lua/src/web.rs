@@ -33,7 +33,11 @@ const ERRNO_SUCCESS: u16 = 0;
 const ERRNO_BADF: u16 = 8;
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn __imported_wasi_snapshot_preview1_clock_time_get(id: u32, _precision: u64, out: *mut u64) -> u16 {
+unsafe extern "C" fn __imported_wasi_snapshot_preview1_clock_time_get(
+    id: u32,
+    _precision: u64,
+    out: *mut u64,
+) -> u16 {
     let ns = match id {
         0 => SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos() as u64),
         _ => monotonic_ns(),
@@ -43,7 +47,10 @@ unsafe extern "C" fn __imported_wasi_snapshot_preview1_clock_time_get(id: u32, _
 }
 
 #[unsafe(no_mangle)]
-unsafe extern "C" fn __imported_wasi_snapshot_preview1_environ_sizes_get(count: *mut usize, size: *mut usize) -> u16 {
+unsafe extern "C" fn __imported_wasi_snapshot_preview1_environ_sizes_get(
+    count: *mut usize,
+    size: *mut usize,
+) -> u16 {
     unsafe {
         *count = 0;
         *size = 0;

@@ -18,9 +18,10 @@ fn main() {
         return;
     }
 
-    let sysroot = PathBuf::from(env::var("WASI_SYSROOT").expect(
-        "WASI_SYSROOT is not set. Build the web target with `cargo xtask web`, which provides it.",
-    ));
+    let sysroot =
+        PathBuf::from(env::var("WASI_SYSROOT").expect(
+            "WASI_SYSROOT is not set. Build the web target with `cargo xtask web`, which provides it.",
+        ));
     let lib = sysroot.join("lib").join("wasm32-wasip1");
     println!("cargo:rustc-link-search=native={}", lib.join("eh").display());
     println!("cargo:rustc-link-search=native={}", lib.display());

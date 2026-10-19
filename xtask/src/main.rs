@@ -65,9 +65,10 @@ fn wasi_sdk() -> Result<(PathBuf, PathBuf)> {
 
 fn web(args: &[String]) -> Result {
     let release = args.iter().any(|a| a == "--release");
-    let serve = args.iter().position(|a| a == "--serve").map(|i| {
-        args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(8080u16)
-    });
+    let serve = args
+        .iter()
+        .position(|a| a == "--serve")
+        .map(|i| args.get(i + 1).and_then(|p| p.parse().ok()).unwrap_or(8080u16));
 
     let version = Command::new("wasm-bindgen").arg("--version").output();
     match version {

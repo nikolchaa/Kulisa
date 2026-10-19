@@ -10,9 +10,7 @@ pub fn init_logging() {
 
     #[cfg(target_os = "android")]
     android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("kulisa"),
+        android_logger::Config::default().with_max_level(log::LevelFilter::Info).with_tag("kulisa"),
     );
 
     #[cfg(target_arch = "wasm32")]

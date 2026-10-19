@@ -192,9 +192,7 @@ pub fn run() {
 pub fn run_android(app: AndroidApp) {
     use winit::platform::android::EventLoopBuilderExtAndroid;
     kulisa_platform::init_logging();
-    let event_loop = EventLoop::with_user_event()
-        .with_android_app(app)
-        .build()
-        .expect("failed to create event loop");
+    let event_loop =
+        EventLoop::with_user_event().with_android_app(app).build().expect("failed to create event loop");
     run_with(event_loop);
 }

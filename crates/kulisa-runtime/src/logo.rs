@@ -80,8 +80,8 @@ pub fn image(size: u32) -> Image {
             let n = (SAMPLES * SAMPLES) as f32;
             let a = acc[3] / n;
             // Encode linear premultiplied color for an sRGB texture.
-            for k in 0..3 {
-                pixels.push((to_srgb(acc[k] / n) * 255.0 + 0.5) as u8);
+            for c in &acc[..3] {
+                pixels.push((to_srgb(c / n) * 255.0 + 0.5) as u8);
             }
             pixels.push((a * 255.0 + 0.5) as u8);
         }

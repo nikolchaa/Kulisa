@@ -143,10 +143,8 @@ impl Renderer {
         // Render through an sRGB view so blending happens in linear space. Canvases (WebGPU)
         // only offer non-sRGB formats but allow an sRGB view of them.
         let surface_format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
-        let view_formats_ok = adapter
-            .get_downlevel_capabilities()
-            .flags
-            .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
+        let view_formats_ok =
+            adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
         // Without sRGB views (e.g. some GLES drivers) the shader encodes sRGB itself.
         let format = if view_formats_ok { surface_format.add_srgb_suffix() } else { surface_format };
         let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
@@ -309,10 +307,9 @@ impl Renderer {
                 return;
             }
         };
-        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(self.format),
-            ..Default::default()
-        });
+        let view = frame
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor { format: Some(self.format), ..Default::default() });
 
         let (w, h) = (self.config.width as f32, self.config.height as f32);
         let globals = Globals {
