@@ -196,7 +196,7 @@ do
         active = { id = id, value = value, opts = opts }
         caret = chars(value:peek() or "")
         active_id:set(id)
-        kulisa.input.start_text()
+        kulisa.input.start_text({ id = id })
         blinker = kulisa.every(0.5, function()
             blink:set(not blink:peek())
         end)

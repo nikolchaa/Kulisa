@@ -556,9 +556,12 @@ Implemented in M5 (`kulisa-ui`, bound in `kulisa-lua/src/game/ui.rs`; API in
   turns the IME on (`set_ime_allowed`: the soft keyboard on Android) and, on touch browsers,
   focuses a hidden `<input>` whose events are queued for the runtime
   (`kulisa-platform/src/web_text.rs`). Known gaps: IME composition inside NativeActivity is
-  not delivered (Latin keyboards work), the soft keyboard may cover a field near the bottom,
-  winit's web backend does not receive synthetic `insertText` on desktop browsers, no
+  not delivered (Latin keyboards work), winit's web backend does not receive synthetic `insertText` on desktop browsers, no
   clipboard.
+  The view lifts above an on-screen keyboard (`Viewport::pan`, set from the keyboard height the
+  runtime reports: Android window insets, the web visual viewport, iOS keyboard notifications),
+  so a field is never hidden; this replaced the idea of a native text box, which would not match
+  the game's look or work for in-scene fields.
 - **Haptics and sensors.** `kulisa.haptics.pulse` queues pulses the runtime plays while
   handling input (browsers need a user gesture): Android `VibrationEffect` through JNI,
   `navigator.vibrate`, UIKit impact feedback, and gilrs rumble on desktop pads.

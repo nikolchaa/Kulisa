@@ -24,7 +24,7 @@ pub use storage::set_android_data_dir;
 #[cfg(target_arch = "wasm32")]
 pub use web_motion::{web_motion, web_motion_start, web_motion_stop, web_vibrate};
 #[cfg(target_arch = "wasm32")]
-pub use web_text::{TextEvent, web_text_events, web_text_focus};
+pub use web_text::{TextEvent, web_keyboard_inset, web_text_events, web_text_focus};
 
 /// Installs the platform logger once. Safe to call more than once.
 pub fn init_logging() {

@@ -162,3 +162,15 @@ mod tests {
         assert_eq!(key_name("a"), None);
     }
 }
+
+/// How much of the page the on-screen keyboard covers, in device pixels: the layout viewport
+/// minus the visual viewport (which the keyboard shrinks on iOS and on Android when the page
+/// does not resize).
+pub fn web_keyboard_inset() -> f32 {
+    let Some(window) = web_sys::window() else { return 0.0 };
+    let Some(vv) = window.visual_viewport() else { return 0.0 };
+    let inner = window.inner_height().ok().and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let covered = (inner - vv.height() - vv.offset_top()).max(0.0);
+    // Small differences are browser chrome (address bars), not a keyboard.
+    if covered < 80.0 { 0.0 } else { (covered * window.device_pixel_ratio()) as f32 }
+}

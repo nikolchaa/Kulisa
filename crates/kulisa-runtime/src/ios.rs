@@ -3,8 +3,17 @@
 use kulisa_platform::Motion;
 use objc2::rc::Retained;
 use objc2_core_motion::CMMotionManager;
-use objc2_foundation::MainThreadMarker;
-use objc2_ui_kit::{UIImpactFeedbackGenerator, UIImpactFeedbackStyle};
+use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use block2::RcBlock;
+use objc2::runtime::AnyObject;
+use objc2::{class, msg_send, msg_send_id};
+use objc2_foundation::{CGRect, MainThreadMarker, NSNotification, NSNotificationCenter};
+use objc2_ui_kit::{
+    UIImpactFeedbackGenerator, UIImpactFeedbackStyle, UIKeyboardFrameEndUserInfoKey,
+    UIKeyboardWillChangeFrameNotification,
+};
 
 const G: f64 = 9.80665;
 
@@ -60,4 +69,47 @@ impl MotionSensors {
             })
         }
     }
+}
+
+/// The keyboard's height in points, as bits of an `f32` (the notification may arrive on any
+/// thread the system picks; reads happen on the main thread).
+static KEYBOARD: AtomicU32 = AtomicU32::new(0);
+
+/// Starts following the on-screen keyboard. Call once on the main thread at startup, so the
+/// first time it appears is not missed.
+pub fn observe_keyboard() {
+    // SAFETY: plain Foundation/UIKit calls on the main thread; the block only reads the
+    // notification it is given and stores a number.
+    unsafe {
+        let block = RcBlock::new(|note: NonNull<NSNotification>| {
+            let note = note.as_ref();
+            let info: Option<Retained<AnyObject>> = msg_send_id![note, userInfo];
+            let Some(info) = info else { return };
+            let value: Option<Retained<AnyObject>> =
+                msg_send_id![&*info, objectForKey: UIKeyboardFrameEndUserInfoKey];
+            let Some(value) = value else { return };
+            let end: CGRect = msg_send![&*value, CGRectValue];
+            let screen: Retained<AnyObject> = msg_send_id![class!(UIScreen), mainScreen];
+            let bounds: CGRect = msg_send![&*screen, bounds];
+            let scale: f64 = msg_send![&*screen, scale];
+            // The frame ends below the screen when the keyboard is going away.
+            let height = (bounds.size.height - end.origin.y).max(0.0);
+            KEYBOARD.store(((height * scale) as f32).to_bits(), Ordering::Relaxed);
+        });
+        let center = NSNotificationCenter::defaultCenter();
+        let token = center.addObserverForName_object_queue_usingBlock(
+            Some(UIKeyboardWillChangeFrameNotification),
+            None,
+            None,
+            &block,
+        );
+        // The observer lives as long as the app.
+        std::mem::forget(token);
+        std::mem::forget(block);
+    }
+}
+
+/// The on-screen keyboard's height in window pixels (0 when hidden).
+pub fn keyboard_inset() -> f32 {
+    f32::from_bits(KEYBOARD.load(Ordering::Relaxed))
 }

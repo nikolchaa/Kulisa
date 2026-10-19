@@ -261,10 +261,15 @@ after the player presses a button on it). Android and iOS gamepads are not wired
 
 Text fields are made in Luau on top of a few engine pieces, so games can build their own.
 
-- `kulisa.input.start_text()` tells the platform a field has the focus: the soft keyboard
+- `kulisa.input.start_text{ id = "widget id" }` (or `{ rect = { x, y, width, height } }` in design units; both optional) tells the platform a field has the focus: the soft keyboard
   appears (Android, and touch browsers through a hidden input), IMEs turn on, and the `text`
   event delivers what the player types. `kulisa.input.stop_text()` ends it;
   `kulisa.input.text_active()` asks.
+  While an on-screen keyboard covers the named field, the whole view lifts (and settles back when
+  the keyboard goes) so the field stays above it, input still hitting what is drawn;
+  `kulisa.input.keyboard_height()` gives the keyboard's height in design units. The keyboard's
+  height comes from the window insets on Android, the visual viewport in browsers and keyboard
+  notifications on iOS (`ui.input` names itself, so its fields need nothing extra).
 - While text is active, characters arrive as `text` and not as `key` (so a game's `a` or `h`
   shortcuts stay quiet); named keys (`backspace`, `delete`, `left`, `right`, `home`, `end`,
   `enter`, `escape`, ...) still arrive as `key`, and repeat while held. Keyboard navigation of

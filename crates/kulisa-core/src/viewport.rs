@@ -23,6 +23,9 @@ pub struct Viewport {
     /// Allowed window aspect ratios (width / height), `[min, max]`. A window outside the
     /// range is clamped to it first (bars beyond it); the scale mode applies inside.
     pub aspect: Option<[f32; 2]>,
+    /// Shifts everything by this many window pixels (a negative y lifts the view above an
+    /// on-screen keyboard). Input and drawing agree, so pointers keep hitting what they see.
+    pub pan: Vec2,
 }
 
 /// A viewport resolved for a concrete window size.
@@ -41,7 +44,7 @@ pub struct ViewLayout {
 
 impl Viewport {
     pub fn new(width: f32, height: f32, mode: ScaleMode) -> Self {
-        Self { design: Vec2::new(width, height), mode, aspect: None }
+        Self { design: Vec2::new(width, height), mode, aspect: None, pan: Vec2::ZERO }
     }
 
     /// The part of the window the game uses after the aspect clamp, in window pixels.
@@ -69,7 +72,7 @@ impl Viewport {
             ScaleMode::Fill => ratio.x.max(ratio.y),
             ScaleMode::Fit | ScaleMode::Expand => ratio.x.min(ratio.y),
         };
-        let center = (area.min + area.max) * 0.5;
+        let center = (area.min + area.max) * 0.5 + self.pan;
         let to_pixels = Affine2::from_translation(center)
             * Affine2::from_scale(Vec2::splat(scale))
             * Affine2::from_translation(-self.design * 0.5);

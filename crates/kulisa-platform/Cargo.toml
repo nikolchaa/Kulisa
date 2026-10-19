@@ -26,4 +26,4 @@ console_log = "1"
 js-sys = "0.3"
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
-web-sys = { version = "0.3", features = ["CssStyleDeclaration", "DeviceMotionEvent", "DeviceOrientationEvent", "DeviceRotationRate", "Document", "Element", "Event", "EventTarget", "HtmlElement", "HtmlInputElement", "InputEvent", "KeyboardEvent", "Location", "Navigator", "Node", "Response", "Storage", "Window"] }
+web-sys = { version = "0.3", features = ["CssStyleDeclaration", "DeviceMotionEvent", "DeviceOrientationEvent", "DeviceRotationRate", "Document", "Element", "Event", "EventTarget", "HtmlElement", "HtmlInputElement", "InputEvent", "KeyboardEvent", "Location", "Navigator", "Node", "Response", "Storage", "VisualViewport", "Window"] }

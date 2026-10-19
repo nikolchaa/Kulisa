@@ -598,6 +598,7 @@ impl Game {
         let mouse = self.state.borrow().pointers.get(&0).and_then(|p| p.pos);
         interact::hover(&self.lua, &self.state, mouse);
         self.nav_frame(dt);
+        self.update_pan(dt);
         ui::update(&self.lua, &self.state);
         self.report_display();
 

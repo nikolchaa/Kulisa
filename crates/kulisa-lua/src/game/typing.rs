@@ -4,9 +4,22 @@
 //! The engine only routes text. Text fields themselves (caret, editing keys, `ui.input`) are
 //! written in Luau on top of this, so games can build their own.
 
-use mlua::{Lua, Table};
+use kulisa_core::{Rect, Vec2};
+use mlua::{Lua, Table, Value as LuaValue};
 
-use super::{Game, emit};
+use super::{Game, State, emit};
+
+/// Gap kept between the active field and the keyboard, in window pixels.
+const PAN_MARGIN: f32 = 24.0;
+
+/// What the keyboard must not cover.
+#[derive(Clone, Debug)]
+pub(crate) enum Focus {
+    /// A UI widget by `id`, wherever its screen is.
+    Widget(String),
+    /// A rectangle in design units (screen space).
+    Rect(Rect),
+}
 
 #[derive(Default)]
 pub(crate) struct Typing {
@@ -14,6 +27,12 @@ pub(crate) struct Typing {
     pub active: bool,
     /// What the runtime should do with the platform's IME / soft keyboard, once.
     pub ime_request: Option<bool>,
+    /// The field to keep above the keyboard.
+    pub focus: Option<Focus>,
+    /// Height of the on-screen keyboard in window pixels, as the runtime reports it.
+    pub keyboard_px: f32,
+    /// How far the view is lifted now, in window pixels.
+    pub pan: f32,
 }
 
 /// A key name that is also a character: while typing these arrive as `text`, not `key`.
@@ -62,11 +81,25 @@ impl Game {
 
 /// `kulisa.input.start_text()`, `stop_text()` and `text_active()`.
 pub(super) fn install(lua: &Lua, input: &Table) -> mlua::Result<()> {
-    use super::api::with;
+    use super::api::{number, with};
     input.set(
         "start_text",
-        lua.create_function(|lua, ()| {
+        // start_text{ id = "widget id" } or start_text{ rect = { x, y, width, height } }: the field
+        // the on-screen keyboard must not cover (the view lifts when it would).
+        lua.create_function(|lua, opts: Option<Table>| {
+            let focus = match opts {
+                None => None,
+                Some(o) => match (o.get::<LuaValue>("id")?, o.get::<LuaValue>("rect")?) {
+                    (LuaValue::String(s), _) => Some(Focus::Widget(s.to_string_lossy().to_string())),
+                    (_, LuaValue::Table(t)) => {
+                        let c = |i: usize| -> mlua::Result<f32> { number(&t.raw_get(i)?, "rect") };
+                        Some(Focus::Rect(Rect::new(c(1)?, c(2)?, c(3)?, c(4)?)))
+                    }
+                    _ => None,
+                },
+            };
             with(lua, |st| {
+                st.typing.focus = focus;
                 if !st.typing.active {
                     st.typing.active = true;
                     st.typing.ime_request = Some(true);
@@ -81,6 +114,7 @@ pub(super) fn install(lua: &Lua, input: &Table) -> mlua::Result<()> {
             with(lua, |st| {
                 if st.typing.active {
                     st.typing.active = false;
+                    st.typing.focus = None;
                     st.typing.ime_request = Some(false);
                 }
                 Ok(())
@@ -88,5 +122,49 @@ pub(super) fn install(lua: &Lua, input: &Table) -> mlua::Result<()> {
         })?,
     )?;
     input.set("text_active", lua.create_function(|lua, ()| with(lua, |st| Ok(st.typing.active)))?)?;
+    // keyboard_height() -> the on-screen keyboard's height in design units (0 when hidden).
+    input.set(
+        "keyboard_height",
+        lua.create_function(|lua, ()| with(lua, |st| Ok(st.typing.keyboard_px / st.scale().max(1e-3))))?,
+    )?;
     Ok(())
+}
+
+/// The window-pixel y range `(top, bottom)` of the field the keyboard must not cover.
+fn field_range(st: &State) -> Option<(f32, f32)> {
+    let rect = match st.typing.focus.as_ref()? {
+        Focus::Rect(r) => *r,
+        Focus::Widget(id) => st.ui.ui.screens.iter().find_map(|s| s.root.as_ref()?.find(id))?.rect,
+    };
+    let mut flat = st.viewport;
+    flat.pan = Vec2::ZERO;
+    let to_px = flat.layout(st.renderer.size()).to_pixels;
+    Some((to_px.transform_point2(rect.min).y, to_px.transform_point2(rect.max).y))
+}
+
+impl Game {
+    /// The on-screen keyboard's height in window pixels (0 when hidden). The runtime reports it
+    /// every frame; while a field is active the view lifts so the field stays above it.
+    pub fn set_keyboard_inset(&mut self, px: f32) {
+        self.state.borrow_mut().typing.keyboard_px = px.max(0.0);
+    }
+
+    /// Eases the view up or down so the active field clears the keyboard.
+    pub(super) fn update_pan(&mut self, dt: f32) {
+        let mut st = self.state.borrow_mut();
+        let window_h = st.renderer.size().y as f32;
+        let target = match field_range(&st) {
+            Some((top, bottom)) if st.typing.active && st.typing.keyboard_px > 0.0 => {
+                let hidden = bottom + PAN_MARGIN - (window_h - st.typing.keyboard_px);
+                // Never lift the field's top out of the window.
+                hidden.clamp(0.0, top.max(0.0))
+            }
+            _ => 0.0,
+        };
+        let pan = st.typing.pan;
+        let next =
+            if (target - pan).abs() < 0.5 { target } else { pan + (target - pan) * (dt * 14.0).min(1.0) };
+        st.typing.pan = next;
+        st.viewport.pan = Vec2::new(0.0, -next);
+    }
 }

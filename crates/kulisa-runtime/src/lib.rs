@@ -44,6 +44,8 @@ struct App {
     game: Option<Game>,
     pads: gamepad::Pads,
     sensors: sensors::Sensors,
+    /// The on-screen keyboard's height in window pixels, as last read.
+    keyboard: f32,
     last_frame: Instant,
     #[cfg(target_os = "android")]
     android: AndroidApp,
@@ -129,6 +131,8 @@ impl App {
         assets: Option<Result<Assets, String>>,
         #[cfg(target_os = "android")] android: AndroidApp,
     ) -> Self {
+        #[cfg(target_os = "ios")]
+        ios::observe_keyboard();
         Self {
             proxy,
             window: None,
@@ -138,6 +142,7 @@ impl App {
             game: None,
             pads: gamepad::Pads::new(),
             sensors: sensors::Sensors::new(),
+            keyboard: 0.0,
             last_frame: Instant::now(),
             #[cfg(target_os = "android")]
             android,
@@ -458,6 +463,22 @@ impl App {
             WindowEvent::RedrawRequested => {
                 let Some(game) = &mut self.game else { return };
                 self.pads.poll(game);
+                // The keyboard's height, read only while it can be up (a JNI call on Android).
+                if game.wants_text() || self.keyboard > 0.0 {
+                    #[cfg(target_os = "android")]
+                    {
+                        self.keyboard = android::keyboard_inset(&self.android);
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        self.keyboard = kulisa_platform::web_keyboard_inset();
+                    }
+                    #[cfg(target_os = "ios")]
+                    {
+                        self.keyboard = ios::keyboard_inset();
+                    }
+                }
+                game.set_keyboard_inset(self.keyboard);
                 #[cfg(target_arch = "wasm32")]
                 for e in kulisa_platform::web_text_events() {
                     match e {

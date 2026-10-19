@@ -969,6 +969,56 @@ fn sensors_and_haptics_go_through_the_runtime() {
     assert!(err.contains("strength"), "{err}");
 }
 
+#[test]
+fn the_view_lifts_a_field_above_the_on_screen_keyboard() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.load_font("Inter.ttf")
+        kulisa.screen.clear = "#000000"
+        local ui = kulisa.ui
+        name = ui.signal("")
+        ui.screen("form", function()
+            return ui.box{ ui.input{ id = "name", value = name, anchor = "bottom", width = 40, height = 10,
+                background = "#ff0000", size = 6 } }
+        end, { area = "screen" })
+        ui.show("form")
+    "##,
+    "Inter.ttf" => FONT);
+    g.frame(0.016);
+    let red =
+        |g: &Game, y: u32| g.renderer().read_pixels().unwrap().pixels[((y * 64 + 32) * 4) as usize] > 200;
+    g.render();
+    assert!(red(&g, 58) && !red(&g, 40), "the field sits at the bottom");
+
+    // Start editing with a 24 px keyboard up: the field would be hidden, so the view lifts.
+    let (x, y, w, h): (f32, f32, f32, f32) = g.eval("t", "return kulisa.ui.bounds('form', 'name')").unwrap();
+    g.pointer_moved(Some(v2(x + w / 2.0, y + h / 2.0)));
+    g.pressed("left");
+    g.released("left");
+    g.set_keyboard_inset(24.0);
+    assert_eq!(g.eval::<f32>("t", "return kulisa.input.keyboard_height()").unwrap(), 24.0);
+    for _ in 0..60 {
+        g.frame(0.016);
+    }
+    g.render();
+    // Keyboard top at 40 and a 24 px margin: the field (54..64) lifts by 48 to 6..16, clear of it.
+    assert!(!red(&g, 58), "the old spot is empty now");
+    assert!(red(&g, 10), "the field moved up above the keyboard");
+    // Pointers hit what they see: clicking the lifted field keeps editing.
+    g.pointer_moved(Some(v2(32.0, 10.0)));
+    g.pressed("left");
+    g.released("left");
+    assert!(g.wants_text());
+
+    // The keyboard goes away: the view settles back.
+    g.set_keyboard_inset(0.0);
+    for _ in 0..60 {
+        g.frame(0.016);
+    }
+    g.render();
+    assert!(red(&g, 58), "back in place");
+}
+
 const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
 }";

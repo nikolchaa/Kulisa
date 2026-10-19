@@ -231,3 +231,29 @@ pub fn vibrate(app: &AndroidApp, strength: f32, secs: f32) {
     }
     env.drop_ref(vibrator);
 }
+
+/// The soft keyboard's height in pixels (0 when it is hidden), from the root window insets of
+/// the IME type (API 30+; older devices report 0 and the system resizes or pans the window).
+pub fn keyboard_inset(app: &AndroidApp) -> f32 {
+    let get = || -> Option<f32> {
+        let env = Env::attach(app)?;
+        let activity = app.activity_as_ptr() as jobject;
+        let window = env.call_object(activity, c"getWindow", c"()Landroid/view/Window;", &[])?;
+        let view = env.call_object(window, c"getDecorView", c"()Landroid/view/View;", &[]);
+        env.drop_ref(window);
+        let view = view?;
+        let root = env.call_object(view, c"getRootWindowInsets", c"()Landroid/view/WindowInsets;", &[]);
+        env.drop_ref(view);
+        let root = root?;
+        let ime = env.static_int(c"android/view/WindowInsets$Type", c"ime");
+        let insets = ime.and_then(|t| {
+            env.call_object(root, c"getInsets", c"(I)Landroid/graphics/Insets;", &[jvalue { i: t }])
+        });
+        env.drop_ref(root);
+        let insets = insets?;
+        let bottom = env.int_field(insets, c"bottom");
+        env.drop_ref(insets);
+        bottom.map(|b| b as f32)
+    };
+    get().unwrap_or(0.0)
+}
