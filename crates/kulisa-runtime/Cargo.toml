@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+kulisa-core.workspace = true
 kulisa-lua.workspace = true
 kulisa-platform.workspace = true
 kulisa-render.workspace = true

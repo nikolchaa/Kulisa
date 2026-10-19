@@ -1,11 +1,14 @@
 //! Frame loop. Owns the window, renderer and scripting, and drives them from winit events.
 
 mod logo;
+mod smoke;
 
 use std::sync::Arc;
 
+use kulisa_core::{ScaleMode, Vec2, Viewport};
 use kulisa_lua::Scripting;
-use kulisa_render::{QuadParams, Renderer};
+use kulisa_render::Renderer;
+use smoke::Smoke;
 use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -32,7 +35,12 @@ struct App {
     renderer: Option<Renderer>,
     creating_renderer: bool,
     script: Option<Script>,
+    smoke: Option<Smoke>,
+    viewport: Viewport,
+    /// Last pointer position in window pixels.
+    pointer: Option<Vec2>,
     start: Instant,
+    last_frame: Instant,
 }
 
 impl App {
@@ -44,16 +52,26 @@ impl App {
                 None
             }
         };
-        Self { proxy, window: None, renderer: None, creating_renderer: false, script, start: Instant::now() }
+        Self {
+            proxy,
+            window: None,
+            renderer: None,
+            creating_renderer: false,
+            script,
+            smoke: None,
+            viewport: Viewport { design: smoke::DESIGN, mode: ScaleMode::Expand },
+            pointer: None,
+            start: Instant::now(),
+            last_frame: Instant::now(),
+        }
     }
 
     fn create_renderer(&mut self, window: Arc<Window>) {
         self.creating_renderer = true;
         let size = window.inner_size();
-        let image = logo::image(256);
         let proxy = self.proxy.clone();
         let task = async move {
-            let result = Renderer::new(window, (size.width, size.height), &image).await;
+            let result = Renderer::new(window, (size.width, size.height)).await;
             let _ = proxy.send_event(UserEvent::RendererReady(result));
         };
         #[cfg(target_arch = "wasm32")]
@@ -63,25 +81,29 @@ impl App {
     }
 
     fn frame(&mut self) {
-        let t = self.start.elapsed().as_secs_f64();
-        let mut quad = QuadParams { tint: [1.0; 4], angle: 0.0, half_size: 160.0 };
+        let now = Instant::now();
+        let t = (now - self.start).as_secs_f32();
+        let dt = (now - self.last_frame).as_secs_f32().min(0.1);
+        self.last_frame = now;
+        let (mut tint, mut angle) = ([1.0; 4], 0.0);
         if let Some(s) = &self.script {
             match s.vm.call::<_, (f32, f32, f32, f32, f32)>(&s.module, "update", t) {
-                Ok((r, g, b, a, angle)) => {
-                    quad.tint = [r, g, b, a];
-                    quad.angle = angle;
-                }
+                Ok((r, g, b, a, rot)) => (tint, angle) = ([r, g, b, a], rot),
                 Err(e) => {
                     log::error!("{e}");
                     self.script = None;
                 }
             }
         }
-        if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
-            quad.half_size *= window.scale_factor() as f32;
-            window.pre_present_notify();
-            renderer.render(quad);
-        }
+        let (Some(renderer), Some(window), Some(smoke)) = (&mut self.renderer, &self.window, &mut self.smoke)
+        else {
+            return;
+        };
+        let layout = self.viewport.layout(renderer.size());
+        let pointer = self.pointer.map(|p| layout.to_pixels.inverse().transform_point2(p));
+        smoke.update(t, dt, tint, angle, pointer);
+        window.pre_present_notify();
+        renderer.render(&smoke.scene, &self.viewport, t);
     }
 }
 
@@ -121,6 +143,7 @@ impl ApplicationHandler<UserEvent> for App {
         // M0 rebuilds the whole renderer on resume.
         if cfg!(target_os = "android") {
             self.renderer = None;
+            self.smoke = None;
         }
     }
 
@@ -130,7 +153,10 @@ impl ApplicationHandler<UserEvent> for App {
                 self.creating_renderer = false;
                 match result {
                     Ok(mut r) => {
-                        r.set_clear_srgb(0.094, 0.094, 0.122);
+                        match Smoke::build(&mut r) {
+                            Ok(s) => self.smoke = Some(s),
+                            Err(e) => log::error!("{e}"),
+                        }
                         if let Some(w) = &self.window {
                             let size = w.inner_size();
                             r.resize(size.width, size.height);
@@ -151,6 +177,13 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
                 }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.pointer = Some(Vec2::new(position.x as f32, position.y as f32));
+            }
+            WindowEvent::CursorLeft { .. } => self.pointer = None,
+            WindowEvent::Touch(touch) => {
+                self.pointer = Some(Vec2::new(touch.location.x as f32, touch.location.y as f32));
             }
             WindowEvent::RedrawRequested => {
                 self.frame();

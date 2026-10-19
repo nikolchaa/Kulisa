@@ -144,7 +144,8 @@ pub enum NodeKind {
 pub struct Node {
     pub kind: NodeKind,
     pub transform: Transform,
-    /// Draw order among siblings (lower first; ties keep insertion order).
+    /// Draw order among siblings (lower first; ties keep insertion order). Children of a
+    /// sprite with negative z draw behind it.
     pub z: i32,
     pub visible: bool,
     pub opacity: f32,

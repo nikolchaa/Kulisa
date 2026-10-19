@@ -9,5 +9,10 @@ repository.workspace = true
 
 [dependencies]
 bytemuck.workspace = true
+image.workspace = true
+kulisa-core.workspace = true
 log.workspace = true
 wgpu.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true

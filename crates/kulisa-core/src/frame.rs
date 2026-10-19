@@ -129,7 +129,13 @@ pub fn extract(scene: &Scene, layout: &ViewLayout, window: UVec2, frame: &mut Fr
 
 impl Walker<'_> {
     fn children(&mut self, id: NodeId, ctx: Ctx, items: &mut Vec<DrawItem>) {
-        let mut kids = self.scene[id].children().to_vec();
+        self.children_in(id, ctx, items, |_| true);
+    }
+
+    /// Visits children (sorted by z, stable) for which `keep(z)` holds.
+    fn children_in(&mut self, id: NodeId, ctx: Ctx, items: &mut Vec<DrawItem>, keep: impl Fn(i32) -> bool) {
+        let mut kids: Vec<NodeId> =
+            self.scene[id].children().iter().copied().filter(|&c| keep(self.scene[c].z)).collect();
         kids.sort_by_key(|&c| self.scene[c].z); // stable: ties keep insertion order
         for c in kids {
             self.node(c, ctx, items);
@@ -223,9 +229,11 @@ impl Walker<'_> {
                 let quad = [Vec2::ZERO, Vec2::new(w, 0.0), Vec2::new(w, h), Vec2::new(0.0, h)]
                     .map(|p| m.transform_point2(p));
                 let tint = Color { a: c.tint.a * c.opacity, ..c.tint };
+                // Children with negative z go behind the sprite (shadows, glows).
+                self.children_in(id, c, items, |z| z < 0);
                 let item = self.quad(quad, s.uv, tint, TexRef::Texture(s.texture), node.blend, node.material);
                 self.push(items, item, c.clip, c.bounds);
-                self.children(id, c, items);
+                self.children_in(id, c, items, |z| z >= 0);
             }
         }
     }
@@ -343,6 +351,17 @@ mod tests {
         let f = run(&s);
         let order: Vec<_> = f.passes[0].items.iter().map(|i| i.texture).collect();
         assert_eq!(order, vec![TexRef::Texture(tex(2)), TexRef::Texture(tex(3)), TexRef::Texture(tex(1))]);
+    }
+
+    #[test]
+    fn negative_z_children_draw_behind_their_sprite() {
+        let mut s = Scene::new(DESIGN);
+        let parent = s.add(s.root(), Node::sprite(tex(1), Vec2::ONE));
+        s.add(parent, Node::sprite(tex(2), Vec2::ONE).with_z(-1));
+        s.add(parent, Node::sprite(tex(3), Vec2::ONE));
+        let f = run(&s);
+        let order: Vec<_> = f.passes[0].items.iter().map(|i| i.texture).collect();
+        assert_eq!(order, vec![TexRef::Texture(tex(2)), TexRef::Texture(tex(1)), TexRef::Texture(tex(3))]);
     }
 
     #[test]

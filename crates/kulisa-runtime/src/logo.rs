@@ -1,4 +1,4 @@
-//! Rasterizes the Kulisa mark (docs/brand/logo.svg) as the M0 placeholder texture.
+//! Rasterizes the Kulisa mark (docs/brand/logo.svg) for the smoke scene.
 
 use kulisa_render::Image;
 
