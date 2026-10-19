@@ -1,5 +1,13 @@
 //! Platform services. This crate is a leaf: it must not depend on other engine crates.
 
+mod storage;
+
+pub use storage::Storage;
+#[cfg(not(target_arch = "wasm32"))]
+pub use storage::data_dir;
+#[cfg(target_os = "android")]
+pub use storage::set_android_data_dir;
+
 /// Installs the platform logger once. Safe to call more than once.
 pub fn init_logging() {
     #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
