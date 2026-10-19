@@ -1,17 +1,22 @@
 //! Frame loop. Owns the window, renderer and scripting, and drives them from winit events.
 
 mod logo;
+mod sfx;
 mod smoke;
 
 use std::sync::Arc;
 
+use kulisa_audio::{Audio, PlayOptions};
 use kulisa_core::{ScaleMode, Vec2, Viewport};
 use kulisa_lua::Scripting;
 use kulisa_render::Renderer;
+use kulisa_text::TextSystem;
+use sfx::Sfx;
 use smoke::Smoke;
 use web_time::Instant;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, MouseButton, TouchPhase, WindowEvent};
+use winit::keyboard::{Key, NamedKey};
 use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::window::{Window, WindowId};
 
@@ -36,6 +41,12 @@ struct App {
     creating_renderer: bool,
     script: Option<Script>,
     smoke: Option<Smoke>,
+    text: TextSystem,
+    /// Created at startup on native; on the web only after the first user gesture, as
+    /// browsers require.
+    audio: Option<Audio>,
+    sfx: Option<Sfx>,
+    music_on: bool,
     viewport: Viewport,
     /// Last pointer position in window pixels.
     pointer: Option<Vec2>,
@@ -59,10 +70,50 @@ impl App {
             creating_renderer: false,
             script,
             smoke: None,
+            text: load_fonts(),
+            audio: None,
+            sfx: None,
+            music_on: true,
             viewport: Viewport { design: smoke::DESIGN, mode: ScaleMode::Expand },
             pointer: None,
             start: Instant::now(),
             last_frame: Instant::now(),
+        }
+    }
+
+    fn start_audio(&mut self) {
+        if self.audio.is_some() {
+            return;
+        }
+        let started = Audio::new().and_then(|mut audio| {
+            let sfx = Sfx::new()?;
+            audio.set_volume("music", 0.35, 0.0)?;
+            audio.play("music", &sfx.pad, PlayOptions { looping: true, fade_in: 2.0, ..Default::default() })?;
+            Ok((audio, sfx))
+        });
+        match started {
+            Ok((audio, sfx)) => (self.audio, self.sfx) = (Some(audio), Some(sfx)),
+            // No output device (e.g. a headless machine): keep running silently.
+            Err(e) => log::warn!("audio unavailable: {e}"),
+        }
+    }
+
+    /// Click, tap, space or enter.
+    fn interact(&mut self) {
+        self.start_audio();
+        if let (Some(audio), Some(sfx)) = (&mut self.audio, &self.sfx) {
+            let _ = audio.play("sound", &sfx.blip, PlayOptions { volume: 0.6, ..Default::default() });
+        }
+        if let (Some(r), Some(smoke)) = (&mut self.renderer, &mut self.smoke) {
+            smoke.advance(r, &mut self.text);
+        }
+    }
+
+    fn toggle_music(&mut self) {
+        self.start_audio();
+        self.music_on = !self.music_on;
+        if let Some(audio) = &mut self.audio {
+            let _ = audio.set_volume("music", if self.music_on { 0.35 } else { 0.0 }, 0.6);
         }
     }
 
@@ -101,10 +152,17 @@ impl App {
         };
         let layout = self.viewport.layout(renderer.size());
         let pointer = self.pointer.map(|p| layout.to_pixels.inverse().transform_point2(p));
-        smoke.update(t, dt, tint, angle, pointer);
+        smoke.update(renderer, &mut self.text, layout.scale, t, dt, tint, angle, pointer);
         window.pre_present_notify();
         renderer.render(&smoke.scene, &self.viewport, t);
     }
+}
+
+fn load_fonts() -> TextSystem {
+    let mut text = TextSystem::new();
+    text.load_font(include_bytes!("../assets/fonts/Inter-Regular.ttf").to_vec());
+    text.load_font(include_bytes!("../assets/fonts/Inter-Bold.ttf").to_vec());
+    text
 }
 
 fn load_script() -> Result<Script, kulisa_lua::Error> {
@@ -136,6 +194,9 @@ impl ApplicationHandler<UserEvent> for App {
         if self.renderer.is_none() && !self.creating_renderer {
             self.create_renderer(window);
         }
+        if !cfg!(target_arch = "wasm32") {
+            self.start_audio();
+        }
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
@@ -153,7 +214,10 @@ impl ApplicationHandler<UserEvent> for App {
                 self.creating_renderer = false;
                 match result {
                     Ok(mut r) => {
-                        match Smoke::build(&mut r) {
+                        // Glyph textures belonged to the previous renderer, if any.
+                        self.text.clear_glyph_cache();
+                        let scale = self.viewport.layout(r.size()).scale;
+                        match Smoke::build(&mut r, &mut self.text, scale) {
                             Ok(s) => self.smoke = Some(s),
                             Err(e) => log::error!("{e}"),
                         }
@@ -184,6 +248,17 @@ impl ApplicationHandler<UserEvent> for App {
             WindowEvent::CursorLeft { .. } => self.pointer = None,
             WindowEvent::Touch(touch) => {
                 self.pointer = Some(Vec2::new(touch.location.x as f32, touch.location.y as f32));
+                if touch.phase == TouchPhase::Started {
+                    self.interact();
+                }
+            }
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => self.interact(),
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed && !event.repeat => {
+                match event.logical_key.as_ref() {
+                    Key::Named(NamedKey::Space | NamedKey::Enter) => self.interact(),
+                    Key::Character(c) if c.eq_ignore_ascii_case("m") => self.toggle_music(),
+                    _ => {}
+                }
             }
             WindowEvent::RedrawRequested => {
                 self.frame();
