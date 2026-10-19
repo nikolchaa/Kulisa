@@ -59,7 +59,7 @@ fi
 if [ "$status" = 0 ]; then
     # As an annotation so the result is readable without signing in to GitHub.
     line=$(grep -m1 "hello from Luau" "$out/app.log" | cut -c1-240)
-    errors=$(grep -E "\] .*(error|renderer:)" "$out/app.log" | sort -u | head -n 5 | cut -c1-240 || true)
+    errors=$(grep -E "renderer:|panicked""$out/app.log" | sort -u | head -n 5 | cut -c1-240 || true)
     msg="${line}"$'\n'"${errors}"
     msg="${msg//'%'/'%25'}"
     msg="${msg//$'\n'/'%0A'}"
