@@ -1,0 +1,10 @@
+[alias]
+xtask = "run -p xtask --"
+
+[env]
+# Luau's C++ links libc++ from the wasi sysroot on the web target (see docs/DESIGN.md, risk 1).
+CXXSTDLIB_wasm32_unknown_unknown = "c++"
+# Link libc++ statically on Android so the APK does not need libc++_shared.so.
+CXXSTDLIB_aarch64_linux_android = "c++_static"
+CXXSTDLIB_armv7_linux_androideabi = "c++_static"
+CXXSTDLIB_x86_64_linux_android = "c++_static"

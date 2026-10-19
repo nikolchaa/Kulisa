@@ -1,0 +1,28 @@
+[package]
+name = "kulisa-player"
+description = "Runs Kulisa games on desktop, mobile and web."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+# libkulisa.so on Android, kulisa.wasm on web.
+name = "kulisa"
+# cdylib for Android (loaded by NativeActivity) and web (wasm-bindgen).
+crate-type = ["rlib", "cdylib"]
+
+[[bin]]
+name = "kulisa-player"
+path = "src/main.rs"
+
+[dependencies]
+kulisa-runtime.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+
+[package.metadata.android]
+package = "dev.kulisa.player"
+label = "Kulisa"

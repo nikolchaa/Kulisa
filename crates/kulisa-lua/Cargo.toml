@@ -1,0 +1,15 @@
+[package]
+name = "kulisa-lua"
+description = "Luau scripting for the Kulisa engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+mlua.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time.workspace = true

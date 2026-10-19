@@ -1,0 +1,13 @@
+[package]
+name = "kulisa-render"
+description = "wgpu renderer for the Kulisa engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+log.workspace = true
+wgpu.workspace = true

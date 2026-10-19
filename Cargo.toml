@@ -1,0 +1,30 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/nikolchaa/Kulisa"
+
+[workspace.dependencies]
+kulisa-platform = { path = "crates/kulisa-platform" }
+kulisa-render = { path = "crates/kulisa-render" }
+kulisa-lua = { path = "crates/kulisa-lua" }
+kulisa-runtime = { path = "crates/kulisa-runtime" }
+
+bytemuck = { version = "1.25", features = ["derive"] }
+log = "0.4"
+mlua = { version = "0.12", features = ["luau", "vendored"] }
+pollster = "1"
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+web-time = "1"
+wgpu = { version = "30", features = ["webgl"] }
+winit = "0.30"
+
+[patch.crates-io]
+mlua = { path = "third_party/mlua" }

@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+description = "Engine development tasks: web and Android builds."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
