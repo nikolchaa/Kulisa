@@ -220,8 +220,11 @@ impl Assets {
 mod tests {
     use super::*;
 
+    /// A fresh game folder per call: tests run in parallel.
     fn game() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("kulisa-assets-test-{}", std::process::id()));
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("kulisa-assets-test-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("story/extra")).unwrap();
         std::fs::write(dir.join("main.luau"), "print('hi')").unwrap();
@@ -259,7 +262,9 @@ mod tests {
     #[test]
     fn rejects_damaged_packs() {
         assert!(Assets::pack(b"PK\x03\x04".to_vec()).is_err());
-        let mut good = build_pack(&game()).unwrap();
+        let dir = game();
+        let mut good = build_pack(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
         good.truncate(good.len() - 2);
         assert!(Assets::pack(good).unwrap_err().contains("damaged"));
     }

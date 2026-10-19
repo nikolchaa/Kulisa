@@ -224,8 +224,11 @@ mod base64 {
 mod tests {
     use super::*;
 
+    /// A fresh folder per call: tests run in parallel.
     fn temp() -> Storage {
-        let dir = std::env::temp_dir().join(format!("kulisa-storage-test-{}", std::process::id()));
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("kulisa-storage-test-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         Storage::at(dir)
     }
