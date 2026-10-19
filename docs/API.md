@@ -28,10 +28,26 @@ Scripts run in Luau's sandbox: no `io`, `os.execute` or `loadfile`; library tabl
 - `kulisa.display(width, height, mode?)`: the design resolution and scale mode: `"expand"`
   (default; like fit, but wider or taller windows see more), `"fit"` (letterboxed) or
   `"fill"` (cropped). Default 1920×1080 expand.
+- `kulisa.display{ width, height, scale, aspect, orientation, phone = {...}, tablet = {...},
+  desktop = {...} }`: the same with display profiles. `aspect = { "4:3", "21:9" }` limits
+  the window's aspect ratio (bars beyond it; the scale mode applies inside), so 32:9 monitors
+  do not show areas the art never painted. `orientation`: `"auto"` (default: follows the
+  design's shape), `"landscape"`, `"portrait"` or `"any"`. Android and iOS lock to it; on the
+  web the game should ask the player to rotate when `screen.mismatch` is set; desktop windows
+  open in that shape. `phone`, `tablet` and `desktop` override any of these for that kind of
+  device (a touch screen under 600 logical pixels on its short side is a phone). Call it
+  before building the scene; the profile is chosen once, at startup.
 - `kulisa.screen`: `width`, `height`, `mode`, `scale` (window pixels per design unit),
   `clear` (background color), `effects` (screen post-processing, see Shaders),
   `screen:visible()` → `x, y, width, height` of the design area the window shows (in `"fit"`
-  mode, the design area itself).
+  mode, the design area itself), `screen:safe()` → the same minus notches and system bars,
+  `profile` (`"desktop"`, `"tablet"`, `"phone"`), `orientation` (`"landscape"` or
+  `"portrait"`, the window's shape now), `mismatch` (the device should be rotated), `touch`.
+  The `display` event (`{ profile, orientation, mismatch }`) fires when these change.
+- `kulisa.window`: `fullscreen` (read and write; desktop and web), `can_quit`, `window:quit()`
+  (desktop only; mobile apps and pages are closed by the player).
+- Testing: `KULISA_PROFILE=phone` and `KULISA_SAFE_AREA=left,top,right,bottom` (pixels) force
+  a profile and insets on desktop; on the web, `?profile=phone&safe=0,40,0,30`.
 - `screen:capture(width, height, image?)` → an image of the screen as it is now, drawn as if
   the window were `width`×`height` (save thumbnails). Passing an earlier capture of the same
   size reuses it.
@@ -142,6 +158,7 @@ end)
 | `wheel` | lines; positive is up |
 | `resize` | window `width, height` in pixels |
 | `error` | message |
+| `display` | `{ profile, orientation, mismatch }`, see Display |
 | `say`, `menu`, `pause`, `end`, `stage`, `restore` | see Story |
 
 `kulisa.input.pointer()` → `x, y` or nil; `kulisa.input.down(key)` → whether a key is held.

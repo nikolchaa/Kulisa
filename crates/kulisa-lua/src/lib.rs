@@ -5,5 +5,5 @@ mod story;
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod web;
 
-pub use game::Game;
+pub use game::{Device, FormFactor, Game, Orientation, Requests};
 pub use story::StoryHost;

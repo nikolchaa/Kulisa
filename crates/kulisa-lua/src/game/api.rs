@@ -16,6 +16,7 @@ use mlua::{
     Variadic,
 };
 
+use super::display;
 use super::media::{self, TransitionSpec};
 use super::{
     ImageInfo, Shared, State, TextNode, Waiting, choice_key, report, story_advance, story_restored,
@@ -43,6 +44,7 @@ const EVENTS: &[&str] = &[
     "tap",
     "long_press",
     "swipe",
+    "display",
 ];
 
 pub(crate) fn shared(lua: &Lua) -> Shared {
@@ -210,6 +212,39 @@ pub(crate) struct TransitionRef(pub u64);
 
 struct CameraRef;
 struct ScreenRef;
+struct WindowRef;
+
+impl UserData for WindowRef {
+    fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
+        m.add_meta_method(MetaMethod::Index, |lua, _, key: String| {
+            with(lua, |st| match key.as_str() {
+                "fullscreen" => Ok(st.display.requests.fullscreen.unwrap_or(st.display.fullscreen)),
+                "can_quit" => Ok(st.display.device.can_quit),
+                _ => Err(mlua::Error::runtime(format!("the window has no property `{key}`"))),
+            })
+        });
+        m.add_meta_method(MetaMethod::NewIndex, |lua, _, (key, v): (String, LuaValue)| {
+            with(lua, |st| match key.as_str() {
+                "fullscreen" => {
+                    let on = v
+                        .as_boolean()
+                        .ok_or_else(|| mlua::Error::runtime("`fullscreen` must be a boolean"))?;
+                    st.display.requests.fullscreen = Some(on);
+                    Ok(())
+                }
+                _ => Err(mlua::Error::runtime(format!("`window.{key}` cannot be set"))),
+            })
+        });
+        // Closes the game where the platform allows it (desktop); see `can_quit`.
+        m.add_method("quit", |lua, _, ()| {
+            with(lua, |st| {
+                st.flush_seen();
+                st.display.requests.quit = true;
+                Ok(())
+            })
+        });
+    }
+}
 
 impl UserData for ImageRef {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
@@ -830,6 +865,10 @@ impl UserData for ScreenRef {
                 "scale" => (st.scale() as f64).into_lua(lua),
                 "clear" => hex(st.scene.clear).into_lua(lua),
                 "effects" => effects_table(lua, &st.scene.effects),
+                "profile" => st.display.device.form.name().into_lua(lua),
+                "orientation" => display::orientation(st).into_lua(lua),
+                "mismatch" => display::mismatch(st).into_lua(lua),
+                "touch" => st.display.device.touch.into_lua(lua),
                 _ => Err(mlua::Error::runtime(format!("the screen has no property `{key}`"))),
             })
         });
@@ -855,6 +894,13 @@ impl UserData for ScreenRef {
         m.add_method("capture", |lua, _, (w, h, reuse): (u32, u32, Option<AnyUserData>)| {
             let reuse = reuse.map(|u| u.borrow::<ImageRef>().map(|i| i.0)).transpose()?;
             with(lua, |st| rt(media::capture(st, w, h, reuse)).map(ImageRef))
+        });
+        // The visible area minus notches and system bars: x, y, width, height.
+        m.add_method("safe", |lua, _, ()| {
+            with(lua, |st| {
+                let r = super::ui::areas(st).safe;
+                Ok((r.min.x, r.min.y, r.size().x, r.size().y))
+            })
         });
         // The design-space rectangle the window shows: x, y, width, height.
         m.add_method("visible", |lua, _, ()| {
@@ -1511,18 +1557,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     k.set("now", lua.create_function(|lua, ()| with(lua, |st| Ok(st.time)))?)?;
     k.set(
         "display",
-        lua.create_function(|lua, (w, h, mode): (f32, f32, Option<LuaValue>)| {
+        lua.create_function(|lua, (first, h, mode): (LuaValue, Option<f32>, Option<LuaValue>)| {
+            if let LuaValue::Table(t) = &first {
+                return with(lua, |st| display::configure(st, t, MODES));
+            }
+            let w = number(&first, "width")?;
+            let h = h.ok_or_else(|| {
+                mlua::Error::runtime("kulisa.display(width, height, mode?) or kulisa.display{ ... }")
+            })?;
             let mode = match mode {
                 None | Some(LuaValue::Nil) => ScaleMode::Expand,
                 Some(v) => named(MODES, &v, "mode")?,
             };
             with(lua, |st| {
-                st.viewport = Viewport::new(w, h, mode);
-                st.scene.camera = Camera::new(st.viewport.design * 0.5);
+                display::apply(st, Viewport::new(w, h, mode), display::Orientation::Auto);
                 Ok(())
             })
         })?,
     )?;
+    k.set("window", WindowRef)?;
     k.set("camera", CameraRef)?;
     k.set("screen", ScreenRef)?;
 

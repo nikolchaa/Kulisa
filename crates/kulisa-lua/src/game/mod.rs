@@ -5,6 +5,7 @@
 //! lines) can always call back into the API.
 
 mod api;
+mod display;
 mod media;
 mod ui;
 
@@ -23,6 +24,7 @@ use kulisa_ui::Gesture;
 use mlua::{Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
 
 use crate::story::{StoryHost, from_value};
+pub use display::{Device, FormFactor, Orientation, Requests};
 
 const PRELUDE: &str = include_str!("prelude.luau");
 
@@ -103,6 +105,7 @@ pub(crate) struct State {
     /// Whether the current line had been seen before it was shown.
     pub line_seen: bool,
     pub ui: ui::UiState,
+    pub display: display::DisplayState,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -435,15 +438,20 @@ pub struct Game {
 }
 
 impl Game {
-    /// Starts the game in `assets` (runs its `main.luau`) on `renderer`.
-    pub fn new(assets: Assets, mut renderer: Renderer) -> Result<Game, String> {
+    /// Starts the game in `assets` (runs its `main.luau`) on `renderer`, as on a desktop.
+    pub fn new(assets: Assets, renderer: Renderer) -> Result<Game, String> {
+        Self::with_device(assets, renderer, Device { can_quit: true, ..Default::default() })
+    }
+
+    /// Starts the game for `device` (its form factor picks the display profile).
+    pub fn with_device(assets: Assets, mut renderer: Renderer, device: Device) -> Result<Game, String> {
         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         crate::web::init();
 
         let white =
             ImageInfo { id: renderer.create_texture(&Image::solid(4, 4, [255; 4])), size: UVec2::splat(4) };
         let viewport = Viewport::new(1920.0, 1080.0, ScaleMode::Expand);
-        let state = State {
+        let mut state = State {
             assets,
             renderer,
             scene: Scene::new(viewport.design),
@@ -478,7 +486,9 @@ impl Game {
             seen_flushed: 0.0,
             line_seen: false,
             ui: Default::default(),
+            display: Default::default(),
         };
+        state.display.device = device;
         let shared = Rc::new(RefCell::new(state));
         let lua = Lua::new();
         lua.set_app_data(shared.clone());
@@ -564,6 +574,7 @@ impl Game {
             emit(&self.state, "long_press", (p.x, p.y));
         }
         ui::update(&self.lua, &self.state);
+        self.report_display();
 
         let mut st = self.state.borrow_mut();
         let st = &mut *st;
@@ -605,6 +616,45 @@ impl Game {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.state.borrow_mut().renderer.resize(width, height);
         emit(&self.state, "resize", (width, height));
+        self.report_display();
+    }
+
+    /// Emits `display` when the profile, orientation or rotate hint changed.
+    fn report_display(&mut self) {
+        let now = {
+            let st = self.state.borrow();
+            (st.display.device.form, display::orientation(&st), display::mismatch(&st))
+        };
+        let changed = self.state.borrow().display.reported != Some(now);
+        if !changed {
+            return;
+        }
+        self.state.borrow_mut().display.reported = Some(now);
+        let t = self.lua.create_table().and_then(|t| {
+            t.set("profile", now.0.name())?;
+            t.set("orientation", now.1)?;
+            t.set("mismatch", now.2)?;
+            Ok(t)
+        });
+        if let Ok(t) = t {
+            emit(&self.state, "display", t);
+        }
+    }
+
+    /// The window's insets in pixels (left, top, right, bottom): notches, system bars,
+    /// rounded corners. Screens with `area = "safe"` stay inside.
+    pub fn set_safe_area(&mut self, insets: [f32; 4]) {
+        self.state.borrow_mut().ui.safe_px = insets.map(|v| v.max(0.0));
+    }
+
+    /// What scripts asked the runtime to do since the last call.
+    pub fn take_requests(&mut self) -> Requests {
+        std::mem::take(&mut self.state.borrow_mut().display.requests)
+    }
+
+    /// Tells scripts whether the window is fullscreen now.
+    pub fn set_fullscreen(&mut self, on: bool) {
+        self.state.borrow_mut().display.fullscreen = on;
     }
 
     pub fn suspend(&mut self) {

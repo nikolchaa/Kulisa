@@ -4,7 +4,9 @@
 use std::sync::Arc;
 
 use kulisa_core::Vec2;
-use kulisa_lua::Game;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+use kulisa_lua::Orientation;
+use kulisa_lua::{Device, FormFactor, Game};
 use kulisa_platform::Assets;
 use kulisa_render::Renderer;
 use web_time::Instant;
@@ -32,6 +34,32 @@ struct App {
     creating_renderer: bool,
     game: Option<Game>,
     last_frame: Instant,
+    #[cfg(target_os = "android")]
+    android: AndroidApp,
+}
+
+/// The drawable size. On iOS winit's inner size is the safe area, but we draw everywhere.
+fn drawable_size(w: &Window) -> winit::dpi::PhysicalSize<u32> {
+    if cfg!(target_os = "ios") { w.outer_size() } else { w.inner_size() }
+}
+
+/// Form factor and platform abilities, for the game's display profile.
+fn device(w: &Window) -> Device {
+    let mobile = cfg!(any(target_os = "android", target_os = "ios"));
+    #[cfg(target_arch = "wasm32")]
+    let touch = kulisa_platform::web_touch();
+    #[cfg(not(target_arch = "wasm32"))]
+    let touch = mobile;
+    let size = drawable_size(w);
+    let logical = Vec2::new(size.width as f32, size.height as f32) / w.scale_factor() as f32;
+    let detected = if mobile || cfg!(target_arch = "wasm32") {
+        FormFactor::detect(touch, logical)
+    } else {
+        FormFactor::Desktop
+    };
+    let form =
+        kulisa_platform::profile_override().and_then(|p| FormFactor::from_name(&p)).unwrap_or(detected);
+    Device { form, touch, can_lock: mobile, can_quit: !mobile && !cfg!(target_arch = "wasm32") }
 }
 
 /// Key names as scripts see them: "space", "enter", "left", "f5", "a", ...
@@ -78,7 +106,11 @@ fn key_name(key: &Key) -> Option<String> {
 }
 
 impl App {
-    fn new(proxy: EventLoopProxy<UserEvent>, assets: Option<Result<Assets, String>>) -> Self {
+    fn new(
+        proxy: EventLoopProxy<UserEvent>,
+        assets: Option<Result<Assets, String>>,
+        #[cfg(target_os = "android")] android: AndroidApp,
+    ) -> Self {
         Self {
             proxy,
             window: None,
@@ -87,12 +119,86 @@ impl App {
             creating_renderer: false,
             game: None,
             last_frame: Instant::now(),
+            #[cfg(target_os = "android")]
+            android,
+        }
+    }
+
+    /// Window insets in pixels: notches, status and navigation bars.
+    fn safe_area(&self) -> [f32; 4] {
+        if let Some(o) = kulisa_platform::safe_area_override() {
+            return o;
+        }
+        #[cfg(target_os = "android")]
+        if let Some(w) = &self.window {
+            let r = self.android.content_rect();
+            let s = w.inner_size();
+            let (l, t) = (r.left.max(0) as f32, r.top.max(0) as f32);
+            let (rr, b) =
+                ((s.width as i32 - r.right).max(0) as f32, (s.height as i32 - r.bottom).max(0) as f32);
+            // An empty rect means "not reported yet".
+            if r.right > r.left && r.bottom > r.top {
+                return [l, t, rr, b];
+            }
+        }
+        #[cfg(target_os = "ios")]
+        if let Some(w) = &self.window
+            && let Ok(p) = w.inner_position()
+        {
+            let (inner, outer) = (w.inner_size(), w.outer_size());
+            let (l, t) = (p.x.max(0) as f32, p.y.max(0) as f32);
+            let r = (outer.width as f32 - l - inner.width as f32).max(0.0);
+            let b = (outer.height as f32 - t - inner.height as f32).max(0.0);
+            return [l, t, r, b];
+        }
+        #[cfg(target_arch = "wasm32")]
+        return kulisa_platform::web_safe_area();
+        #[allow(unreachable_code)]
+        [0.0; 4]
+    }
+
+    /// Does what scripts asked for: orientation lock, window shape, fullscreen, quit.
+    fn apply_requests(&mut self, event_loop: &ActiveEventLoop) {
+        let (Some(game), Some(window)) = (&mut self.game, &self.window) else { return };
+        let r = game.take_requests();
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if let Some(o) = r.orientation {
+            #[cfg(target_os = "android")]
+            android_orientation(&self.android, o);
+            #[cfg(target_os = "ios")]
+            {
+                use winit::platform::ios::{ValidOrientations, WindowExtIOS};
+                window.set_valid_orientations(match o {
+                    Orientation::Landscape => ValidOrientations::Landscape,
+                    Orientation::Portrait => ValidOrientations::Portrait,
+                    _ => ValidOrientations::LandscapeAndPortrait,
+                });
+            }
+        }
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+        if let Some(aspect) = r.window_aspect
+            && window.fullscreen().is_none()
+        {
+            let aspect = aspect as f64;
+            let (w, h) = if aspect >= 1.0 { (1280.0, 1280.0 / aspect) } else { (900.0 * aspect, 900.0) };
+            let fit = window.current_monitor().map_or(1.0, |m| {
+                let s = m.size().to_logical::<f64>(m.scale_factor());
+                (s.width * 0.85 / w).min(s.height * 0.85 / h).min(1.0)
+            });
+            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w * fit, h * fit));
+        }
+        if let Some(on) = r.fullscreen {
+            window.set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
+            game.set_fullscreen(on);
+        }
+        if r.quit && !cfg!(any(target_os = "android", target_os = "ios", target_arch = "wasm32")) {
+            event_loop.exit();
         }
     }
 
     fn create_renderer(&mut self, window: Arc<Window>) {
         self.creating_renderer = true;
-        let size = window.inner_size();
+        let size = drawable_size(&window);
         let proxy = self.proxy.clone();
         let task = async move {
             let result = Renderer::new(window, (size.width, size.height)).await.map(Box::new);
@@ -110,11 +216,14 @@ impl App {
             return;
         }
         let renderer = self.renderer.take().unwrap();
-        let started = self.assets.take().unwrap().and_then(|assets| Game::new(assets, renderer));
+        let device = self.window.as_deref().map(device).unwrap_or_default();
+        let started =
+            self.assets.take().unwrap().and_then(|assets| Game::with_device(assets, renderer, device));
         match started {
             Ok(mut game) => {
+                game.set_safe_area(self.safe_area());
                 if let Some(w) = &self.window {
-                    let size = w.inner_size();
+                    let size = drawable_size(w);
                     game.resize(size.width, size.height);
                     w.request_redraw();
                 }
@@ -155,7 +264,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
         };
         // Android recreates the native window after a suspend; the GPU device stays.
-        let size = window.inner_size();
+        let size = drawable_size(&window);
         let resumed = match (&mut self.game, &mut self.renderer) {
             (Some(game), _) => Some(game.resume(window.clone(), size.width, size.height)),
             (None, Some(r)) if r.is_suspended() => Some(r.resume(window.clone(), size.width, size.height)),
@@ -185,7 +294,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::RendererReady(Ok(mut r)) => {
                 self.creating_renderer = false;
                 if let Some(w) = &self.window {
-                    let size = w.inner_size();
+                    let size = drawable_size(w);
                     r.resize(size.width, size.height);
                 }
                 self.renderer = Some(*r);
@@ -203,10 +312,24 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        let input = !matches!(event, WindowEvent::RedrawRequested | WindowEvent::Resized(_));
+        self.handle(event_loop, event);
+        // Browsers allow fullscreen only while handling the input that asked for it.
+        if input {
+            self.apply_requests(event_loop);
+        }
+    }
+}
+
+impl App {
+    fn handle(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
+            WindowEvent::Resized(_) => {
+                let size = self.window.as_deref().map(drawable_size).unwrap_or_default();
+                let safe = self.safe_area();
                 if let Some(game) = &mut self.game {
+                    game.set_safe_area(safe);
                     game.resize(size.width, size.height);
                 } else if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);
@@ -270,13 +393,62 @@ impl ApplicationHandler<UserEvent> for App {
                 if let Some(w) = &self.window {
                     w.request_redraw();
                 }
+                self.apply_requests(event_loop);
             }
             _ => {}
         }
     }
 }
 
-fn run_with(event_loop: EventLoop<UserEvent>, assets: Option<Result<Assets, String>>) {
+/// Locks the activity's orientation (`setRequestedOrientation`) through JNI.
+#[cfg(target_os = "android")]
+fn android_orientation(app: &AndroidApp, o: Orientation) {
+    use jni_sys::{JNI_OK, JNIEnv, JavaVM, jvalue};
+    // ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE / SENSOR_PORTRAIT / FULL_SENSOR.
+    let value = match o {
+        Orientation::Landscape => 6,
+        Orientation::Portrait => 7,
+        _ => 10,
+    };
+    let vm = app.vm_as_ptr() as *mut JavaVM;
+    let activity = app.activity_as_ptr() as jni_sys::jobject;
+    // SAFETY: android-activity hands out valid VM and activity pointers for the app's
+    // lifetime; every JNI function is checked before use and exceptions are cleared.
+    unsafe {
+        let mut env: *mut JNIEnv = std::ptr::null_mut();
+        let Some(attach) = (**vm).AttachCurrentThread else { return };
+        if attach(vm, &mut env as *mut _ as *mut *mut std::ffi::c_void, std::ptr::null_mut()) != JNI_OK {
+            return log::warn!("orientation: cannot attach to the JVM");
+        }
+        let e = &**env;
+        let (Some(get_class), Some(get_method), Some(call), Some(check), Some(clear), Some(delete)) = (
+            e.GetObjectClass,
+            e.GetMethodID,
+            e.CallVoidMethodA,
+            e.ExceptionCheck,
+            e.ExceptionClear,
+            e.DeleteLocalRef,
+        ) else {
+            return;
+        };
+        let class = get_class(env, activity);
+        let method = get_method(env, class, c"setRequestedOrientation".as_ptr(), c"(I)V".as_ptr());
+        if !method.is_null() {
+            call(env, activity, method, &jvalue { i: value });
+        }
+        if check(env) != 0 {
+            clear(env);
+            log::warn!("orientation: setRequestedOrientation failed");
+        }
+        delete(env, class);
+    }
+}
+
+fn run_with(
+    event_loop: EventLoop<UserEvent>,
+    assets: Option<Result<Assets, String>>,
+    #[cfg(target_os = "android")] android: AndroidApp,
+) {
     let proxy = event_loop.create_proxy();
     #[cfg(target_arch = "wasm32")]
     {
@@ -286,6 +458,9 @@ fn run_with(event_loop: EventLoop<UserEvent>, assets: Option<Result<Assets, Stri
             let _ = proxy.send_event(UserEvent::GameLoaded(assets));
         });
     }
+    #[cfg(target_os = "android")]
+    let app = App::new(proxy, assets, android);
+    #[cfg(not(target_os = "android"))]
     let app = App::new(proxy, assets);
     #[cfg(target_arch = "wasm32")]
     {
@@ -359,7 +534,9 @@ pub fn run_android(app: AndroidApp) {
             a.read_to_end(&mut bytes).map_err(|e| format!("reading game.kpak: {e}"))?;
             Assets::pack(bytes)
         });
-    let event_loop =
-        EventLoop::with_user_event().with_android_app(app).build().expect("failed to create event loop");
-    run_with(event_loop, Some(assets));
+    let event_loop = EventLoop::with_user_event()
+        .with_android_app(app.clone())
+        .build()
+        .expect("failed to create event loop");
+    run_with(event_loop, Some(assets), app);
 }

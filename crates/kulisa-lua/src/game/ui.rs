@@ -443,7 +443,9 @@ impl Convert<'_> {
         for pair in t.clone().pairs::<LuaValue, LuaValue>() {
             let (k, v) = pair?;
             if let LuaValue::Integer(i) = k {
-                items.push((i, v));
+                // mlua's Luau integer is i32 or i64 depending on the target.
+                #[allow(clippy::unnecessary_cast)]
+                items.push((i as i64, v));
             } else if let LuaValue::Number(n) = k
                 && n.fract() == 0.0
             {
@@ -515,7 +517,7 @@ impl Measure for Meter<'_> {
     }
 }
 
-fn areas(st: &State) -> Areas {
+pub(crate) fn areas(st: &State) -> Areas {
     let size = st.renderer.size();
     let layout = st.viewport.layout(size);
     let screen = layout.visible;

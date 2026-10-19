@@ -524,3 +524,51 @@ fn ui_screens_rebuild_from_signals_and_take_input() {
     let err = g.eval::<()>("t", "kulisa.ui.show('nope')").unwrap_err();
     assert!(err.contains("no screen `nope`"), "{err}");
 }
+
+#[test]
+fn display_profiles_pick_the_device_override() {
+    let main = r##"
+        kulisa.display{
+            width = 1920, height = 1080, aspect = { "4:3", "21:9" },
+            phone = { width = 1080, height = 1920, orientation = "portrait" },
+        }
+        reports = {}
+        kulisa.on("display", function(d) table.insert(reports, d.profile .. " " .. d.orientation .. " " .. tostring(d.mismatch)) end)
+    "##;
+    let Some(r) = renderer() else { return };
+    let phone = kulisa_lua::Device { form: kulisa_lua::FormFactor::Phone, touch: true, ..Default::default() };
+    let mut g = Game::with_device(Assets::dir(folder(&[("main.luau", main.as_bytes())])), r, phone).unwrap();
+    let (w, h, p): (f32, f32, String) =
+        g.eval("t", "return kulisa.screen.width, kulisa.screen.height, kulisa.screen.profile").unwrap();
+    assert_eq!((w, h, p.as_str()), (1080.0, 1920.0, "phone"));
+    let req = g.take_requests();
+    assert_eq!(req.orientation, Some(kulisa_lua::Orientation::Portrait));
+    assert_eq!(req.window_aspect, None, "phones do not reshape windows");
+    // A square 64x64 window counts as landscape: a web phone (no lock) should rotate.
+    g.frame(0.016);
+    assert_eq!(g.eval::<Vec<String>>("t", "return reports").unwrap(), ["phone landscape true"]);
+    g.renderer().resize(32, 64);
+    g.resize(32, 64);
+    assert_eq!(
+        g.eval::<Vec<String>>("t", "return reports").unwrap(),
+        ["phone landscape true", "phone portrait false"]
+    );
+
+    // On desktop the base applies, with the aspect clamp and a window request.
+    let mut g = game!("main.luau" => main);
+    let (w, p): (f32, String) = g.eval("t", "return kulisa.screen.width, kulisa.screen.profile").unwrap();
+    assert_eq!((w, p.as_str()), (1920.0, "desktop"));
+    let req = g.take_requests();
+    assert_eq!(req.orientation, Some(kulisa_lua::Orientation::Landscape));
+    assert!((req.window_aspect.unwrap() - 16.0 / 9.0).abs() < 1e-4);
+    // Safe insets shrink the safe area; the window controls queue requests.
+    g.set_safe_area([8.0, 0.0, 8.0, 0.0]);
+    let (x, _, sw, _): (f32, f32, f32, f32) = g.eval("t", "return kulisa.screen:safe()").unwrap();
+    let (vx, _, vw, _): (f32, f32, f32, f32) = g.eval("t", "return kulisa.screen:visible()").unwrap();
+    assert!(x > vx && sw < vw, "{x} {sw} vs {vx} {vw}");
+    g.eval::<()>("t", "kulisa.window.fullscreen = true; kulisa.window:quit()").unwrap();
+    let req = g.take_requests();
+    assert!(req.quit && req.fullscreen == Some(true));
+    let err = g.eval::<()>("t", "kulisa.display{ orientation = 'sideways' }").unwrap_err();
+    assert!(err.contains("`orientation` must be"), "{err}");
+}

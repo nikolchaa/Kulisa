@@ -24,3 +24,4 @@ wasm-bindgen-futures.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { workspace = true, features = ["android-native-activity"] }
+jni-sys = "0.3"
