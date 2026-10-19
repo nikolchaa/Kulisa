@@ -116,6 +116,48 @@ Methods: `node:remove()`, `node:exists()`, `node:add(child)`, `node:children()`,
 `node:contains(x, y)` (design point inside the node, after all transforms, camera and
 parallax), `node:tween(props, opts)`, and for text `node:skip()`, `node:restart()`.
 
+### Meshes
+
+`kulisa.mesh(opts)` makes a node drawn as a triangle mesh whose vertices you edit every
+frame: cloth, peeling film, bendy sprites. It batches with everything else and takes `image`,
+`tint`, `shader`, `blend` and the other node properties.
+
+```lua
+-- A grid of 8x8 cells covering the image (vertices run row by row, numbered from 1).
+local flag = kulisa.mesh{ image = "flag.png", cols = 8, rows = 8, x = 400, y = 200 }
+kulisa.on("update", function()
+    for r = 0, 8 do
+        for c = 0, 8 do
+            local i = flag:vertex_at(c, r)
+            local x, y, u, v = flag:vertex(i)
+            flag:set_vertex(i, x, y + math.sin(kulisa.now() * 4 + c) * 6 * (c / 8))
+        end
+    end
+end)
+
+-- Or raw geometry: `positions` (x, y pairs), optional `uvs` (u, v pairs, 0..1 over the image)
+-- and `colors` (r, g, b, a groups in 0..1, sRGB), and `indices` (vertex numbers, from 1).
+local tri = kulisa.mesh{ positions = { 0, 0, 100, 0, 0, 100 }, indices = { 1, 2, 3 } }
+```
+
+- Options: `image` (default a white pixel), grid: `cols`, `rows` (cells), `width`, `height`
+  (default the image size, or 100); raw: `positions`, `uvs`, `colors`, `indices`.
+- Read-only: `vertex_count`, `triangle_count`, `cols` and `rows` (grids; nil otherwise).
+  `width`/`height` are the far edge of the vertices. `image` can be changed.
+- Bulk setters take a flat table or a Luau `buffer` of 32-bit floats (indices: `u32`) and need
+  one entry per vertex: `mesh:set_positions(data)`, `set_uvs`, `set_colors`, `set_indices`.
+  `mesh:positions(buf?)`, `uvs(buf?)`, `colors(buf?)` return a flat table, or fill `buf`.
+  Reusing one buffer per frame avoids allocating.
+- Per vertex (numbered from 1): `mesh:vertex(i)` → `x, y, u, v`; `mesh:set_vertex(i, x, y, u?,
+  v?)` (UVs change only when both are given); `mesh:set_color(i, color)`;
+  `mesh:vertex_at(col, row)` → the number of a grid vertex (columns `0..cols`).
+- `mesh:set_geometry{ positions, uvs, colors, indices }` replaces everything, including the
+  vertex count (the mesh stops being a grid).
+- A mesh has at most 65,536 vertices. Small images share atlas pages, so UVs outside 0..1
+  would read a neighbour's pixels: keep meshes inside 0..1, or use an image larger than 512
+  pixels per side for tiling effects.
+- `node:contains(x, y)` tests the triangles, so a deformed mesh is hit where it is drawn.
+
 Text markup: `{b}`, `{i}`, `{color=#hex}`, `{size=N}`, `{font=Name}`, `{wave}`, `{shake}`,
 `{ruby=reading}`, `{speed=factor}` (typewriter speed), `{w=secs}` (typewriter pause); `{{` is a literal brace.
 

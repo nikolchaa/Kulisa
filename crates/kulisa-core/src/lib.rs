@@ -5,6 +5,7 @@
 mod camera;
 mod color;
 mod frame;
+mod mesh;
 mod save;
 mod scene;
 mod tween;
@@ -15,6 +16,7 @@ pub use camera::Camera;
 pub use color::Color;
 pub use frame::{DrawItem, Frame, Pass, PassTarget, TexRef, Vertex, extract};
 pub use glam::{Affine2, UVec2, Vec2};
+pub use mesh::{MAX_VERTICES, Mesh};
 pub use save::{FORMAT_VERSION, Migrations, SaveFile, SaveHeader};
 pub use scene::{
     BlendMode, Effect, Layer, Material, Node, NodeId, NodeKind, Params, Quad, Rect, Scene, ShaderId, Slice,

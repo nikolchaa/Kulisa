@@ -18,6 +18,7 @@ use mlua::{
 
 use super::display;
 use super::media::{self, TransitionSpec};
+use super::mesh;
 use super::{
     ImageInfo, Shared, State, TextNode, Waiting, choice_key, report, story_advance, story_restored,
     with_story,
@@ -341,6 +342,7 @@ fn kind_name(kind: &NodeKind, is_text: bool) -> &'static str {
         NodeKind::Sprite(_) => "sprite",
         NodeKind::Quads(_) if is_text => "text",
         NodeKind::Quads(_) => "quads",
+        NodeKind::Mesh(_) => "mesh",
         NodeKind::Layer(_) => "layer",
         NodeKind::Target(_) => "target",
     }
@@ -351,6 +353,8 @@ fn node_size(st: &State, id: NodeId) -> mlua::Result<Vec2> {
         NodeKind::Sprite(s) => s.size,
         NodeKind::Target(t) => t.size.as_vec2(),
         NodeKind::Quads(_) => st.texts.get(&id).map_or(Vec2::ZERO, |t| t.text.layout.size),
+        // The far edge of the vertices: what `center = true` and `width`/`height` mean here.
+        NodeKind::Mesh(m) => m.bounds().max.max(Vec2::ZERO),
         _ => Vec2::ZERO,
     })
 }
@@ -446,6 +450,9 @@ fn get_prop(lua: &Lua, st: &State, id: NodeId, key: &str) -> mlua::Result<LuaVal
     {
         return Ok(v);
     }
+    if let Some(v) = mesh::get(st, id, key) {
+        return Ok(v.map_or(LuaValue::Nil, LuaValue::Number));
+    }
     match key {
         "x" => num(t.position.x),
         "y" => num(t.position.y),
@@ -471,6 +478,11 @@ fn get_prop(lua: &Lua, st: &State, id: NodeId, key: &str) -> mlua::Result<LuaVal
             NodeKind::Sprite(s) => {
                 let size = st.renderer.texture_size(s.texture).unwrap_or_default();
                 ImageRef(ImageInfo { id: s.texture, size }).into_lua(lua)
+            }
+            NodeKind::Mesh(m) if m.texture == st.white.id => Ok(LuaValue::Nil),
+            NodeKind::Mesh(m) => {
+                let size = st.renderer.texture_size(m.texture).unwrap_or_default();
+                ImageRef(ImageInfo { id: m.texture, size }).into_lua(lua)
             }
             _ => Ok(LuaValue::Nil),
         },
@@ -606,7 +618,8 @@ fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<
                     sl.source = slice_source.as_vec2();
                 }
             }
-            _ => return Err(mlua::Error::runtime("`image` can only be set on sprites")),
+            NodeKind::Mesh(m) => m.texture = image.unwrap_or(white).id,
+            _ => return Err(mlua::Error::runtime("`image` can only be set on sprites and meshes")),
         },
         "slice" => match &mut n.kind {
             NodeKind::Sprite(s) => {
@@ -664,7 +677,8 @@ fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<
             Some(m) => m.params = params(&v)?,
             None => return Err(mlua::Error::runtime("set `shader` before `params`")),
         },
-        "kind" | "texture" | "complete" | "duration" => {
+        "kind" | "texture" | "complete" | "duration" | "vertex_count" | "triangle_count" | "cols"
+        | "rows" => {
             return Err(mlua::Error::runtime(format!("`{key}` is read-only")));
         }
         _ => return Err(mlua::Error::runtime(format!("nodes have no property `{key}`"))),
@@ -721,6 +735,38 @@ impl UserData for NodeRef {
                 }
                 Ok(())
             })
+        });
+        // Mesh editing: bulk setters take a flat table or a buffer of f32.
+        for (method, array) in [
+            ("set_positions", "positions"),
+            ("set_uvs", "uvs"),
+            ("set_colors", "colors"),
+            ("set_indices", "indices"),
+        ] {
+            m.add_method(method, move |lua, this, data: LuaValue| {
+                with(lua, |st| mesh::set_array(st, this.0, array, &data))
+            });
+        }
+        for (method, array) in [("positions", "positions"), ("uvs", "uvs"), ("colors", "colors")] {
+            m.add_method(method, move |lua, this, buf: Option<mlua::Buffer>| {
+                with(lua, |st| mesh::get_array(lua, st, this.0, array, buf))
+            });
+        }
+        m.add_method("set_geometry", |lua, this, o: Table| {
+            with(lua, |st| mesh::set_geometry(st, this.0, &o))
+        });
+        m.add_method("vertex", |lua, this, i: usize| with(lua, |st| mesh::vertex(st, this.0, i)));
+        m.add_method(
+            "set_vertex",
+            |lua, this, (i, x, y, u, v): (usize, f32, f32, Option<f32>, Option<f32>)| {
+                with(lua, |st| mesh::set_vertex(st, this.0, i, (x, y), u.zip(v)))
+            },
+        );
+        m.add_method("set_color", |lua, this, (i, c): (usize, LuaValue)| {
+            with(lua, |st| mesh::set_color(st, this.0, i, &c))
+        });
+        m.add_method("vertex_at", |lua, this, (col, row): (u32, u32)| {
+            with(lua, |st| mesh::grid_vertex(st, this.0, col, row))
         });
         m.add_method("children", |lua, this, ()| {
             let ids = with(lua, |st| Ok(node_of(st, this.0)?.children().to_vec()))?;
@@ -1585,6 +1631,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     k.set("sprite", lua.create_function(|lua, o: Option<Table>| create(lua, o, &["image"], sprite))?)?;
     k.set("text", lua.create_function(|lua, o: Option<Table>| create(lua, o, TEXT_OPTIONS, text))?)?;
+    k.set(
+        "mesh",
+        lua.create_function(|lua, o: Option<Table>| {
+            create(lua, o, mesh::OPTIONS, |st, opts| Ok((Node::mesh(mesh::make(st, opts)?), None)))
+        })?,
+    )?;
     k.set(
         "layer",
         lua.create_function(|lua, o: Option<Table>| {

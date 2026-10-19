@@ -7,6 +7,7 @@
 mod api;
 mod display;
 mod media;
+mod mesh;
 mod ui;
 
 use std::cell::RefCell;

@@ -301,6 +301,107 @@ fn nine_slices_and_masks_from_luau() {
     g.eval::<()>("t", "panel.slice = { 1, 2, 3, 4 }; panel.slice = nil").unwrap();
 }
 
+#[test]
+fn meshes_deform_per_frame_and_render() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.screen.clear = "#000000"
+        m = kulisa.mesh{ cols = 4, rows = 4, width = 32, height = 32, tint = "#ff0000", x = 16, y = 16 }
+    "##);
+    let v: (f32, f32, f32, f32, String, f32, f32) = g
+        .eval(
+            "t",
+            "return m.vertex_count, m.triangle_count, m.cols, m.rows, m.kind, m.width, m:vertex_at(4, 4)",
+        )
+        .unwrap();
+    assert_eq!(v, (25.0, 32.0, 4.0, 4.0, "mesh".into(), 32.0, 25.0));
+    g.frame(0.016);
+    g.render();
+    let img = g.renderer().read_pixels().unwrap();
+    let red = |x: u32, y: u32| img.pixels[((y * img.width + x) * 4) as usize];
+    assert_eq!((red(32, 32), red(4, 4), red(60, 32)), (255, 0, 0), "a red square in the middle");
+
+    // Move the right column of vertices away every frame: the right edge follows.
+    g.eval::<()>(
+        "t",
+        r#"
+        for r = 0, 4 do
+            local i = m:vertex_at(4, r)
+            local x, y = m:vertex(i)
+            m:set_vertex(i, x + 12, y)
+        end
+    "#,
+    )
+    .unwrap();
+    g.frame(0.016);
+    g.render();
+    let img = g.renderer().read_pixels().unwrap();
+    assert_eq!(img.pixels[((32 * img.width + 54) * 4) as usize], 255, "stretched right");
+    assert!(g.eval::<bool>("t", "return m:contains(55, 32) and not m:contains(61, 32)").unwrap());
+
+    // Bulk setters: tables and buffers, in sRGB for colors.
+    g.eval::<()>(
+        "t",
+        r#"
+        local buf = buffer.create(m.vertex_count * 8)
+        for i = 0, m.vertex_count - 1 do
+            buffer.writef32(buf, i * 8, i); buffer.writef32(buf, i * 8 + 4, 2 * i)
+        end
+        m:set_positions(buf)
+        local p = m:positions()
+        assert(p[1] == 0 and p[2] == 0 and p[3] == 1 and p[4] == 2, "round trip")
+        local out = buffer.create(m.vertex_count * 8)
+        m:positions(out)
+        assert(buffer.readf32(out, 8) == 1)
+        local cols = {}
+        for i = 1, m.vertex_count do table.insert(cols, 1); table.insert(cols, 1); table.insert(cols, 1); table.insert(cols, 0.5) end
+        m:set_colors(cols)
+        "#,
+    )
+    .unwrap();
+
+    for (code, want) in [
+        ("m:set_positions({ 1, 2, 3, 4 })", "has 2 vertices but the mesh has 25"),
+        ("m:set_positions({ 1, 2, 3, 4, 5 })", "x, y pairs"),
+        ("m:vertex(26)", "vertex 26 does not exist (1 to 25)"),
+        ("m:vertex(0)", "vertex 0 does not exist"),
+        ("m:set_indices({ 1, 2, 99 })", "name existing vertices"),
+        ("m:set_indices({ 0, 2, 3 })", "starting at 1"),
+        ("kulisa.sprite():set_positions({})", "needs a mesh node"),
+        ("kulisa.mesh{ cols = 0 }", "at least 1"),
+        ("kulisa.mesh{ positions = { 0, 0, 1, 0, 0, 1 } }", "needs `indices`"),
+    ] {
+        let err = g.eval::<()>("t", code).unwrap_err();
+        assert!(err.contains(want), "{code}: {err}");
+    }
+}
+
+#[test]
+fn free_form_meshes_take_raw_geometry() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.screen.clear = "#000000"
+        tri = kulisa.mesh{ positions = { 0, 0, 40, 0, 0, 40 }, indices = { 1, 2, 3 }, tint = "#00ff00", x = 8, y = 8 }
+    "##);
+    assert_eq!(g.eval::<(f32, f32)>("t", "return tri.vertex_count, tri.triangle_count").unwrap(), (3.0, 1.0));
+    assert!(
+        g.eval::<bool>("t", "return tri.cols == nil and tri:contains(20, 20) and not tri:contains(45, 45)")
+            .unwrap()
+    );
+    g.frame(0.016);
+    g.render();
+    let img = g.renderer().read_pixels().unwrap();
+    let green = |x: u32, y: u32| img.pixels[((y * img.width + x) * 4 + 1) as usize];
+    assert_eq!((green(14, 14), green(50, 50)), (255, 0));
+    // A new shape with a different vertex count.
+    g.eval::<()>(
+        "t",
+        "tri:set_geometry{ positions = { 0, 0, 10, 0, 10, 10, 0, 10 }, indices = { 1, 2, 3, 1, 3, 4 } }",
+    )
+    .unwrap();
+    assert_eq!(g.eval::<f32>("t", "return tri.vertex_count").unwrap(), 4.0);
+}
+
 const FADE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * (1.0 - params.p[0].x);
 }";

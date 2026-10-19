@@ -2,7 +2,7 @@
 
 use glam::{Affine2, UVec2, Vec2};
 
-use crate::{Camera, Color};
+use crate::{Camera, Color, Mesh};
 
 /// A texture owned by the renderer (images and render targets).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -168,6 +168,8 @@ pub enum NodeKind {
     Sprite(Sprite),
     /// Many textured quads drawn as one node: text glyphs, nine-slices, tile runs.
     Quads(Vec<Quad>),
+    /// A triangle mesh whose vertices scripts edit (deformable sprites, cloth, peels).
+    Mesh(Mesh),
     Layer(Layer),
     Target(Target),
 }
@@ -219,6 +221,10 @@ impl Node {
 
     pub fn quads(quads: Vec<Quad>) -> Self {
         Self::new(NodeKind::Quads(quads))
+    }
+
+    pub fn mesh(mesh: Mesh) -> Self {
+        Self::new(NodeKind::Mesh(mesh))
     }
 
     pub fn layer(parallax: f32) -> Self {
@@ -403,6 +409,7 @@ impl Scene {
         match &self[id].kind {
             NodeKind::Sprite(s) => Rect { min: Vec2::ZERO, max: s.size }.contains(local),
             NodeKind::Quads(q) => q.iter().any(|q| q.rect.contains(local)),
+            NodeKind::Mesh(m) => m.hit(local).is_some(),
             _ => false,
         }
     }

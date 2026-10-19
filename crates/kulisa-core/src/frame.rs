@@ -10,7 +10,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Affine2, UVec2, Vec2};
 
 use crate::{
-    BlendMode, Color, Effect, Material, NodeId, NodeKind, Rect, Scene, Sprite, TextureId, ViewLayout,
+    BlendMode, Color, Effect, Material, Mesh, NodeId, NodeKind, Rect, Scene, Sprite, TextureId, ViewLayout,
 };
 
 /// Vertex in pass pixel space. `color` is linear, premultiplied, 8-bit.
@@ -284,6 +284,13 @@ impl Walker<'_> {
                 }
                 self.children(id, c, items);
             }
+            NodeKind::Mesh(mesh) => {
+                let m = self.to_pixels(&c);
+                if let Some(item) = self.mesh(mesh, m, &c, node.blend, node.material) {
+                    self.push(items, item, c.clip, c.bounds);
+                }
+                self.children(id, c, items);
+            }
             NodeKind::Sprite(s) => {
                 let m = self.to_pixels(&c);
                 let tint = Color { a: c.tint.a * c.opacity, ..c.tint };
@@ -321,6 +328,44 @@ impl Walker<'_> {
         }
         self.frame.indices.extend([0, 1, 2, 0, 2, 3].map(|i| v0 + i));
         DrawItem { texture, blend, material, clip: None, vertices: v0..v0 + 4, indices: i0..i0 + 6 }
+    }
+
+    /// Appends a mesh's geometry (positions transformed by `m`, vertex colors times the
+    /// inherited tint) and returns its draw item, or `None` for an empty or invisible mesh.
+    fn mesh(
+        &mut self,
+        mesh: &Mesh,
+        m: Affine2,
+        c: &Ctx,
+        blend: BlendMode,
+        material: Option<Material>,
+    ) -> Option<DrawItem> {
+        if mesh.indices.is_empty() || mesh.positions.is_empty() || c.tint.a * c.opacity <= 0.0 {
+            return None;
+        }
+        let v0 = self.frame.vertices.len() as u32;
+        let i0 = self.frame.indices.len() as u32;
+        for ((p, uv), col) in mesh.positions.iter().zip(&mesh.uvs).zip(&mesh.colors) {
+            let t = c.tint * *col;
+            let t = Color { a: t.a * c.opacity, ..t };
+            let color = t.premultiplied().map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
+            self.frame.vertices.push(Vertex {
+                pos: m.transform_point2(*p).to_array(),
+                uv: uv.to_array(),
+                color,
+            });
+        }
+        let n = mesh.positions.len() as u32;
+        // Indices past the vertex count cannot come from a validated mesh; guard anyway.
+        self.frame.indices.extend(mesh.indices.iter().map(|&i| v0 + i.min(n - 1)));
+        Some(DrawItem {
+            texture: TexRef::Texture(mesh.texture),
+            blend,
+            material,
+            clip: None,
+            vertices: v0..v0 + n,
+            indices: i0..i0 + mesh.indices.len() as u32,
+        })
     }
 
     /// Culls, applies the clip and merges with the previous item when the state matches.
@@ -530,6 +575,44 @@ mod tests {
         assert_eq!(f.passes[0].target, PassTarget::Transient(0));
         assert_eq!(f.passes[0].effects.len(), 1);
         assert_eq!(f.passes[1].items[0].texture, TexRef::Transient(0));
+    }
+
+    #[test]
+    fn meshes_transform_tint_and_batch_with_sprites() {
+        let mut s = Scene::new(DESIGN);
+        let mut mesh = Mesh::grid(tex(1), 2, 1, Vec2::new(20.0, 10.0), Rect::UNIT);
+        mesh.colors[1] = Color::rgba(1.0, 0.0, 0.0, 1.0);
+        mesh.positions[0].y -= 5.0; // deformed
+        let mut node = Node::mesh(mesh).at(100.0, 50.0);
+        node.opacity = 0.5;
+        s.add(s.root(), node);
+        s.add(s.root(), Node::sprite(tex(1), Vec2::splat(8.0)));
+        let f = run(&s);
+        assert_eq!(f.draw_items(), 1, "same texture and state: one batch");
+        // 6 mesh vertices, then the sprite's 4.
+        assert_eq!(f.vertices.len(), 10);
+        assert_eq!(f.indices.len(), 12 + 6);
+        assert_eq!(f.vertices[0].pos, [100.0, 45.0]);
+        assert_eq!(f.vertices[0].color, [128, 128, 128, 128], "opacity premultiplied");
+        assert_eq!(f.vertices[1].color, [128, 0, 0, 128], "vertex color multiplies the tint");
+        // The sprite's indices point at its own vertices, after the mesh's.
+        assert_eq!(f.indices[12], 6);
+        assert!(f.indices[..12].iter().all(|&i| i < 6));
+    }
+
+    #[test]
+    fn empty_and_offscreen_meshes_draw_nothing() {
+        let mut s = Scene::new(DESIGN);
+        let mut m = Mesh::grid(tex(1), 1, 1, Vec2::splat(10.0), Rect::UNIT);
+        m.indices.clear();
+        s.add(s.root(), Node::mesh(m));
+        s.add(
+            s.root(),
+            Node::mesh(Mesh::grid(tex(1), 1, 1, Vec2::splat(10.0), Rect::UNIT)).at(-900.0, -900.0),
+        );
+        let f = run(&s);
+        assert_eq!(f.draw_items(), 0);
+        assert!(f.vertices.is_empty());
     }
 
     #[test]
