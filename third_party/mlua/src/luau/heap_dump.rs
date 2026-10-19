@@ -17,7 +17,10 @@ pub struct HeapDump {
 
 impl HeapDump {
     /// Dumps the current Lua heap state.
-    #[cfg_attr(all(target_arch = "wasm32", target_os = "unknown"), allow(unused_variables, dead_code))]
+    #[cfg_attr(
+        all(target_arch = "wasm32", target_os = "unknown"),
+        allow(unused_variables, dead_code)
+    )]
     pub(crate) unsafe fn new(state: *mut ffi::lua_State) -> Option<Self> {
         unsafe extern "C" fn category_name(state: *mut ffi::lua_State, cat: u8) -> *const c_char {
             (&*ExtraData::get(state))
