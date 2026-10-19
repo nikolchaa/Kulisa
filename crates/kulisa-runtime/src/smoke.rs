@@ -94,7 +94,7 @@ impl Smoke {
         scene.add(panel, bar);
         scene.add(panel, Node::sprite(logo_tex, Vec2::splat(48.0)).at(8.0, 8.0));
 
-        scene.effects.push(Material { shader: vignette, params: params([0.35, 0.85, 0.018, 0.55]) });
+        scene.effects.push(Material { shader: vignette, params: params([0.35, 0.85, 0.0, 0.55]) });
         Ok(Smoke { scene, logo, mini })
     }
 
