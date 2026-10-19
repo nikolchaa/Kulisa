@@ -37,6 +37,9 @@ struct Globals {
     tint: [f32; 4],
     rot: [f32; 2],
     scale: [f32; 2],
+    /// 1.0 when the render target is not sRGB and the shader must encode.
+    encode_srgb: f32,
+    _pad: [f32; 3],
 }
 
 pub struct Renderer {
@@ -72,6 +75,10 @@ async fn create_instance(backends: wgpu::Backends, display: impl SurfaceTarget) 
     if std::env::var_os("WGPU_BACKEND").is_none() {
         desc.backends = backends;
     }
+    // Some Android Vulkan drivers (including the emulator's) crash on debug object names.
+    if cfg!(target_os = "android") {
+        desc.flags.remove(wgpu::InstanceFlags::DEBUG | wgpu::InstanceFlags::VALIDATION);
+    }
     #[cfg(target_arch = "wasm32")]
     {
         // Falls back to WebGL2 when `navigator.gpu` is missing or unusable.
@@ -81,6 +88,12 @@ async fn create_instance(backends: wgpu::Backends, display: impl SurfaceTarget) 
     {
         wgpu::Instance::new(desc)
     }
+}
+
+/// Drivers known to crash on valid usage; the next backend in the preference list is used.
+fn is_denylisted(info: &wgpu::AdapterInfo) -> bool {
+    // The Android emulator's gfxstream Vulkan driver crashes in vkQueueSubmit.
+    info.backend == wgpu::Backend::Vulkan && info.name.contains("GFXStream")
 }
 
 impl Renderer {
@@ -103,6 +116,9 @@ impl Renderer {
                 apply_limit_buckets: false,
             };
             match instance.request_adapter(&options).await {
+                Ok(adapter) if is_denylisted(&adapter.get_info()) => {
+                    log::warn!("skipping unreliable driver: {}", adapter.get_info().name);
+                }
                 Ok(adapter) => {
                     found = Some((instance, surface, adapter));
                     break;
@@ -127,7 +143,12 @@ impl Renderer {
         // Render through an sRGB view so blending happens in linear space. Canvases (WebGPU)
         // only offer non-sRGB formats but allow an sRGB view of them.
         let surface_format = caps.formats.iter().copied().find(|f| f.is_srgb()).unwrap_or(caps.formats[0]);
-        let format = surface_format.add_srgb_suffix();
+        let view_formats_ok = adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::SURFACE_VIEW_FORMATS);
+        // Without sRGB views (e.g. some GLES drivers) the shader encodes sRGB itself.
+        let format = if view_formats_ok { surface_format.add_srgb_suffix() } else { surface_format };
         let alpha_mode = if caps.alpha_modes.contains(&wgpu::CompositeAlphaMode::Opaque) {
             wgpu::CompositeAlphaMode::Opaque
         } else {
@@ -298,6 +319,8 @@ impl Renderer {
             tint: quad.tint,
             rot: [quad.angle.cos(), quad.angle.sin()],
             scale: [quad.half_size * 2.0 / w, quad.half_size * 2.0 / h],
+            encode_srgb: if self.format.is_srgb() { 0.0 } else { 1.0 },
+            _pad: [0.0; 3],
         };
         self.queue.write_buffer(&self.globals, 0, bytemuck::bytes_of(&globals));
 

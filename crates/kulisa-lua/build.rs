@@ -8,7 +8,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=WASI_SYSROOT");
     println!("cargo:rerun-if-env-changed=WASI_CLANG_RT");
 
-    if env::var("TARGET").as_deref() != Ok("wasm32-unknown-unknown") {
+    let target = env::var("TARGET").unwrap_or_default();
+    if target.contains("android") {
+        // .cargo/config.toml selects the static libc++, which needs its ABI library too.
+        println!("cargo:rustc-link-lib=c++abi");
+        return;
+    }
+    if target != "wasm32-unknown-unknown" {
         return;
     }
 

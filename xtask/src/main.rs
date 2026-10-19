@@ -1,6 +1,7 @@
 //! Engine development tasks.
 //!
 //!   cargo xtask web [--release] [--serve [PORT]]   build the web player into dist/web
+//!   cargo xtask apk [--release]                    build an Android APK into dist/android
 
 use std::env;
 use std::fs;
@@ -8,6 +9,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+mod android;
 
 const WASI_SDK: &str = "34";
 const WASM_BINDGEN: &str = "0.2.129";
@@ -18,7 +21,8 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("web") => web(&args[1..]),
-        _ => Err("usage: cargo xtask web [--release] [--serve [PORT]]".into()),
+        Some("apk") => android::apk(&args[1..]),
+        _ => Err("usage: cargo xtask web [--release] [--serve [PORT]] | apk [--release]".into()),
     };
     if let Err(e) = result {
         eprintln!("error: {e}");
