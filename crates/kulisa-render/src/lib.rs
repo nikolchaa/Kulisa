@@ -1086,10 +1086,13 @@ impl Renderer {
         let source = self.take_scratch(pass.size, &mut busy);
         let mut images = vec![source];
         let mut outputs = Vec::with_capacity(n);
+        let mut freed = vec![false; n + 1];
         for k in 0..n {
-            // Images that no effect from k on reads go back to the pool.
+            // Images that no effect from k on reads go back to the pool (once: their texture
+            // may hold a later image by then).
             for (img, tex) in images.iter().enumerate() {
-                if last_use[img] < k {
+                if last_use[img] < k && !freed[img] {
+                    freed[img] = true;
                     busy.retain(|b| b != tex);
                 }
             }
