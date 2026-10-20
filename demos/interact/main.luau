@@ -9,12 +9,30 @@
 --   * the HUD at the bottom is navigable with arrows / d-pad + Enter / A
 
 kulisa.display(1280, 720, "expand")
-kulisa.screen.clear = "#16151d"
+kulisa.screen.clear = "#0f1224"
 local fonts = kulisa.load_font("fonts/Inter-Regular.ttf")
+kulisa.load_font("fonts/Inter-Bold.ttf")
 local FONT = fonts[1]
 local ui = kulisa.ui
 
-local PALETTE = { slot = "#2a2836", slot_hot = "#4a4670", ok = "#7bdcb5", bad = "#e8718d", text = "#ece8f5", dim = "#8d89a0" }
+local PALETTE = { slot = "#2d3050", slot_hot = "#5b63a8", ok = "#6be3b0", bad = "#ff7b9c", text = "#f1eefa", dim = "#9aa0c4" }
+
+-- Backdrop and cards ---------------------------------------------------------------------------
+
+local backdrop = kulisa.layer({ parallax = 0, z = -100 })
+kulisa.sprite({
+    parent = backdrop, x = -800, y = -500, width = 3000, height = 1900, shader = kulisa.load_shader("shaders/bg.wgsl"),
+    params = { 3000, 1900 },
+})
+
+-- A rounded card with a colored title bar behind each demo.
+local function card(x: number, y: number, w: number, h: number, title: string, accent: string)
+    local back = kulisa.group({ x = x, y = y, z = -50 })
+    kulisa.sprite({ parent = back, image = "images/panel.png", slice = 22, width = w, height = h, tint = "#141730", opacity = 0.82 })
+    kulisa.sprite({ parent = back, x = 20, y = 18, width = 5, height = 24, tint = accent })
+    kulisa.text({ parent = back, x = 36, y = 14, text = "{b}" .. title .. "{/b}", size = 22, font = "Inter", color = "#f1eefa" })
+    return back
+end
 
 -- The last thing that happened, shown in the HUD.
 local last = ui.signal("move the mouse, touch, or press a pad button")
@@ -28,9 +46,9 @@ end
 
 -- 1. Cloth: a mesh grid whose vertices are rewritten every frame through a buffer -----------
 
-label("Mesh: drag the flag", 60, 52)
-local COLS, ROWS, FW, FH = 16, 10, 320, 200
-local flag = kulisa.mesh({ image = "images/flag.png", cols = COLS, rows = ROWS, width = FW, height = FH, x = 60, y = 90 })
+card(40, 24, 370, 316, "Cloth: drag the flag", "#ff7b9c")
+local COLS, ROWS, FW, FH = 16, 10, 320, 200 -- the flag, hanging from its pole
+local flag = kulisa.mesh({ image = "images/flag.png", cols = COLS, rows = ROWS, width = FW, height = FH, x = 64, y = 100 })
 local positions = buffer.create((COLS + 1) * (ROWS + 1) * 8)
 local grabbed: number? = nil -- the pointer id pulling the flag
 
@@ -82,9 +100,9 @@ end)
 
 -- 2. Drag and drop ---------------------------------------------------------------------------
 
-label("Drag and drop: coins, gems, slots", 440, 52)
+card(430, 24, 450, 530, "Drag and drop: coins, gems, slots", "#ffd166")
 local function slot(x: number, y: number, name: string, accept, capacity: number?)
-    local s = kulisa.sprite({ x = x, y = y, width = 110, height = 110, tint = PALETTE.slot })
+    local s = kulisa.sprite({ image = "images/slot.png", slice = 18, x = x, y = y, width = 110, height = 110, tint = PALETTE.slot })
     label(name, x + 6, y + 114, 18)
     local zone
     zone = kulisa.drop_zone(s, {
@@ -119,7 +137,7 @@ slot(720, 400, "any, two at most", function(info)
 end, 2)
 
 local function piece(image: string, x: number, y: number, tag: string)
-    local s = kulisa.sprite({ image = image, x = x, y = y, center = true })
+    local s = kulisa.sprite({ image = image, x = x, y = y, width = 84, height = 84, center = true })
     kulisa.drag(s, {
         tag = tag,
         alpha = 0.2,
@@ -136,15 +154,15 @@ local function piece(image: string, x: number, y: number, tag: string)
     return s
 end
 
-piece("images/coin.png", 480, 130, "coin")
-piece("images/coin.png", 560, 130, "coin")
-piece("images/gem.png", 640, 130, "gem")
-piece("images/gem.png", 720, 130, "gem")
-piece("images/coin.png", 800, 130, "coin")
+piece("images/coin.png", 490, 160, "coin")
+piece("images/coin.png", 578, 160, "coin")
+piece("images/gem.png", 666, 160, "gem")
+piece("images/gem.png", 754, 160, "gem")
+piece("images/coin.png", 842, 160, "coin")
 
 -- 3. Hotspots with alpha ---------------------------------------------------------------------
 
-label("Hotspots: the ring and the square", 900, 52)
+card(890, 24, 360, 250, "Hotspots: ring and square", "#6be3b0")
 local square = kulisa.sprite({ x = 1000, y = 190, width = 60, height = 60, center = true, tint = PALETTE.ok })
 local clicks = { ring = 0, square = 0 }
 kulisa.hotspot(square, {
@@ -154,7 +172,7 @@ kulisa.hotspot(square, {
         square:tween({ rotation = square.rotation + math.pi / 2 }, 0.25)
     end,
 })
-local ring = kulisa.sprite({ image = "images/ring.png", x = 900, y = 90, center = true })
+local ring = kulisa.sprite({ image = "images/ring.png", x = 900, y = 90, width = 170, height = 170, center = true })
 ring.x, ring.y = 1000, 190
 kulisa.hotspot(ring, {
     alpha = true,
@@ -175,8 +193,8 @@ kulisa.hotspot(ring, {
 
 -- 4. Multi-touch: pinch and rotate -----------------------------------------------------------
 
-label("Pinch and rotate (two fingers)", 880, 330)
-local arrow = kulisa.sprite({ image = "images/arrow.png", x = 1030, y = 480, center = true })
+card(890, 292, 360, 262, "Pinch and rotate (two fingers)", "#7aa2ff")
+local arrow = kulisa.sprite({ image = "images/arrow.png", x = 1060, y = 440, width = 150, height = 150, center = true })
 kulisa.on("pinch", function(factor)
     arrow.scale = math.clamp(arrow.scale * factor, 0.3, 3)
     note(`pinch x{string.format("%.2f", factor)}`)
@@ -199,14 +217,14 @@ kulisa.on("update", function(dt)
 end)
 
 -- A dot that follows the left stick, and lights up while A is held.
-local stick = kulisa.sprite({ width = 18, height = 18, center = true, tint = PALETTE.dim, x = 1180, y = 520 })
+local stick = kulisa.sprite({ width = 18, height = 18, center = true, tint = PALETTE.dim, x = 1190, y = 480 })
 kulisa.on("update", function(dt)
     local ax, ay = kulisa.input.pad_axis("lx"), kulisa.input.pad_axis("ly")
-    stick.x = 1180 + ax * 40
-    stick.y = 520 + ay * 40
+    stick.x = 1190 + ax * 40
+    stick.y = 480 + ay * 40
     stick.tint = if kulisa.input.pad_down("a") then PALETTE.ok else PALETTE.dim
 end)
-label("left stick", 1150, 570, 16)
+label("left stick", 1160, 520, 16)
 
 -- 5. HUD: status lines, buttons and a text field, navigable with arrows or a d-pad --------------
 
@@ -228,9 +246,11 @@ local function button(text: string, id: string, on_click)
     return ui.button({
         id = id,
         on_click = on_click,
-        padding = { 8, 18 },
-        background = "#2f2c40",
-        hover_background = "#4a4670",
+        padding = { 10, 20 },
+        background = "images/button.png",
+        slice = 14,
+        tint = "#3a3f72",
+        hover_tint = "#5560b0",
         ui.text({ text = text, size = 22, font = FONT, color = PALETTE.text }),
     })
 end
@@ -257,9 +277,11 @@ ui.screen("hud", function()
                 max_length = 16,
                 width = 260,
                 padding = { 8, 14 },
-                background = "#25232f",
-                hover_background = "#34314a",
-                selected_background = "#3d3a5c",
+                background = "images/button.png",
+                slice = 14,
+                tint = "#262a4a",
+                hover_tint = "#343a66",
+                selected_tint = "#3d4580",
                 size = 22,
                 font = FONT,
                 color = PALETTE.text,
