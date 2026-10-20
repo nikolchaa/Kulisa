@@ -19,8 +19,8 @@ tests passing and this document updated.
 | M4 | Luau API | The `kulisa` API over the whole engine, sandbox, tasks, registered state, save slots and migrations; the player runs game folders/`.kpak`s; the smoke scene became `demos/smoke` (§8, [API.md](API.md)) | Done |
 | M5 | UI system and classic-vn template | Reactive declarative screens (`kulisa-ui`), layout, widgets (incl. sliders, moved from M6), nine-slice; `templates/classic-vn` (textbox, namebox, choices, history, save/load with thumbnails, settings, quick menu, touch gestures, Ren'Py skip/auto/rollback); transitions; display profiles, aspect clamp, safe areas, anchors and orientation (§3, §9) | Done |
 | M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing and picking, drag and drop with drop zones, hotspots, multi-touch with pinch/rotate, timers, gamepad (gilrs) with keyboard/gamepad focus navigation of UI screens (classic-vn playable without a pointer), text input (`ui.input`, soft keyboards, IME), haptics, motion sensors; `demos/interact` (§9) | Done |
-| M7 | PC unwrap demo | `demos/pc-unwrap`: unboxing, a cloth bag, shrink-wrap foil peeled round a corner, tape, a sticker, a squeegee with air bubbles, glossy plastic shading; public API only (§9, M7 section) | Done |
-| M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT) | Planned |
+| M7 | PC unwrap demo | `demos/pc-unwrap`: unboxing a Blockbench-rendered PC from its box, a plastic sleeve pulled off over the top, films peeled off the side and front glass, tape, an I/O sticker, a squeegee with air bubbles, glossy plastic shading; public API only (§9, M7 section) | Done |
+| M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT, grain); classic-vn reworked as a cat-themed sample (§9, M8 section) | Done |
 | M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`[display]` etc.), quality tiers | Planned |
 | M10 | Ren'Py importer | Basic `.rpy` import: labels, dialogue, menus, jumps, scene/show | Planned |
 
@@ -131,7 +131,7 @@ the UI system's job: screens are laid out in the screen, safe or design area (§
 
 ### Display profiles, aspect and orientation
 
-Implemented in M5 except the build config (M9) and the demo (M8). Goal: one design
+Implemented in M5 (the demo in M8) except the build config (M9). Goal: one design
 and one layout per game by default, with opt-in support for games that want
 different layouts per device class. API: `kulisa.display{ ... }` (docs/API.md).
 
@@ -178,8 +178,9 @@ different layouts per device class. API: `kulisa.display{ ... }` (docs/API.md).
   design = [1080, 1920]
   orientation = "portrait"
   ```
-- **Demo** (M8). `demos/parallax` shows the same game as portrait on a phone,
-  landscape on desktop, and 16:9 vs 21:9 (bleed, clamp, anchors).
+- **Demo** (M8, done). `demos/parallax`'s display lab shows the same scene as portrait on a
+  phone (the `phone` profile's 1080x1920 design), landscape on desktop, and 16:9 / 21:9 / 32:9 /
+  4:3 (bleed, aspect clamp on and off, anchors in the safe area), switchable while it runs.
 
 ## 4. Render pipeline
 
@@ -521,6 +522,11 @@ Implemented in M5 (`kulisa-ui`, bound in `kulisa-lua/src/game/ui.rs`; API in
   does not reach `press`/`release`/gestures/`wheel`; other buttons and keys always
   reach the game. Gestures (tap, long press, swipe) are recognized on what is
   left, for mouse and touch alike.
+- **Windows and dragging** (M8). Screens can live in a rectangle (`area = { x, y, width,
+  height }`) that `ui.place` moves or resizes (a pure move translates the built widgets instead of
+  laying them out again) and `ui.set_z` reorders; widgets take `on_press`, `on_drag` (start, move,
+  end with deltas, after a small slop), `block` (swallow input over them), `clip` and `cursor`.
+  The cursor follows script > UI > hotspot; desktop windows can be resized from Luau.
 - **classic-vn** (`templates/classic-vn`, its README) is built only on this and
   the rest of the public API; a headless test (`kulisa-lua/tests/template.rs`)
   plays through it on every CI run.
@@ -623,6 +629,39 @@ Implemented in M5 (`kulisa-ui`, bound in `kulisa-lua/src/game/ui.rs`; API in
 - **Frame time**: the demo shows `script ms/frame` (F3 hides it). Desktop release/web release: about 0.2 to
   3 ms of script while peeling or dragging the bag; on the web the 144 Hz frame rate holds. See the
   M7 notes in the decision log.
+
+### Templates and the parallax demo (M8)
+
+All built only on the public API; each has a headless test that plays it (`desktop_os.rs`,
+`text_rpg.rs`, `parallax.rs`, `template.rs`), and `KULISA_SHOTS=<dir>` makes those tests save
+screenshots.
+
+- **`templates/desktop-os`**: a story told through a fake desktop. Draggable, resizable windows
+  with focus and z-order (the M8 rect screens), a taskbar and start menu, desktop icons, a chat app
+  driven by the story (typing indicator, replies as choices), a browser with fake pages, links and
+  history, notes, settings, notifications; a shader wallpaper.
+- **`templates/text-rpg`**: an illustration panel (crossfading pictures), a scrolling text log,
+  choices, a stats panel, an inventory, save/load; rules in Luau (`give`, `take`, `has`, `heal`,
+  `hurt`, `pay`, `roll`) called from the `.kulisa` story; landscape and phone portrait layouts.
+- **`demos/parallax`**: an eleven-layer valley (shader sky with a day-night cycle, three mountain
+  ranges rendered from heightfields into data textures that a shader colours and lights for the
+  time of day, forest and grass strips with solid fills under them, a cabin), GPU particles
+  (fireflies, leaves, snow, smoke, embers), a camera that follows the pointer, the phone's tilt or
+  drifts; a depth-map diorama (steep parallax with a refine step); post-processing chains on the
+  world layer only (bloom, tilt-shift, grading presets, CRT, grain), all working under WebGL2; the
+  display lab (§3).
+- **classic-vn** was reworked into a cat-themed sample (two cats, a kitchen and a playroom, warm
+  colours, paw-print marks); characters are sized per tag (`config.sprite_scale`) and the swirl
+  transition is computed in the shader (a low-resolution mask stretched over the screen banded).
+- **Engine features it needed** (all in API.md): rect screens, `ui.place`/`ui.set_z`, `on_press`,
+  `on_drag`, `block`, `clip`, `cursor`, `kulisa.input.cursor`, `window:resize`; effect chains
+  with `scale`, `input` and `mask` (§4); GPU particles (§4); `kulisa.story.vars()` from helpers
+  called by story lines.
+- **Verified**: Windows desktop and the web (WebGPU and `?webgl`) for desktop-os and parallax
+  (parallax: about 7 ms per frame and 0.01 ms of script on desktop release, CRT checked on both
+  web backends); text-rpg and classic-vn headless (with screenshots). iOS, Linux and macOS through CI.
+- **Gaps**: the Android emulator was not run for the M8 templates and the demo; text-rpg was not
+  checked on the web; the art is fixed images (no in-repo sources, see the decision log).
 
 ## 10. Saves and rollback
 
@@ -800,4 +839,10 @@ body:   the VM's save: frames, stage, story variables
 | 2026-10-20 | M7: shaded sprites and meshes draw from an unpacked copy of their image (like masks), so UVs are 0..1 and procedural shaders get coordinates; they never batched with unshaded nodes anyway. |
 | 2026-10-20 | M7: sounds gain `rate` and `pan` (kira playback rate and panning) for crinkle variation; pitch variety from a handful of samples instead of more assets. |
 | 2026-10-20 | M7: film shading derives "which side am I seeing" from the winding of `uv` against the screen derivatives, so a flipped flap needs no extra vertex attribute. |
+| 2026-10-20 | M8: windows are UI screens in a rectangle (`area`) moved by `ui.place` and raised by `ui.set_z`, with `on_drag` on any widget, instead of a separate window manager in the engine: desktop-os builds its own on top. |
+| 2026-10-20 | M8: effects take a `scale` and read the chain's source or any earlier output (as `tex` or `mask_tex`); the renderer plans scratch textures with lifetimes. Enough for bloom and blur without compute or a render graph. |
+| 2026-10-20 | M8: GPU particles without compute (birth records in an instance buffer, closed-form motion in the vertex shader), so WebGL2 runs the same particles as WebGPU. |
+| 2026-10-20 | M8: Luau is compiled with `kulisa` as a mutable global, so `kulisa.screen.mode` and other engine paths read inside functions are never cached at load time. |
+| 2026-10-20 | M8: embedded game nodes (`ui.node`) are all moved out of a dropped screen before its groups are removed, so hiding a screen hides them however deep they sit (text-rpg's illustration was being removed). |
+| 2026-10-20 | M8: `show tag look` without `at` keeps the tag's place in the story's stage state too, as in Ren'Py; before, rollback and loads put it back at the default position. |
 | 2026-10-20 | M7: the demo's PC and box are Blockbench renders made with one fixed, calibrated camera, so live meshes can be laid over them exactly; the room, glass and plastic are WGSL. Art sources (models, painting scripts) are kept outside the repository; the repository holds the finished images. |
