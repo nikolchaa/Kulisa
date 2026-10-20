@@ -19,7 +19,7 @@ tests passing and this document updated.
 | M4 | Luau API | The `kulisa` API over the whole engine, sandbox, tasks, registered state, save slots and migrations; the player runs game folders/`.kpak`s; the smoke scene became `demos/smoke` (§8, [API.md](API.md)) | Done |
 | M5 | UI system and classic-vn template | Reactive declarative screens (`kulisa-ui`), layout, widgets (incl. sliders, moved from M6), nine-slice; `templates/classic-vn` (textbox, namebox, choices, history, save/load with thumbnails, settings, quick menu, touch gestures, Ren'Py skip/auto/rollback); transitions; display profiles, aspect clamp, safe areas, anchors and orientation (§3, §9) | Done |
 | M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing and picking, drag and drop with drop zones, hotspots, multi-touch with pinch/rotate, timers, gamepad (gilrs) with keyboard/gamepad focus navigation of UI screens (classic-vn playable without a pointer), text input (`ui.input`, soft keyboards, IME), haptics, motion sensors; `demos/interact` (§9) | Done |
-| M7 | PC unwrap demo | `demos/pc-unwrap`: peeling and applying plastic film (curling mesh, squeegee, bubbles, glossy plastic shading), public API only | Planned |
+| M7 | PC unwrap demo | `demos/pc-unwrap`: unboxing, a cloth bag, shrink-wrap foil peeled round a corner, tape, a sticker, a squeegee with air bubbles, glossy plastic shading; public API only (§9, M7 section) | Done |
 | M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT) | Planned |
 | M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`[display]` etc.), quality tiers | Planned |
 | M10 | Ren'Py importer | Basic `.rpy` import: labels, dialogue, menus, jumps, scene/show | Planned |
@@ -574,6 +574,37 @@ Implemented in M5 (`kulisa-ui`, bound in `kulisa-lua/src/game/ui.rs`; API in
   CoreMotion on iOS, `devicemotion`/`deviceorientation` events in browsers (with iOS's
   permission prompt, which needs a tap). iOS haptics and motion are compiled in CI only.
 
+### The PC unwrap demo (M7)
+
+`demos/pc-unwrap` (pure Luau; README there) is the stress test of meshes, shaders and input.
+
+- **Engine features it needed**, all general and documented in API.md: per-vertex `data` on meshes
+  (`in.data` in shaders, stored as f16x4), sprites and meshes with a shader read their image through
+  an unpacked texture so `uv` is 0..1 (procedural shaders), `audio.play` `rate` and `pan`.
+- **Films are meshes written in one loop per frame** into reused buffers: positions, a normal in
+  world space (its length carries a curl shadow) and an air-gap value in `data`, plus a half-resolution
+  shadow mesh. `lib/film.luau` has the model: a foil lies along faces of the case (`spans`, so it
+  wraps from the front glass round the corner onto the side glass), is grabbed at a tab, and peels
+  with a V-shaped fold (the middle leads, so it comes away from the middle outwards) that rolls the
+  free part over a cylinder of tunable radius (a cone, wider away from the middle) and runs a straight,
+  drooping tail to the hand. The fold position is solved from where the hand is, sticks, and slips
+  forward past an adhesion threshold (sound, haptic pulse); a released flap keeps its fold and
+  settles with a damped spring, small peels stick back, and a fully peeled foil detaches and flutters.
+  Only the peeled prefix of the vertices (sorted by distance along the foil) is recomputed.
+- **Shading** (`shaders/plastic.wgsl`): fresnel, a procedural softbox reflection, a highlight, an underside
+  tint (which side is visible follows from the winding of `uv` against screen derivatives, so no extra
+  attribute), crease-noise wrinkle normals, edge glints, bubble lenses; light and view are world
+  vectors, normals arrive in world space so a foil that turns a corner is lit consistently.
+- **The case** is drawn in WGSL in a three-quarter view (`lib/geom.luau`: face frames, oblique
+  projection with pitch and yaw, world axes). The **unboxing** (box, flaps, foam blocks, the case
+  inside) is Blockbench models rendered to layered PNGs (`art/pc-unwrap`); the tape, bag and foil stay live.
+- **Cloth** (`lib/bag.luau`) is Verlet with distance constraints, friction damping, wrinkles from
+  compression; it sleeps when settled. **Protector** (`lib/protector.luau`): bubbles are smooth
+  lenses pushed ahead of a squeegee blade, merged, and let out at the edges.
+- **Frame time**: the demo shows `script ms/frame` (F3 hides it). Desktop release/web release: about 0.2 to
+  3 ms of script while peeling or dragging the bag; on the web the 144 Hz frame rate holds. See the
+  M7 notes in the decision log.
+
 ## 10. Saves and rollback
 
 Implemented in M3 (`kulisa-core::{Value, SaveFile}`, `kulisa-story::Vm`,
@@ -746,3 +777,8 @@ body:   the VM's save: frames, stage, story variables
 | 2026-10-20 | M6: gamepads through gilrs (needs libudev-dev on Linux CI); Android/iOS pads are left for later (gilrs has no backend). |
 | 2026-10-20 | M6: text fields are Luau on top of `start_text` + `text`/`key` events; the engine only routes text, IME and the soft keyboard. Stayed on NativeActivity (Latin soft keyboards verified on the emulator). |
 | 2026-10-20 | M6: Android sensors use the NDK on a dedicated looper thread (the activity's looper logs queue events as spurious); haptics call `Vibrator` through the existing raw JNI helpers. |
+| 2026-10-20 | M7: meshes carry a per-vertex `data` vec4 (f16 on the GPU, 8 bytes per vertex for everything) instead of the demo packing normals into vertex colors: general, no color management, no per-mesh pipelines. |
+| 2026-10-20 | M7: shaded sprites and meshes draw from an unpacked copy of their image (like masks), so UVs are 0..1 and procedural shaders get coordinates; they never batched with unshaded nodes anyway. |
+| 2026-10-20 | M7: sounds gain `rate` and `pan` (kira playback rate and panning) for crinkle variation; pitch variety from a handful of samples instead of more assets. |
+| 2026-10-20 | M7: film shading derives "which side am I seeing" from the winding of `uv` against the screen derivatives, so a flipped flap needs no extra vertex attribute. |
+| 2026-10-20 | M7: the demo's art is procedural WGSL plus Blockbench-rendered layers (box and foam), generated by scripts in `art/` (no hand-kept binaries without a source); the classic-vn and interact art is likewise painted by scripts in `art/`. |
