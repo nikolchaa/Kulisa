@@ -1,0 +1,137 @@
+# The Lantern Road: a short sample adventure. Replace it with yours.
+#
+# `scene <name>` shows images/<name>.png in the illustration panel. Rules from game/rules.luau:
+# give("item"), take("item"), has("item"), heal(n), hurt(n), pay(n) and roll("stat", target),
+# which rolls a d20 + the stat, writes the roll to the log and returns whether it passed.
+# Health, gold, stats and the pack are story variables, so saves keep them.
+
+define mara = Character("Old Mara", { color = "#e8b48a" })
+define tam = Character("Tam", { color = "#9fc4ff" })
+
+default hp = 10
+default max_hp = 10
+default gold = 3
+default might = 1
+default wit = 2
+default luck = 1
+default bag = { lantern = 1, bread = 2 }
+default chapter = "The crossroads"
+default promised = false
+default tam_found = false
+
+label start:
+    scene crossroads
+    "Dusk finds you at the crossroads below Hollin Hill, your lantern knocking against your hip."
+    "The signpost points two ways: down to {b}the Mill{/b} by the river, and up through the pines to {b}the Old Well{/b}."
+    mara "You there. Lantern-bearer."
+    mara "My grandson Tam went down to the mill at noon. He hasn't come back, and the light is going."
+    menu:
+        "“I'll find him.”":
+            $ promised = true
+            mara "Bless you. Take this, for the dark down there."
+            $ give("herb")
+        "“What's it worth to you?”":
+            mara "Three coins now. All I have."
+            $ pay(-3)
+            "She presses the coins into your hand without looking at you."
+    jump mill
+
+label mill:
+    $ chapter = "The mill"
+    scene mill
+    "The mill stands black against the moon. Its wheel still turns, slow, though the stream is almost dry."
+    "Through the gaps in the floorboards, a second light flickers. Someone is below."
+    "The door is barred from the inside."
+    menu:
+        "Put your shoulder to the door. (Might)":
+            if roll("might", 11):
+                "The bar splits with a crack that echoes over the water. You are in."
+            else:
+                "The door holds. Your shoulder does not."
+                $ hurt(2)
+                "In the end you climb in through the window, slowly, swearing."
+        "Look for another way in. (Wit)":
+            if roll("wit", 10):
+                "Behind the water wheel, a hatch. Beside it, a coil of rope someone forgot."
+                $ give("rope")
+            else:
+                "You find the hatch at last, under a bramble that finds you first."
+                $ hurt(1)
+    jump cellar
+
+label cellar:
+    $ chapter = "The cellar"
+    scene cellar
+    "Stone, barrels, the smell of old flour. A lantern you did not bring hangs on a hook, still lit."
+    tam "Who's there? Don't come down the stairs, they're rotten!"
+    "A boy is curled behind the barrels, one leg twisted under him. Tam."
+    $ tam_found = true
+    "On a chest by the wall lies a rusty key, warm to the touch."
+    $ give("key")
+    menu:
+        "Open the chest with the key.":
+            "The lock turns as if it had been waiting. Inside: a purse, a dagger, half a map."
+            $ give("coins")
+            $ give("dagger")
+            $ give("map")
+            tam "That's the miller's. He's been gone a week."
+        "Leave the chest. See to Tam.":
+            "You splint his leg with a barrel stave and your belt. He bites his lip and doesn't cry."
+            if has("herb"):
+                "You give him the woundwort to chew. It helps."
+                $ take("herb")
+    tam "Something followed me down from the well. Eyes in the trees."
+    tam "The only way home is the pine path. Please don't leave me here."
+    "You lift him onto your back. He weighs almost nothing."
+    jump pines
+
+label pines:
+    $ chapter = "The pines"
+    scene wolves
+    "Halfway up the pine path, the lantern light finds them before you do: eyes, low to the ground. Three pairs."
+    tam "Don't run. Grandmother says never run."
+    menu:
+        "Raise the lantern high. (Luck)" if has("lantern"):
+            if roll("luck", 9):
+                "The flame flares as if it heard you. The eyes blink, and are gone."
+            else:
+                "The light gutters. They come in close before they lose their nerve."
+                $ hurt(3)
+        "Draw the dagger. (Might)" if has("dagger"):
+            if roll("might", 12):
+                "You step forward with the blade bare. Wolves know what a blade is. They melt away."
+            else:
+                "One of them doesn't believe you. You win, but it costs you."
+                $ hurt(4)
+        "Throw them the bread." if has("bread"):
+            $ take("bread", if has("bread", 2) then 2 else 1)
+            "The bread lands in the needles. The eyes go to it, and you go past."
+        "Run.":
+            "You run. Tam was right."
+            $ hurt(4)
+    if hp <= 0:
+        jump fallen
+    jump dawn
+
+label fallen:
+    $ chapter = "Fallen"
+    "The lantern rolls out of your hand. The last thing you see is its flame, steady in the needles."
+    "Mara finds you both at first light, alive, barely. Next time, perhaps, the bread."
+    return
+
+label dawn:
+    $ chapter = "Dawn"
+    scene dawn
+    "The pines give way to meadow, and the meadow to Hollin, its chimneys already smoking."
+    mara "Tam! Oh, Tam."
+    if promised:
+        mara "You kept your word, lantern-bearer. That's rarer than coin."
+        $ pay(-5)
+        "She makes you take five coins anyway."
+    else:
+        mara "Our bargain, then. I'll owe you the rest of my life, for what it's worth."
+    if has("map"):
+        "Later, by the fire, you unfold the miller's half a map. An X marks the Old Well."
+        "But that is another road."
+    "You blow out the lantern. You won't need it until tonight."
+    return
