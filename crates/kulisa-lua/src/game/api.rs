@@ -231,6 +231,7 @@ impl UserData for WindowRef {
             with(lua, |st| match key.as_str() {
                 "fullscreen" => Ok(st.display.requests.fullscreen.unwrap_or(st.display.fullscreen)),
                 "can_quit" => Ok(st.display.device.can_quit),
+                "can_resize" => Ok(st.display.device.can_quit),
                 _ => Err(mlua::Error::runtime(format!("the window has no property `{key}`"))),
             })
         });
@@ -244,6 +245,16 @@ impl UserData for WindowRef {
                     Ok(())
                 }
                 _ => Err(mlua::Error::runtime(format!("`window.{key}` cannot be set"))),
+            })
+        });
+        // Resizes a desktop window (logical pixels); ignored elsewhere and while fullscreen.
+        m.add_method("resize", |lua, _, (w, h): (f32, f32)| {
+            if !(w >= 1.0 && h >= 1.0) {
+                return Err(mlua::Error::runtime("`window:resize` needs a width and height of at least 1"));
+            }
+            with(lua, |st| {
+                st.display.requests.window_size = Some((w, h));
+                Ok(())
             })
         });
         // Closes the game where the platform allows it (desktop); see `can_quit`.
@@ -1764,6 +1775,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, ()| with(lua, |st| Ok(st.pointer.map(|p| (p.x, p.y)).unzip())))?,
     )?;
     input.set("down", lua.create_function(|lua, key: String| with(lua, |st| Ok(st.keys.contains(&key))))?)?;
+    // The mouse cursor shape; nil gives the choice back to widgets and hotspots.
+    input.set(
+        "cursor",
+        lua.create_function(|lua, name: Option<String>| {
+            let c = name.map(|n| super::display::cursor_name(&n)).transpose()?;
+            with(lua, |st| {
+                st.display.cursor_script = c;
+                Ok(())
+            })
+        })?,
+    )?;
     // kulisa.input.pointers() -> { { id, x, y, touch, down }, ... }: the mouse and every touch.
     input.set(
         "pointers",

@@ -102,7 +102,41 @@ pub struct Requests {
     /// Desktop: reshape the window to this aspect (width / height) at startup.
     pub window_aspect: Option<f32>,
     pub fullscreen: Option<bool>,
+    /// Desktop: resize the window to this logical size (width, height).
+    pub window_size: Option<(f32, f32)>,
+    /// The mouse cursor shape changed (one of [`CURSORS`]).
+    pub cursor: Option<&'static str>,
     pub quit: bool,
+}
+
+/// Mouse cursor shapes scripts can ask for (`cursor` on widgets and hotspots,
+/// `kulisa.input.cursor`). `hidden` hides the cursor.
+pub const CURSORS: &[&str] = &[
+    "default",
+    "pointer",
+    "text",
+    "move",
+    "grab",
+    "grabbing",
+    "crosshair",
+    "wait",
+    "progress",
+    "help",
+    "not_allowed",
+    "ew_resize",
+    "ns_resize",
+    "nwse_resize",
+    "nesw_resize",
+    "zoom_in",
+    "zoom_out",
+    "hidden",
+];
+
+/// The interned name of a cursor shape, or an error listing the shapes.
+pub(crate) fn cursor_name(name: &str) -> mlua::Result<&'static str> {
+    CURSORS.iter().copied().find(|c| *c == name).ok_or_else(|| {
+        mlua::Error::runtime(format!("unknown cursor `{name}`; use one of: {}", CURSORS.join(", ")))
+    })
 }
 
 /// One profile's settings; unset fields come from the base.
@@ -125,6 +159,20 @@ pub(crate) struct DisplayState {
     pub reported: Option<(FormFactor, &'static str, bool)>,
     /// The window was already shaped (only at startup).
     pub shaped: bool,
+    /// The cursor a script asked for (overrides widgets and hotspots), and the one shown.
+    pub cursor_script: Option<&'static str>,
+    pub cursor_shown: &'static str,
+}
+
+/// Asks the runtime for the cursor scripts, the UI and hotspots want now, if it changed.
+pub(crate) fn update_cursor(st: &mut State) {
+    let ui = st.ui.ui.cursor().and_then(|c| CURSORS.iter().copied().find(|k| *k == c));
+    let want = st.display.cursor_script.or(ui).or_else(|| st.interact.hover_cursor()).unwrap_or("default");
+    let shown = if st.display.cursor_shown.is_empty() { "default" } else { st.display.cursor_shown };
+    if want != shown {
+        st.display.cursor_shown = want;
+        st.display.requests.cursor = Some(want);
+    }
 }
 
 fn profile(t: &Table, modes: &[(&str, ScaleMode)]) -> mlua::Result<Profile> {

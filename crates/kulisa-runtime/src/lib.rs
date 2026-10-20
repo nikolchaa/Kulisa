@@ -240,6 +240,36 @@ impl App {
             });
             let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w * fit, h * fit));
         }
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+        if let Some((w, h)) = r.window_size
+            && window.fullscreen().is_none()
+        {
+            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(w as f64, h as f64));
+        }
+        if let Some(name) = r.cursor {
+            use winit::window::CursorIcon as C;
+            window.set_cursor_visible(name != "hidden");
+            let icon = match name {
+                "pointer" => C::Pointer,
+                "text" => C::Text,
+                "move" => C::Move,
+                "grab" => C::Grab,
+                "grabbing" => C::Grabbing,
+                "crosshair" => C::Crosshair,
+                "wait" => C::Wait,
+                "progress" => C::Progress,
+                "help" => C::Help,
+                "not_allowed" => C::NotAllowed,
+                "ew_resize" => C::EwResize,
+                "ns_resize" => C::NsResize,
+                "nwse_resize" => C::NwseResize,
+                "nesw_resize" => C::NeswResize,
+                "zoom_in" => C::ZoomIn,
+                "zoom_out" => C::ZoomOut,
+                _ => C::Default,
+            };
+            window.set_cursor(icon);
+        }
         if let Some(on) = r.fullscreen {
             window.set_fullscreen(on.then_some(winit::window::Fullscreen::Borderless(None)));
             game.set_fullscreen(on);

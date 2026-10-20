@@ -1294,6 +1294,74 @@ fn ui_screens_rebuild_from_signals_and_take_input() {
 }
 
 #[test]
+fn ui_windows_move_raise_block_and_set_cursors() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        local ui = kulisa.ui
+        log, game_presses = {}, 0
+        kulisa.on("press", function() game_presses += 1 end)
+        local z = 10
+        local function window(name, x, y)
+            ui.screen(name, function()
+                return ui.box{ block = true, clip = true, background = "#303030",
+                    on_press = function() z += 1; ui.set_z(name, z); table.insert(log, "raise " .. name) end,
+                    ui.box{ id = "bar", width = "fill", height = 8, cursor = "move",
+                        on_drag = function(e)
+                            table.insert(log, e.phase)
+                            if e.phase == "move" or e.phase == "end" then
+                                ui.place(name, { x = x + e.dx, y = y + e.dy, width = 30, height = 30 })
+                            end
+                            if e.phase == "end" then x += e.dx; y += e.dy end
+                        end },
+                    ui.box{ id = "spill", x = 25, y = 25, width = 20, height = 20, background = "#ff0000",
+                        on_click = function() table.insert(log, "spill") end },
+                }
+            end, { area = { x = x, y = y, width = 30, height = 30 }, z = 10 })
+            ui.show(name)
+        end
+        window("a", 2, 2)
+        window("b", 20, 20)
+    "##);
+    let at = |g: &mut Game, x: f32, y: f32| g.pointer_moved(Some(v2(x, y)));
+    g.frame(0.016);
+    // b was shown last, so it is on top where the two overlap.
+    at(&mut g, 25.0, 25.0);
+    g.pressed("left");
+    g.released("left");
+    assert_eq!(g.eval::<Vec<String>>("t", "return log").unwrap(), ["raise b"]);
+    assert_eq!(g.eval::<i64>("t", "return game_presses").unwrap(), 0, "the window body blocks");
+    // Clicking a's visible part raises it; the clipped child outside its box is not hit.
+    at(&mut g, 5.0, 15.0);
+    g.pressed("left");
+    g.released("left");
+    at(&mut g, 35.0, 35.0); // a's "spill" button would be here, clipped away; b's body is here
+    g.pressed("left");
+    g.released("left");
+    assert_eq!(g.eval::<Vec<String>>("t", "return log").unwrap(), ["raise b", "raise a", "raise b"]);
+    // The title bar sets the cursor and drags its window.
+    at(&mut g, 5.0, 4.0);
+    assert_eq!(g.take_requests().cursor, Some("move"));
+    g.eval::<()>("t", "log = {}").unwrap();
+    drag(&mut g, 0, (5.0, 4.0), (15.0, 10.0));
+    g.frame(0.016);
+    assert_eq!(
+        g.eval::<Vec<String>>("t", "return log").unwrap(),
+        ["raise a", "start", "move", "move", "end"]
+    );
+    let (x, y, w, _): (f32, f32, f32, f32) = g.eval("t", "return kulisa.ui.bounds('a', 'bar')").unwrap();
+    assert_eq!((x, y, w), (12.0, 8.0, 30.0));
+    // Leaving the bar gives the cursor back; scripts can override it.
+    at(&mut g, 60.0, 5.0);
+    assert_eq!(g.take_requests().cursor, Some("default"));
+    g.eval::<()>("t", "kulisa.input.cursor('wait')").unwrap();
+    assert_eq!(g.take_requests().cursor, Some("wait"));
+    let err = g.eval::<()>("t", "kulisa.input.cursor('spinny')").unwrap_err();
+    assert!(err.contains("unknown cursor"), "{err}");
+    g.eval::<()>("t", "kulisa.window:resize(800, 600)").unwrap();
+    assert_eq!(g.take_requests().window_size, Some((800.0, 600.0)));
+}
+
+#[test]
 fn display_profiles_pick_the_device_override() {
     let main = r##"
         kulisa.display{

@@ -675,7 +675,9 @@ impl Game {
 
     /// What scripts asked the runtime to do since the last call.
     pub fn take_requests(&mut self) -> Requests {
-        std::mem::take(&mut self.state.borrow_mut().display.requests)
+        let mut st = self.state.borrow_mut();
+        display::update_cursor(&mut st);
+        std::mem::take(&mut st.display.requests)
     }
 
     /// Tells scripts whether the window is fullscreen now.
@@ -757,7 +759,7 @@ impl Game {
                 Vec::new()
             }
         };
-        ui::run_events(&self.state, events);
+        ui::run_events(&self.lua, &self.state, events);
         if shifted {
             // A real mouse or touch move: the keyboard focus gives way to it.
             self.pointer_took_over();
@@ -812,7 +814,7 @@ impl Game {
                     st.ui.pressed_by_ui = taken;
                     (taken, events)
                 };
-                ui::run_events(&self.state, events);
+                ui::run_events(&self.lua, &self.state, events);
                 taken = by_ui;
             }
             if !taken {
@@ -879,7 +881,7 @@ impl Game {
                     (false, Vec::new(), None)
                 }
             };
-            ui::run_events(&self.state, events);
+            ui::run_events(&self.lua, &self.state, events);
             if taken {
                 return finished(self);
             }

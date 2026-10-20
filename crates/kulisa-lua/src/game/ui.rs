@@ -50,6 +50,10 @@ pub(crate) struct UiState {
     pub embeds: HashMap<String, Vec<NodeId>>,
     pub layers: HashMap<String, NodeId>,
     pub deps: Deps,
+    /// Text sizes measured for layout, kept across frames (cleared when the scale changes or
+    /// it grows large).
+    pub measured: HashMap<String, Vec2>,
+    pub measured_scale: f32,
     pub gestures: Gestures,
     pub next_signal: u64,
     /// The current press went to the UI.
@@ -69,6 +73,8 @@ impl Default for UiState {
             embeds: HashMap::new(),
             layers: HashMap::new(),
             deps: Deps::default(),
+            measured: HashMap::new(),
+            measured_scale: 0.0,
             gestures: Gestures::default(),
             next_signal: 0,
             pressed_by_ui: false,
@@ -383,6 +389,14 @@ impl Convert<'_> {
         };
         e.on_click = callback(self, "on_click")?;
         e.on_change = callback(self, "on_change")?;
+        e.on_press = callback(self, "on_press")?;
+        e.on_drag = callback(self, "on_drag")?;
+        e.block = self.get(t, "block")?.as_boolean().unwrap_or(false);
+        e.clip = t.raw_get::<Option<bool>>("clip")?.unwrap_or(false);
+        e.cursor = match self.get(t, "cursor")? {
+            LuaValue::Nil => None,
+            v => Some(super::display::cursor_name(&string(&v)?)?.to_string()),
+        };
         if e.on_click.is_some() {
             e.button = true;
         }
@@ -618,14 +632,19 @@ pub(crate) fn update(lua: &Lua, shared: &Shared) {
     }
     let mut st = shared.borrow_mut();
     let st = &mut *st;
-    if !st.ui.ui.needs_layout && !st.ui.ui.changed {
+    if !st.ui.ui.pending_layout() && !st.ui.ui.changed {
         return;
     }
-    if st.ui.ui.needs_layout {
+    if st.ui.ui.pending_layout() {
         let scale = st.scale();
         let State { ui, text, renderer, .. } = st;
-        let mut meter = Meter { text, renderer, scale, cache: HashMap::new() };
+        if ui.measured_scale != scale || ui.measured.len() > 4096 {
+            ui.measured.clear();
+            ui.measured_scale = scale;
+        }
+        let mut meter = Meter { text, renderer, scale, cache: std::mem::take(&mut ui.measured) };
         ui.ui.layout(&mut meter);
+        ui.measured = meter.cache;
     }
     st.ui.ui.changed = false;
     let mut screens = std::mem::take(&mut st.ui.ui.screens);
@@ -841,17 +860,39 @@ pub(crate) fn refresh_all(st: &mut State) {
 }
 
 /// Runs the callbacks for UI events.
-pub(crate) fn run_events(shared: &Shared, events: Vec<UiEvent>) {
+pub(crate) fn run_events(lua: &Lua, shared: &Shared, events: Vec<UiEvent>) {
+    enum Arg {
+        None,
+        Value(f32),
+        Point(Vec2),
+        Drag(&'static str, Vec2, Vec2),
+    }
     for ev in events {
-        let (screen, cb, value) = match ev {
-            UiEvent::Click { screen, callback } => (screen, callback, None),
-            UiEvent::Change { screen, callback, value } => (screen, callback, Some(value)),
+        let (screen, cb, arg) = match ev {
+            UiEvent::Click { screen, callback } => (screen, callback, Arg::None),
+            UiEvent::Change { screen, callback, value } => (screen, callback, Arg::Value(value)),
+            UiEvent::Press { screen, callback, pos } => (screen, callback, Arg::Point(pos)),
+            UiEvent::Drag { screen, callback, phase, pos, start } => {
+                (screen, callback, Arg::Drag(phase.name(), pos, start))
+            }
         };
         let f = shared.borrow().ui.callbacks.get(&screen).and_then(|c| c.get(cb as usize)).cloned();
         if let Some(f) = f {
-            let r = match value {
-                Some(v) => f.call::<()>(v),
-                None => f.call::<()>(()),
+            let r = match arg {
+                Arg::Value(v) => f.call::<()>(v),
+                Arg::None => f.call::<()>(()),
+                Arg::Point(p) => f.call::<()>((p.x, p.y)),
+                Arg::Drag(phase, p, start) => (|| {
+                    let t = lua.create_table()?;
+                    t.set("phase", phase)?;
+                    t.set("x", p.x)?;
+                    t.set("y", p.y)?;
+                    t.set("start_x", start.x)?;
+                    t.set("start_y", start.y)?;
+                    t.set("dx", p.x - start.x)?;
+                    t.set("dy", p.y - start.y)?;
+                    f.call::<()>(t)
+                })(),
             };
             if let Err(e) = r {
                 report(shared, &format!("in screen `{screen}`: {e}"));
@@ -864,12 +905,21 @@ pub(crate) fn run_events(shared: &Shared, events: Vec<UiEvent>) {
 // The `kulisa.ui` table
 
 fn area(v: &LuaValue) -> mlua::Result<Area> {
+    if let LuaValue::Table(t) = v {
+        return Ok(Area::Rect(rect(t)?));
+    }
     Ok(match string(v)?.as_str() {
         "" | "safe" => Area::Safe,
         "screen" => Area::Screen,
         "design" => Area::Design,
-        _ => return Err(bad("area", "\"safe\", \"screen\" or \"design\"")),
+        _ => return Err(bad("area", "\"safe\", \"screen\", \"design\" or { x, y, width, height }")),
     })
+}
+
+/// `{ x, y, width, height }` in design units.
+fn rect(t: &Table) -> mlua::Result<Rect> {
+    let get = |k: &str| -> mlua::Result<f32> { number(&t.get::<LuaValue>(k)?, k) };
+    Ok(Rect::new(get("x")?, get("y")?, get("width")?.max(0.0), get("height")?.max(0.0)))
 }
 
 fn hide(st: &mut State, name: &str) {
@@ -1033,6 +1083,32 @@ pub(crate) fn api(lua: &Lua) -> mlua::Result<Table> {
                 Ok(find(st, &screen, &id)
                     .map(|(_, r)| (r.min.x, r.min.y, r.size().x, r.size().y))
                     .unzip_tuple())
+            })
+        })?,
+    )?;
+    // Lays a screen out in a rectangle (and remembers it for when it is shown again).
+    t.set(
+        "place",
+        lua.create_function(|lua, (name, r): (String, Table)| {
+            let r = rect(&r)?;
+            with(lua, |st| {
+                if let Some(def) = st.ui.defs.get_mut(&name) {
+                    def.area = Area::Rect(r);
+                }
+                st.ui.ui.place(&name, r);
+                Ok(())
+            })
+        })?,
+    )?;
+    t.set(
+        "set_z",
+        lua.create_function(|lua, (name, z): (String, i32)| {
+            with(lua, |st| {
+                if let Some(def) = st.ui.defs.get_mut(&name) {
+                    def.z = z;
+                }
+                st.ui.ui.set_z(&name, z);
+                Ok(())
             })
         })?,
     )?;

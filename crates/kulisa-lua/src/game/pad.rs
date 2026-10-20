@@ -248,7 +248,7 @@ impl Game {
             (nav, active)
         };
         if let Some(Nav::Adjusted(events)) = nav {
-            ui::run_events(&self.state, events);
+            ui::run_events(&self.lua, &self.state, events);
         }
         active
     }
@@ -269,7 +269,7 @@ impl Game {
                 }
             }
         };
-        ui::run_events(&self.state, events);
+        ui::run_events(&self.lua, &self.state, events);
         true
     }
 
@@ -309,7 +309,7 @@ impl Game {
         if let Some(dir) = repeat {
             let nav = self.state.borrow_mut().ui.ui.focus_move(dir);
             if let Nav::Adjusted(events) = nav {
-                ui::run_events(&self.state, events);
+                ui::run_events(&self.lua, &self.state, events);
             }
         }
         let mut st = self.state.borrow_mut();

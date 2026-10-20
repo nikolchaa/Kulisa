@@ -102,6 +102,7 @@ struct Spot {
     area: Area,
     priority: i32,
     block: bool,
+    cursor: Option<&'static str>,
     on: Callbacks,
 }
 
@@ -114,6 +115,14 @@ struct Active {
     down: Vec2,
     moved: bool,
     over: Option<u64>,
+}
+
+impl Interact {
+    /// The cursor of the hotspot under the mouse, if it asks for one.
+    pub(crate) fn hover_cursor(&self) -> Option<&'static str> {
+        let h = self.hover?;
+        self.spots.iter().find(|s| s.id == h && s.area.enabled).and_then(|s| s.cursor)
+    }
 }
 
 #[derive(Default)]
@@ -820,11 +829,15 @@ fn create_spot(lua: &Lua, (node, o): (AnyUserData, Option<Table>)) -> mlua::Resu
     let on = callbacks(&o, &["click", "press", "release", "enter", "leave"])?;
     let priority = o.get::<Option<i32>>("priority")?.unwrap_or(0);
     let block = o.get::<Option<bool>>("block")?.unwrap_or(true);
+    let cursor = match o.get::<Option<String>>("cursor")? {
+        Some(c) => Some(super::display::cursor_name(&c)?),
+        None => None,
+    };
     with(lua, |st| {
         let area = area_of(st, &node, &o, true)?;
         st.interact.next += 1;
         let id = st.interact.next;
-        st.interact.spots.push(Spot { id, area, priority, block, on });
+        st.interact.spots.push(Spot { id, area, priority, block, cursor, on });
         Ok(Handle { kind: Kind::Spot, id })
     })
 }

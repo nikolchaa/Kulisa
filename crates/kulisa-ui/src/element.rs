@@ -269,6 +269,17 @@ pub struct Element {
     /// Host callback ids.
     pub on_click: Option<u64>,
     pub on_change: Option<u64>,
+    /// Called when a press lands inside the widget (before any child handles it). Such
+    /// widgets take presses inside them.
+    pub on_press: Option<u64>,
+    /// Makes the widget draggable: called as the pointer drags it (see [`crate::UiEvent::Drag`]).
+    pub on_drag: Option<u64>,
+    /// Takes pointer input inside it, so nothing below (other screens, the game) gets it.
+    pub block: bool,
+    /// Clips the children to the widget's border box.
+    pub clip: bool,
+    /// The mouse cursor while the pointer is over the widget (the host names the shapes).
+    pub cursor: Option<String>,
     /// Scroll widgets: scroll sideways instead of down; start scrolled to the end.
     pub horizontal: bool,
     pub start_at_end: bool,
@@ -290,7 +301,12 @@ impl Element {
 
     /// Whether the pointer can interact with it.
     pub fn interactive(&self) -> bool {
-        (self.button || self.kind == Kind::Slider) && !self.disabled
+        (self.button || self.kind == Kind::Slider || self.on_drag.is_some()) && !self.disabled
+    }
+
+    /// Whether presses inside it stop here (blocking, press handlers, interactive widgets).
+    pub fn takes_presses(&self) -> bool {
+        self.block || self.on_press.is_some()
     }
 
     /// The look for a state, overrides applied in order: selected, hover, pressed, disabled.

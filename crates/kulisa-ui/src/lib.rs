@@ -18,14 +18,14 @@ pub use element::{
 };
 pub use focus::Nav;
 pub use gesture::{Direction, Gesture, Gestures};
-pub use input::UiEvent;
+pub use input::{DragPhase, UiEvent};
 pub use layout::Measure;
 pub use signal::Deps;
 
 use kulisa_core::{Rect, Vec2};
 
 /// What a screen is laid out against.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Area {
     /// The part of the window the game shows.
     Screen,
@@ -34,6 +34,8 @@ pub enum Area {
     Safe,
     /// The design resolution's rectangle (stays readable on ultrawide screens).
     Design,
+    /// A rectangle in design units (windows, panels, popups).
+    Rect(Rect),
 }
 
 /// The rectangles of each [`Area`], in design units.
@@ -50,6 +52,7 @@ impl Areas {
             Area::Screen => self.screen,
             Area::Safe => self.safe,
             Area::Design => self.design,
+            Area::Rect(r) => r,
         }
     }
 }
@@ -108,6 +111,19 @@ impl<N> Widget<N> {
         f(self);
         for c in &self.children {
             c.walk(f);
+        }
+    }
+
+    /// Moves the widget and its descendants by `d` (design units).
+    pub fn translate(&mut self, d: Vec2) {
+        self.rect.min += d;
+        self.rect.max += d;
+        if let Some(c) = &mut self.clip {
+            c.min += d;
+            c.max += d;
+        }
+        for c in &mut self.children {
+            c.translate(d);
         }
     }
 
@@ -196,6 +212,8 @@ pub struct Screen<N> {
     /// Takes keyboard and gamepad navigation (modal screens always do).
     pub nav: bool,
     pub root: Option<Widget<N>>,
+    /// Needs laying out (its tree or area changed).
+    pub dirty: bool,
 }
 
 /// The shown screens and the pointer state.
@@ -205,7 +223,8 @@ pub struct Ui<N> {
     pub areas: Areas,
     /// Set when interaction states or scroll offsets changed (the host redraws looks).
     pub changed: bool,
-    /// Set when scroll offsets changed (call [`Ui::layout`] again).
+    /// Set when every screen needs laying out again (scrolls, areas); screens whose own tree
+    /// or area changed are marked [`Screen::dirty`]. See [`Ui::pending_layout`].
     pub needs_layout: bool,
     pub(crate) pointer: input::Pointer,
 }
@@ -229,13 +248,54 @@ impl<N: Default> Ui<N> {
             Some(s) => {
                 s.z = z;
                 s.modal = modal;
-                s.area = area;
+                if s.area != area {
+                    s.area = area;
+                    s.dirty = true;
+                }
             }
-            None => {
-                self.screens.push(Screen { name: name.to_string(), z, modal, area, nav: false, root: None })
-            }
+            None => self.screens.push(Screen {
+                name: name.to_string(),
+                z,
+                modal,
+                area,
+                nav: false,
+                root: None,
+                dirty: true,
+            }),
         }
         self.screens.sort_by_key(|s| s.z);
+    }
+
+    /// Changes a screen's draw and input order (higher is on top).
+    pub fn set_z(&mut self, name: &str, z: i32) {
+        if let Some(s) = self.screen_mut(name) {
+            s.z = z;
+            self.screens.sort_by_key(|s| s.z);
+            self.changed = true;
+        }
+    }
+
+    /// Lays a screen out in `rect` (design units). A move that keeps the size shifts the laid
+    /// out widgets instead of laying them out again.
+    pub fn place(&mut self, name: &str, rect: Rect) {
+        let Some(s) = self.screen_mut(name) else { return };
+        let old = s.area;
+        s.area = Area::Rect(rect);
+        match (old, &mut s.root) {
+            (Area::Rect(o), Some(root)) if o.size() == rect.size() && !s.dirty => {
+                let d = rect.min - o.min;
+                if d != Vec2::ZERO {
+                    root.translate(d);
+                    self.changed = true;
+                }
+            }
+            _ => s.dirty = true,
+        }
+    }
+
+    /// Whether [`Ui::layout`] has work to do.
+    pub fn pending_layout(&self) -> bool {
+        self.needs_layout || self.screens.iter().any(|s| s.dirty)
     }
 
     /// Hides a screen; returns the host data of all its widgets.
@@ -257,18 +317,23 @@ impl<N: Default> Ui<N> {
         if let Some(s) = self.screen_mut(name) {
             let old = s.root.take().into_iter().collect();
             s.root = reconcile(old, vec![root], &mut removed).pop();
+            s.dirty = true;
         }
         removed
     }
 
-    /// Lays out every screen against its area.
+    /// Lays out the screens that need it (all of them after [`Ui::needs_layout`]).
     pub fn layout(&mut self, measure: &mut dyn Measure) {
         let areas = self.areas;
-        self.needs_layout = false;
+        let all = std::mem::take(&mut self.needs_layout);
         for s in &mut self.screens {
-            if let Some(root) = &mut s.root {
+            if (all || s.dirty)
+                && let Some(root) = &mut s.root
+            {
                 layout::layout_root(root, areas.get(s.area), measure);
+                self.changed = true;
             }
+            s.dirty = false;
         }
     }
 

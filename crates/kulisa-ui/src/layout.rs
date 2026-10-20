@@ -231,6 +231,9 @@ fn arrange<N>(w: &mut Widget<N>, rect: Rect, m: &mut dyn Measure) {
         }
         _ => {}
     }
+    if w.el.clip && w.clip.is_none() {
+        w.clip = Some(rect);
+    }
 }
 
 /// Places children in a row (`a` = 0) or column inside `inner`.

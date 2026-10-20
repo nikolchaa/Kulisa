@@ -45,7 +45,11 @@ Scripts run in Luau's sandbox: no `io`, `os.execute` or `loadfile`; library tabl
   `"portrait"`, the window's shape now), `mismatch` (the device should be rotated), `touch`.
   The `display` event (`{ profile, orientation, mismatch }`) fires when these change.
 - `kulisa.window`: `fullscreen` (read and write; desktop and web), `can_quit`, `window:quit()`
-  (desktop only; mobile apps and pages are closed by the player).
+  (desktop only; mobile apps and pages are closed by the player), `can_resize` and
+  `window:resize(width, height)` (logical pixels; desktop windows that are not fullscreen).
+- `kulisa.display` may be called again while the game runs, e.g. to switch the scale mode or the
+  aspect limits from a settings screen; the camera goes back to the design center and screens
+  lay out again (the profile and the window shape stay as chosen at startup).
 - Testing: `KULISA_PROFILE=phone` and `KULISA_SAFE_AREA=left,top,right,bottom` (pixels) force
   a profile and insets on desktop; on the web, `?profile=phone&safe=0,40,0,30`.
 - `screen:capture(width, height, image?)` → an image of the screen as it is now, drawn as if
@@ -168,7 +172,7 @@ local tri = kulisa.mesh{ positions = { 0, 0, 100, 0, 0, 100 }, indices = { 1, 2,
 - `data` is four numbers per vertex (default zeros) that shaders read as `in.data`, interpolated
   across triangles: surface normals, heights, flags, anything a custom shader wants. They are
   passed as they are (not color managed, unaffected by `tint` and `opacity`) and stored as 16-bit
-  floats on the GPU, so keep values within about �1000 and expect three decimals near 1.
+  floats on the GPU, so keep values within about ±1000 and expect three decimals near 1.
 - Per vertex (numbered from 1): `mesh:vertex(i)` → `x, y, u, v`; `mesh:set_vertex(i, x, y, u?,
   v?)` (UVs change only when both are given); `mesh:set_color(i, color)`;
   `mesh:vertex_at(col, row)` → the number of a grid vertex (columns `0..cols`).
@@ -230,6 +234,11 @@ end)
 | `error` | message |
 | `display` | `{ profile, orientation, mismatch }`, see Display |
 | `say`, `menu`, `pause`, `end`, `stage`, `restore` | see Story |
+
+`kulisa.input.cursor(name?)` sets the mouse cursor (desktop and browsers): `default`, `pointer`,
+`text`, `move`, `grab`, `grabbing`, `crosshair`, `wait`, `progress`, `help`, `not_allowed`,
+`ew_resize`, `ns_resize`, `nwse_resize`, `nesw_resize`, `zoom_in`, `zoom_out` or `hidden`; nil gives
+the choice back to UI widgets and hotspots with a `cursor`.
 
 `kulisa.input.pointer()` → `x, y` or nil (the primary pointer); `kulisa.input.pointers()` →
 `{ { id, x, y, touch, down }, ... }`, the mouse and every finger; `kulisa.input.down(key)` →
@@ -354,7 +363,8 @@ started), `moved` (it traveled beyond a few units) and `accepted`.
 - `kulisa.hotspot(node, opts)` → handle (`hovered`): a clickable area. Callbacks `on_click`
   (pressed and released on it), `on_press`, `on_release`, `on_enter`, `on_leave` (the mouse; the
   UI and drags hide it). Options: `priority` (higher wins over what is drawn on top; default 0)
-  and `block` (default true: its presses do not reach `press`).
+  and `block` (default true: its presses do not reach `press`), `cursor` (a cursor name shown
+  while the mouse is over it, see Events and input).
 
 ## UI
 
@@ -386,8 +396,13 @@ who:set("Ren") -- the screen rebuilds next frame
   `fn(props)` returns one widget. `z` orders screens (higher on top). `modal` screens block
   pointer input to everything below. `area` is what the screen's root is laid out in:
   `"safe"` (the visible screen minus notches and system bars), `"screen"` (the whole visible
-  screen) or `"design"` (the design resolution's rectangle, for text boxes that should stay
-  readable on ultrawide screens).
+  screen), `"design"` (the design resolution's rectangle, for text boxes that should stay
+  readable on ultrawide screens) or `{ x, y, width, height }` in design units (windows, panels,
+  popups).
+- `ui.place(name, { x, y, width, height })` lays a screen out in that rectangle from now on: moving
+  a window. A move that keeps the size only shifts the laid out widgets (no layout, no text
+  measuring), so dragging windows every frame is cheap. `ui.set_z(name, z)` changes a screen's
+  order (raising a window).
 - `ui.show(name, props?)` shows a screen (or rebuilds it with new props) right away;
   `ui.hide(name)`, `ui.shown(name)`, `ui.refresh(name?)` (all shown screens without a name),
   `ui.flush()` (rebuild what is due now instead of next frame).
@@ -449,6 +464,11 @@ Properties every widget takes:
 | `x`, `y` | Moves the widget after layout. |
 | `background`, `tint`, `opacity`, `slice`, `slice_scale` | A color (`"#rrggbb"`, `{ r, g, b, a }`), an image (path or image) or a tinted image (`{ image = ..., tint = ... }`) behind the widget; `tint` multiplies the background; opacity of the widget and its children; nine-slice borders for an image background (sliders' bars use them too). |
 | `color` | Text color. |
+| `block = true` | Takes presses inside it, so they reach neither the screens below nor the game (a window's body). |
+| `clip = true` | Clips the children to the widget's box (a window's content). |
+| `on_press(x, y)` | Runs when a press lands inside the widget, before a child button reacts (focusing a window). The widget takes presses like `block`. |
+| `on_drag(e)` | Makes the widget draggable. Runs with `e.phase` `"start"` (the pointer moved a few units while pressed), `"move"` and `"end"` (released), and `e.x`, `e.y`, `e.start_x`, `e.start_y`, `e.dx`, `e.dy` (from the press). A drag is not a click: `on_click` runs only when the pointer did not move. Title bars, resize grips, icons. |
+| `cursor` | The mouse cursor while over the widget (or dragging it), see Events and input. |
 | `visible = false` | Leaves the widget out. |
 | `hover_*`, `pressed_*`, `selected_*`, `disabled_*` | Any of `background`, `tint`, `opacity`, `color`, `image`, `bar`, `thumb`, `slice`, `slice_scale` for that state, e.g. `hover_background`, `selected_color`. Widgets inside a button follow the button's state. |
 
