@@ -5,10 +5,6 @@
 **/*.rs.bk
 *.pdb
 
-# Local assistant config (never commit)
-CLAUDE.md
-.claude/
-
 # Platform build outputs
 /dist/
 /web/pkg/

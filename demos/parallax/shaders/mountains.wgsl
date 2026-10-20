@@ -1,4 +1,4 @@
-// A mountain range from a data texture (art/parallax/mountains.py): red is the rock's lightness under
+// A mountain range from a data texture (images/mountains_*.png): red is the rock's lightness under
 // a sun on the left, green under a sun on the right (both with cast shadows), blue is snow, alpha
 // the outline. The palette for the time of day comes in as params:
 //   p[0] = (lit rock color rgb (linear), light side 0 = from the left .. 1 = from the right)

@@ -50,5 +50,5 @@ cargo xtask apk --game templates/classic-vn
 `images/mila happy.png` (the first word is the tag; showing `mila neutral` replaces it).
 Missing images show a labelled placeholder. Positions are in `config.positions`.
 
-The art here is original, painted by the scripts in `art/classic-vn` (characters, backgrounds, panels); replace it.
+The art here (characters, backgrounds, panels) is original placeholder art; replace it.
 Inter is under the SIL Open Font License (`fonts/Inter-OFL.txt`).

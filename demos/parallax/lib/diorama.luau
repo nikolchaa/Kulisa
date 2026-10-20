@@ -1,4 +1,4 @@
--- The diorama: one ray-marched picture and its depth map (art/parallax/diorama.py) drawn through
+-- The diorama: one ray-marched picture and its depth map (images/diorama*.png) drawn through
 -- a steep-parallax shader, so the still image turns like a small 3D scene as the view moves.
 -- Dust motes drift in front of it.
 
