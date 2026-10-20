@@ -1,306 +1,361 @@
--- The bag: a loose sheet of translucent plastic lying over the case, simulated as cloth. You grab
--- it anywhere and drag; the cloth follows with some lag, bunches where it is pushed together and
--- lifts into a tent around your hand. Slide it far enough and it slips off by itself.
+-- The bag: a sleeve of milky plastic pulled over the case from the top, its open end tucked under
+-- the case. It comes off one way only: up and over the top, while the case stays on the desk and
+-- leaves through the opening (like a sock pulled off a foot). Dragging moves it along that path
+-- only; sideways pulls just make it lean.
 --
--- The simulation is position-based (Verlet): positions only, distance constraints between grid
--- neighbours, and heavy damping for the friction against the case. Heights come from how much
--- the cloth is compressed, and go to the plastic shader as normals through the mesh's `data`.
+-- The state is one number, `s`: how far the bag has been pulled up (cm). Every point of the bag
+-- has fixed material coordinates (u around, v down from the top rim) and is placed from s each
+-- frame: wall material still beside the case lies on the case's wall at height top - v + s; the
+-- material above the case gathers into a narrowing neck below the closed end, and the hem (the
+-- open end) climbs up the case. Wrinkles come from a height field in material coordinates, so they
+-- travel with the plastic; the neck adds folds where the plastic bunches. Past s = the wall's
+-- length, the hem clears the top and the bag is off: it hangs from the hand, then drops.
 
 local Geom = require("lib/geom")
 
-local exp, sqrt, abs, min, max = math.exp, math.sqrt, math.abs, math.min, math.max
+local sin, sqrt, min, max, exp, abs = math.sin, math.sqrt, math.min, math.max, math.exp, math.abs
 
 local Bag = {}
 Bag.__index = Bag
 
-local COLS, ROWS = 18, 12
-local X0, Y0, W, H = 150, 36, 960, 750
+-- The bag around the case (cm): a little bigger than the case, the hem tucked under it.
+local X0, X1, Z0, Z1 = -23.8, 23.8, -12.3, 12.3
+local TOP, HEM = 49.9, -0.6
+local LEN = TOP - HEM -- wall length, top rim to hem
 
-function Bag.new(parent, image, z: number)
-    local self = setmetatable({}, Bag)
-    local n = (COLS + 1) * (ROWS + 1)
-    self.n = n
-    self.hx, self.hy = W / COLS, H / ROWS
-    local light, view = Geom.light, Geom.view
-    self.params = {
-        light[1], light[2], light[3], 0.3,
-        view[1], view[2], view[3], 0.1,
-        0.85, 0.9, 1.0, 0.1,
-        W, H, 1 + 8, 1,
+-- Pieces: the glass-side wall, the front wall and the closed top. Grid sizes and extents.
+local PIECES = {
+    side = { cols = 20, rows = 22 },
+    front = { cols = 10, rows = 22 },
+    top = { cols = 20, rows = 10 },
+}
+
+local function smooth(a: number, b: number, x: number): number
+    local t = math.clamp((x - a) / (b - a), 0, 1)
+    return t * t * (3 - 2 * t)
+end
+
+-- How far the plastic `e` cm above the case top has gathered towards the middle (0..0.8).
+local function gather(e: number): number
+    if e <= 0 then
+        return 0
+    end
+    return 0.8 * e / (e + 9)
+end
+
+-- The pieces' sizes in face units (for their prints).
+function Bag.sizes()
+    local fu = Geom.FU
+    return {
+        side = { (X1 - X0) * fu, LEN * fu },
+        front = { (Z1 - Z0) * fu, LEN * fu },
+        top = { (X1 - X0) * fu, (Z1 - Z0) * fu },
     }
-    self.mesh = kulisa.mesh({
-        parent = parent, image = image, cols = COLS, rows = ROWS, width = W, height = H,
-        shader = kulisa.load_shader("shaders/plastic.wgsl"), params = self.params, z = z,
-    })
-    self.X, self.Y, self.PX, self.PY = table.create(n), table.create(n), table.create(n), table.create(n)
-    self.Hh, self.comp, self.gw = table.create(n, 0), table.create(n, 0), table.create(n, 0)
-    self.pos = buffer.create(n * 8)
-    self.dat = buffer.create(n * 16)
-    -- Constraint lists: horizontal and vertical neighbours.
-    self.ca, self.cb, self.cl, self.ck = {}, {}, {}, {}
-    for r = 0, ROWS do
-        for c = 0, COLS do
-            local i = r * (COLS + 1) + c + 1
-            if c < COLS then
-                table.insert(self.ca, i)
-                table.insert(self.cb, i + 1)
-                table.insert(self.cl, self.hx)
-                table.insert(self.ck, 1)
-            end
-            if r < ROWS then
-                table.insert(self.ca, i)
-                table.insert(self.cb, i + COLS + 1)
-                table.insert(self.cl, self.hy)
-                table.insert(self.ck, 1)
-            end
-            -- Diagonals keep cells from collapsing (and the outline from zigzagging).
-            if c < COLS and r < ROWS then
-                local diag = sqrt(self.hx * self.hx + self.hy * self.hy)
-                table.insert(self.ca, i)
-                table.insert(self.cb, i + COLS + 2)
-                table.insert(self.cl, diag)
-                table.insert(self.ck, 0.3)
-                table.insert(self.ca, i + 1)
-                table.insert(self.cb, i + COLS + 1)
-                table.insert(self.cl, diag)
-                table.insert(self.ck, 0.3)
-            end
-        end
+end
+
+function Bag.new(parent, prints, z: number)
+    local self = setmetatable({}, Bag)
+    local shader = kulisa.load_shader("shaders/plastic.wgsl")
+    local light, view = Geom.light, Geom.view
+    local sizes = Bag.sizes()
+    self.pieces = {}
+    for name, p in PIECES do
+        local n = (p.cols + 1) * (p.rows + 1)
+        local w, h = sizes[name][1], sizes[name][2]
+        local image = prints[name]
+        local params = {
+            light[1], light[2], light[3], 0.35,
+            view[1], view[2], view[3], 0.09,
+            0.86, 0.9, 1.0, 0.09,
+            w, h, 1 + (if image then 8 else 0), 1,
+        }
+        self.pieces[name] = {
+            cols = p.cols, rows = p.rows, n = n, params = params,
+            mesh = kulisa.mesh({
+                parent = parent, image = image, cols = p.cols, rows = p.rows, width = w, height = h,
+                shader = shader, params = params, z = z + (if name == "top" then 0 else 1),
+            }),
+            pos = buffer.create(n * 8), dat = buffer.create(n * 16),
+            X = table.create(n, 0), Y = table.create(n, 0), Z = table.create(n, 0), H = table.create(n, 0),
+        }
     end
     self:reset()
     return self
 end
 
 function Bag:reset()
-    for r = 0, ROWS do
-        for c = 0, COLS do
-            local i = r * (COLS + 1) + c + 1
-            local x, y = X0 + W * c / COLS, Y0 + H * r / ROWS
-            self.X[i], self.Y[i], self.PX[i], self.PY[i] = x, y, x, y
-            self.Hh[i], self.comp[i], self.gw[i] = 0, 0, 0
-        end
-    end
+    self.s, self.target = 0, 0
     self.held = false
+    self.fling = false
     self.gone = false
-    self.crumple = self.crumple or 0
-    self.glide = 0
-    self.gdx, self.gdy = 0, 0
-    self.mesh.visible = true
-    self.params[16] = 1
-    self.mesh.params = self.params
+    self.free = nil
+    self.lean = 0
+    self.speed = 0
     self.moved = 0
-    self.nx, self.ny = nil, nil
     self.asleep = false
-    self:_write()
+    for _, p in self.pieces do
+        p.mesh.visible = true
+        p.mesh.x, p.mesh.y = 0, 0
+        p.params[16] = 1
+        p.mesh.params = p.params
+    end
+    self:_place()
 end
 
--- Redraw now (after something other than the cloth changed, e.g. the crumpling).
+-- Redraw now (after the PC moved or a reset).
 function Bag:wake()
     self.asleep = false
-    self:_write()
+    self:_place()
 end
 
 function Bag:contains(sx: number, sy: number): boolean
-    if self.gone then
+    if self.gone or self.free then
         return false
     end
-    -- The cloth's bounding box is a good enough hit area (it covers the case anyway).
-    local X, Y = self.X, self.Y
-    local minx, maxx, miny, maxy = 1e9, -1e9, 1e9, -1e9
-    for i = 1, self.n do
-        minx, maxx = min(minx, X[i]), max(maxx, X[i])
-        miny, maxy = min(miny, Y[i]), max(maxy, Y[i])
-    end
-    return sx >= minx and sx <= maxx and sy >= miny and sy <= maxy
+    local b = self.bounds
+    return b ~= nil and sx >= b[1] and sx <= b[2] and sy >= b[3] and sy <= b[4]
 end
+
+-- Stage units per centimetre straight up, for turning a drag into a pull.
+local _, UP_Y = Geom.vec(0, 1, 0)
+local UP = -UP_Y
 
 function Bag:begin_grab(sx: number, sy: number)
     self.held = true
     self.asleep = false
+    self.gx, self.gy = sx, sy
+    self.g_s = self.target
     self.lx, self.ly = sx, sy
-    self.nx, self.ny = sx, sy
-    self.glide = 0
-    -- Influence of the hand on each vertex: a soft blob around where it landed.
-    local X, Y, gw = self.X, self.Y, self.gw
-    local sigma2 = 2 * 120 * 120
-    for i = 1, self.n do
-        local dx, dy = X[i] - sx, Y[i] - sy
-        gw[i] = exp(-(dx * dx + dy * dy) / sigma2)
-    end
 end
 
 function Bag:drag(sx: number, sy: number)
-    self.nx, self.ny = sx, sy
+    -- Only the upward part of the drag pulls the bag; it cannot be pushed further down than it
+    -- started, nor sideways.
+    self.target = max(0, self.g_s + (self.gy - sy) / UP)
+    self.lean = math.clamp((sx - self.gx) / 140, -1, 1)
+    self.lx, self.ly = sx, sy
 end
 
 function Bag:release()
     self.held = false
-end
-
-local function extents(self)
-    local X, Y = self.X, self.Y
-    local minx, maxx, miny, maxy = 1e9, -1e9, 1e9, -1e9
-    for i = 1, self.n do
-        minx, maxx = min(minx, X[i]), max(maxx, X[i])
-        miny, maxy = min(miny, Y[i]), max(maxy, Y[i])
+    if self.free then
+        self.free.held = false
+        return
     end
-    return minx, maxx, miny, maxy
+    -- Flicked upwards or pulled most of the way: it keeps going and comes off.
+    if self.speed > 500 or self.s > LEN * 0.6 then
+        self.fling = true
+    end
 end
 
--- How far the bag has slid towards clearing the case, 0..1 (the best direction).
-function Bag:progress(): number
-    local minx, maxx, miny, maxy = extents(self)
-    local o = 24 -- margin beyond the case
-    local ox0, ox1 = Geom.CASE_LEFT - o, Geom.CASE_RIGHT + o
-    local oy0, oy1 = Geom.CASE_TOP - o, Geom.CASE_BOTTOM + o
-    local left = (X0 + W - maxx) / ((X0 + W) - ox0)
-    local right = (minx - X0) / (ox1 - X0)
-    local up = (Y0 + H - maxy) / ((Y0 + H) - oy0)
-    local down = (miny - Y0) / (oy1 - Y0)
-    return max(max(left, right), max(up, down))
+-- Pulled off: it hangs from the hand, then drops away.
+function Bag:_come_off()
+    -- While held it moves with the hand from where it came off; flung, it rises a little first.
+    self.free = { x = 0, y = 0, vx = 0, vy = -260, held = self.held, base_x = self.lx or 0, base_y = self.ly or 0 }
+    if self.on_slide_off then
+        self.on_slide_off(self.lean)
+    end
 end
 
 function Bag:update(dt: number)
     if self.gone then
         return
     end
+    if self.free then
+        self:_free_step(dt)
+        return
+    end
     if self.asleep and not self.held then
         return
     end
-    local n, X, Y, PX, PY, gw, comp = self.n, self.X, self.Y, self.PX, self.PY, self.gw, self.comp
-    -- The hand drags the vertices near it (a position change, so the cloth picks up velocity).
-    local dx, dy = 0, 0
-    if self.held and self.nx then
-        dx, dy = self.nx - self.lx, self.ny - self.ly
-        self.lx, self.ly = self.nx, self.ny
-        self.moved += sqrt(dx * dx + dy * dy)
+    local before = self.s
+    if self.fling then
+        self.target = self.target + dt * (60 + self.s * 2)
+    elseif not self.held then
+        -- Let go part way: the plastic above the case has nothing to hold it and slides back down.
+        self.target = max(0, self.target - dt * 22)
     end
-    self.last_move = sqrt(dx * dx + dy * dy) / max(dt, 1e-3)
-    local damp = 0.78 ^ (dt * 60) -- friction against the case, independent of the frame rate
-    local held = self.held
-    local gl = if self.glide > 0 then self.glide * 24 else 0
-    local gx, gy = self.gdx * gl, self.gdy * gl
-    for i = 1, n do
-        local vx, vy = (X[i] - PX[i]) * damp, (Y[i] - PY[i]) * damp
-        local w = if held then 0.5 + gw[i] * 0.48 else 0
-        -- The hand moves vertices directly and does not give them momentum.
-        local ox, oy = X[i] + dx * w, Y[i] + dy * w
-        PX[i], PY[i] = ox, oy
-        X[i] = ox + vx + gx
-        Y[i] = oy + vy + gy
+    -- Friction against the case: the bag follows the hand with a little lag.
+    self.s += (self.target - self.s) * min(1, dt * 11)
+    if not self.held then
+        self.lean += (0 - self.lean) * min(1, dt * 6)
     end
-    -- Distance constraints, a few relaxation passes. Compression is remembered as wrinkles.
-    for i = 1, n do
-        comp[i] = 0
+    self.speed = (self.s - before) / max(dt, 1e-3) * UP
+    self.moved += abs(self.s - before)
+    if self.s >= LEN then
+        self.s = LEN
+        self.fling = false
+        self:_place()
+        self:_come_off()
+        return
     end
-    local ca, cb, cl, ck = self.ca, self.cb, self.cl, self.ck
-    local count = #ca
-    for pass = 1, 4 do
-        for k = 1, count do
-            local a, b = ca[k], cb[k]
-            local ex, ey = X[b] - X[a], Y[b] - Y[a]
-            local d = sqrt(ex * ex + ey * ey)
-            local rest = cl[k]
-            if d > 1e-4 then
-                -- Stretching is fought harder than compression: cloth bunches up but does not stretch.
-                local diff = (d - rest) / d * ck[k] * (if d > rest then 0.5 else 0.22)
-                local mx, my = ex * diff, ey * diff
-                X[a] += mx
-                Y[a] += my
-                X[b] -= mx
-                Y[b] -= my
-                if pass == 4 and d < rest then
-                    local c = (rest - d) / rest
-                    comp[a] += c
-                    comp[b] += c
-                end
-            end
-        end
-    end
-    -- Slide off on its own once far enough: the bag glides away in the direction it was moved.
-    if self.glide == 0 then
-        local prog = self:progress()
-        if prog > 0.36 and (not held or prog > 0.6) then
-            local cx, cy = 0, 0
-            for i = 1, n do
-                cx += X[i] - (X0 + W * ((i - 1) % (COLS + 1)) / COLS)
-                cy += Y[i] - (Y0 + H * ((i - 1) // (COLS + 1)) / ROWS)
-            end
-            local l = sqrt(cx * cx + cy * cy)
-            self.gdx, self.gdy = cx / max(l, 1), cy / max(l, 1)
-            self.glide = 0.01
-            if self.on_slide_off then
-                self.on_slide_off(self.gdx)
-            end
-        end
-    else
-        self.glide += dt * 1.6
-        local fade = max(0, 1 - max(0, self.glide - 0.35) * 1.5)
-        self.params[16] = fade
-        self.mesh.params = self.params
-        if fade <= 0 then
-            self.gone = true
-            self.mesh.visible = false
-            if self.on_gone then
-                self.on_gone()
-            end
-            return
-        end
-    end
-    -- Settled: stop simulating until it is touched again.
-    local moving = 0
-    for i = 1, n do
-        moving += abs(X[i] - PX[i]) + abs(Y[i] - PY[i])
-    end
-    self:_write()
-    if not held and self.glide == 0 and moving < 0.02 * n then
+    self:_place()
+    if not self.held and not self.fling and abs(self.s - self.target) < 0.01 and abs(self.lean) < 0.01 then
         self.asleep = true
     end
 end
 
-function Bag:_write()
-    local n, X, Y, Hh, comp, gw = self.n, self.X, self.Y, self.Hh, self.comp, self.gw
-    local face = Geom.left
-    local Zx, Zy = face.zx, face.zy
-    local tent = if self.held then 20 else 0
-    local crumple = self.crumple or 0
-    for i = 1, n do
-        local c, r = (i - 1) % (COLS + 1), (i - 1) // (COLS + 1)
-        local noise = 0
-        if crumple > 0 then
-            -- A crumpled bag in the box: fixed lumps and folds.
-            noise = crumple * (13 * math.sin(c * 1.9 + r * 1.1) * math.cos(r * 2.3 - c * 0.7) + 7 * math.sin((c + r) * 2.7))
-        end
-        local target = min(comp[i] * 70, 26) + tent * gw[i] + noise
-        Hh[i] += (target - Hh[i]) * 0.35
+function Bag:_free_step(dt: number)
+    local f = self.free
+    if f.held then
+        local nx, ny = self.lx, self.ly
+        f.vx, f.vy = (nx - (f.px or nx)) / max(dt, 1e-3), (ny - (f.py or ny)) / max(dt, 1e-3)
+        f.px, f.py = nx, ny
+        f.x, f.y = nx - f.base_x, ny - f.base_y
+    else
+        -- Falls: gravity and a little air drag; fades as it drops out of view.
+        f.vy += 1500 * dt
+        f.vx *= exp(-1.5 * dt)
+        f.x += f.vx * dt
+        f.y += f.vy * dt
+        f.fall = (f.fall or 0) + dt
     end
-    local pos, dat = self.pos, self.dat
-    local w1 = COLS + 1
-    local inv = 1 / (2 * self.hx)
-    local invy = 1 / (2 * self.hy)
-    for r = 0, ROWS do
-        for c = 0, COLS do
-            local i = r * w1 + c + 1
-            local l = if c > 0 then Hh[i - 1] else Hh[i]
-            local rr = if c < COLS then Hh[i + 1] else Hh[i]
-            local u = if r > 0 then Hh[i - w1] else Hh[i]
-            local d = if r < ROWS then Hh[i + w1] else Hh[i]
-            local nx, ny = -(rr - l) * inv * 6, -(d - u) * invy * 6
-            local il = 1 / sqrt(nx * nx + ny * ny + 1)
-            local ao = min(0.3, comp[i] * 0.6)
-            local k = (1 - ao) * il
-            local z = Hh[i]
-            local o8, o16 = (i - 1) * 8, (i - 1) * 16
-            buffer.writef32(pos, o8, X[i] + z * Zx)
-            buffer.writef32(pos, o8 + 4, Y[i] + z * Zy)
-            local wx, wy, wz = Geom.world_normal(face, nx, ny, 1)
-            buffer.writef32(dat, o16, wx * k)
-            buffer.writef32(dat, o16 + 4, wy * k)
-            buffer.writef32(dat, o16 + 8, wz * k)
+    local fade = 1 - smooth(0.5, 1.1, f.fall or 0)
+    for _, p in self.pieces do
+        p.params[16] = fade
+        p.mesh.params = p.params
+        p.mesh.x, p.mesh.y = f.x, f.y
+    end
+    if fade <= 0 then
+        self.gone = true
+        for _, p in self.pieces do
+            p.mesh.visible = false
+        end
+        if self.on_gone then
+            self.on_gone()
         end
     end
-    self.mesh:set_positions(pos)
-    self.mesh:set_data(dat)
 end
+
+-- Material height field (cm): loose plastic puffing off the case, creases that run mostly down
+-- the bag, and folds where the neck gathers it. u, v in cm.
+local function height(u: number, v: number, e: number): number
+    local h = 0.25 + 0.22 * sin(u * 0.55 + sin(v * 0.21) * 1.7) * sin(v * 0.17 + u * 0.13)
+        + 0.14 * sin(u * 1.7 + v * 0.35 + 1.3) + 0.08 * sin(u * 3.1 - v * 0.6)
+    -- The hem flares out and waves.
+    local hem = smooth(LEN - 5, LEN, v)
+    h += hem * (0.9 + 0.5 * sin(u * 0.8))
+    -- Gathered plastic folds up.
+    if e > 0 then
+        h += gather(e) * 2.4 * (0.5 + 0.5 * sin(u * 1.3 + e * 0.2))
+    end
+    return h
+end
+
+-- Places a wall point: material u (cm along the wall), v (cm down from the top rim). `wall`
+-- gives the wall's line round the case: base (x, z) at u, and its outward normal (nx, nz).
+local function wall_point(s: number, bx: number, bz: number, nx: number, nz: number, u: number, v: number)
+    local y = TOP - v + s
+    local e = y - TOP
+    local h = height(u, v, e)
+    local x, z = bx + nx * h, bz + nz * h
+    if e > 0 then
+        local g = gather(e)
+        x, z = x * (1 - g), z * (1 - g)
+        y = TOP + e * 0.93
+    end
+    return x, y, z, e, h
+end
+
+function Bag:_place()
+    local s = self.s
+    local lean = self.lean
+    local minx, maxx, miny, maxy = 1e9, -1e9, 1e9, -1e9
+    local project = Geom.project
+    for name, p in self.pieces do
+        local cols, rows = p.cols, p.rows
+        local X, Y, Z, H = p.X, p.Y, p.Z, p.H
+        for r = 0, rows do
+            for c = 0, cols do
+                local i = r * (cols + 1) + c + 1
+                local x, y, z, e
+                if name == "side" then
+                    local u = (X1 - X0) * c / cols
+                    local v = LEN * r / rows
+                    x, y, z, e, H[i] = wall_point(s, X1 - u, Z0, 0, -1, u, v)
+                elseif name == "front" then
+                    local u = (Z1 - Z0) * c / cols
+                    local v = LEN * r / rows
+                    x, y, z, e, H[i] = wall_point(s, X0, Z0 + u, -1, 0, u + 60, v)
+                else
+                    -- The closed end: lies on the top, gathered and lifted with the neck.
+                    local bx = X1 - (X1 - X0) * c / cols
+                    local bz = Z1 - (Z1 - Z0) * r / rows
+                    local g = gather(s)
+                    local h = 0.35 + 0.2 * sin(bx * 0.5 + bz * 0.7) + g * 1.5
+                    x, z = bx * (1 - g), bz * (1 - g)
+                    y = TOP + h + s * 0.93
+                    e = s
+                    H[i] = h
+                end
+                X[i], Y[i], Z[i] = x, y, z
+                local sx, sy = project(x, y, z)
+                -- A sideways pull leans the gathered part towards the hand.
+                if e > 0 then
+                    sx += lean * 26 * e / (e + 8)
+                end
+                local o8 = (i - 1) * 8
+                buffer.writef32(p.pos, o8, sx)
+                buffer.writef32(p.pos, o8 + 4, sy)
+                minx, maxx = min(minx, sx), max(maxx, sx)
+                miny, maxy = min(miny, sy), max(maxy, sy)
+            end
+        end
+        self:_normals(name, p)
+        p.mesh:set_positions(p.pos)
+        p.mesh:set_data(p.dat)
+    end
+    self.bounds = { minx, maxx, miny, maxy }
+end
+
+-- Normals from neighbouring points (in case space, then to camera space for the shader).
+function Bag:_normals(name: string, p)
+    local cols, rows = p.cols, p.rows
+    local X, Y, Z = p.X, p.Y, p.Z
+    local w1 = cols + 1
+    local X3, Y3, Z3 = Geom.X3, Geom.Y3, Geom.Z3
+    -- Which way is out: the side faces -z, the front -x, the top +y.
+    local ox, oy, oz = 0, 0, -1
+    if name == "front" then
+        ox, oy, oz = -1, 0, 0
+    elseif name == "top" then
+        ox, oy, oz = 0, 1, 0
+    end
+    for r = 0, rows do
+        for c = 0, cols do
+            local i = r * w1 + c + 1
+            local il = if c > 0 then i - 1 else i
+            local ir = if c < cols then i + 1 else i
+            local iu = if r > 0 then i - w1 else i
+            local id = if r < rows then i + w1 else i
+            local ax, ay, az = X[ir] - X[il], Y[ir] - Y[il], Z[ir] - Z[il]
+            local bx, by, bz = X[id] - X[iu], Y[id] - Y[iu], Z[id] - Z[iu]
+            local nx, ny, nz = ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx
+            local l = sqrt(nx * nx + ny * ny + nz * nz)
+            if l < 1e-6 then
+                nx, ny, nz, l = ox, oy, oz, 1
+            end
+            nx, ny, nz = nx / l, ny / l, nz / l
+            if nx * ox + ny * oy + nz * oz < 0 then
+                nx, ny, nz = -nx, -ny, -nz
+            end
+            local o16 = (i - 1) * 16
+            buffer.writef32(p.dat, o16, nx * X3[1] + ny * Y3[1] + nz * Z3[1])
+            buffer.writef32(p.dat, o16 + 4, nx * X3[2] + ny * Y3[2] + nz * Z3[2])
+            buffer.writef32(p.dat, o16 + 8, nx * X3[3] + ny * Y3[3] + nz * Z3[3])
+            buffer.writef32(p.dat, o16 + 12, 0)
+        end
+    end
+end
+
+-- How far the bag is off, 0..1.
+function Bag:progress(): number
+    if self.gone or self.free then
+        return 1
+    end
+    return self.s / LEN
+end
+
+Bag.LENGTH = LEN
 
 return Bag

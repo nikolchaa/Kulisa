@@ -33,7 +33,7 @@ fn fragment(in: VertexOut) -> vec4<f32> {
         d_col = d_col + srgb(vec3<f32>(0.08, 0.07, 0.16)) * smoothstep(1.0, 0.0, halo * 1.3) * (1.0 - dd) * 0.8;
         d_col = d_col + srgb(vec3<f32>(0.04)) * (0.5 + 0.5 * sin(p.x * 0.03 + sin(p.y * 0.4) * 0.8)) * 0.05;
         col = d_col;
-        col = col + srgb(vec3<f32>(0.5, 0.5, 0.7)) * smoothstep(0.012, 0.0, abs(dd)) * 0.2;
+        col = col + srgb(vec3<f32>(0.5, 0.5, 0.7)) * smoothstep(0.012, 0.0, abs(dd)) * 0.08;
         // Neon from under the case.
         let g = (p.x - cx) / params.p[0].z;
         let gy = (p.y - params.p[2].x) / (params.p[0].w * 2.2);

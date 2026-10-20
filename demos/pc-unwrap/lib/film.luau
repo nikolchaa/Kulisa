@@ -644,25 +644,28 @@ function Film:_free_step(dt: number)
         fr.psi += fr.omega * dt
         fr.fade_t = 0
     else
-        -- Adrift: keeps its velocity, drifts, sinks and turns, then fades.
+        -- Let go: it falls. A film is light, so air drag soon caps its speed and it sways side to
+        -- side on the way down, but gravity always wins: whatever the hand was doing, it ends up
+        -- going down.
         if fr.released == nil then
             fr.released = true
             fr.ft = 0
+            fr.vy = math.max(fr.vy, -120)
             if self.on_flutter then
                 self.on_flutter(sqrt(fr.vx * fr.vx + fr.vy * fr.vy))
             end
         end
         fr.ft += dt
-        fr.vx *= exp(-1.7 * dt)
-        fr.vy *= exp(-1.7 * dt)
-        fr.vx += (sin(fr.t * 3.3) * 120) * dt
-        fr.vy += (150 + 40 * sin(fr.t * 4.1)) * dt
+        fr.vx *= exp(-2.2 * dt)
+        fr.vy *= exp(-1.2 * dt)
+        fr.vx += (sin(fr.t * 3.3) * 160) * dt
+        fr.vy += 900 * dt
         fr.px += fr.vx * dt
         fr.py += fr.vy * dt
         fr.omega += (-14 * (fr.psi - fr.psi_eq - 0.8 * sin(fr.t * 2.2)) - 2.5 * fr.omega) * dt
         fr.psi += fr.omega * dt
         fr.fade_t = fr.ft
-        if fr.ft > 1.6 then
+        if fr.ft > 1.4 then
             self.mode = "gone"
             self.mesh.visible, self.shadow.visible = false, false
             self.done = true
@@ -691,10 +694,11 @@ function Film:_write_free()
     local segs = self.segs
     local face = self.face
     local zx, zy = face.zx, face.zy
-    local lift = 24 + 10 * sin(t * 2)
+    -- Held, the sheet stands a little off where it was; falling, it is flat to the air.
+    local lift = if fr.held then 12 + 4 * sin(t * 2) else 4
     local fx, fy = fr.px, fr.py
     local shrink = if #segs > 1 then 0.55 else 1 -- a big wrap crumples as it flies
-    local fade = 1 - smoothstep(0.9, 1.6, fr.fade_t)
+    local fade = 1 - smoothstep(0.8, 1.4, fr.fade_t)
     local snapping = blend < 1
     for r = 0, self.rows do
         local qr = self.Q[r + 1]

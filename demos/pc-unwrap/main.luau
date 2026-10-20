@@ -1,7 +1,9 @@
--- PC unwrap: a brand-new PC in its bag. Slide the bag off, peel the protective films and the
--- I/O sticker (corner first, the fold rolling into a cylinder), then smooth a fresh protector
--- on with a squeegee. Built only on the public `kulisa` API: meshes with per-vertex data,
--- shaders, targets, drag input, audio and haptics. See README.md.
+-- PC unwrap: a brand-new PC in a shipping box. Peel the tape, open the box, take the foam out,
+-- lift the PC out, pull its bag off over the top, peel the films off the side and the front glass
+-- and the I/O sticker (corner first, the fold rolling into a cylinder), then smooth a fresh
+-- protector on with a squeegee. The box and the PC are Blockbench renders (art/pc-unwrap); the
+-- bag, the films, the tape and the glass are live meshes laid exactly over them. Built only on
+-- the public `kulisa` API. See README.md.
 
 local Geom = require("lib/geom")
 local PcView = require("lib/pcview")
@@ -20,6 +22,8 @@ local ui = kulisa.ui
 
 local world = kulisa.layer({ parallax = 0 })
 local stage = kulisa.group({ parent = world })
+-- The camera on the scene: zoomed out while the box is there, in on the PC after (lib/unbox).
+local view = kulisa.group({ parent = stage })
 
 -- Fits the stage into the visible part of the screen, leaving room for the HUD below it.
 local function fit()
@@ -34,51 +38,54 @@ fit()
 kulisa.on("resize", fit)
 kulisa.on("display", fit)
 
+-- Design point -> scene point (inside the view).
 local function to_stage(x: number, y: number): (number, number)
-    return (x - stage.x) / stage.scale, (y - stage.y) / stage.scale
+    local sx, sy = (x - stage.x) / stage.scale, (y - stage.y) / stage.scale
+    return (sx - view.x) / view.scale, (sy - view.y) / view.scale
 end
 
 -- The scene -----------------------------------------------------------------------------
 
--- Everything on the PC (case, films, bag) is in one group, so the box phase can scale it down.
-local pc = kulisa.group({ parent = stage, z = 15 })
-local case_art = PcView.build(stage, pc)
+-- Everything on the PC (its render, the glass, films, bag) is in one group, lifted out of the box.
+local pc = kulisa.group({ parent = view, z = 15 })
+local case_art, case_sprite = PcView.build(view, pc)
 Prints.init(FONT)
 local print_host = kulisa.group({ parent = stage })
 local films_group = kulisa.group({ parent = pc, z = 20 })
 
-local L, R, T = Geom.left, Geom.right, Geom.top
+-- One film per glass panel, and the sticker over the I/O on top.
+local side = Film.new({
+    parent = films_group, spans = { { face = Geom.side, len = Geom.side.width } }, b0 = 0, height = Geom.side.height,
+    cols = 48, rows = 36, z = 20, kind = "clear", tab = { 100, 150 }, image = Prints.side(print_host),
+})
+local front = Film.new({
+    parent = films_group, spans = { { face = Geom.front, len = Geom.front.width } }, b0 = 0, height = Geom.front.height,
+    cols = 24, rows = 36, z = 21, kind = "clear", tab = { 70, 120 }, rscale = 0.7, image = Prints.front(print_host),
+})
 local sticker = Film.new({
-    parent = films_group, spans = { { face = T, len = 170, a0 = 540 } }, b0 = 8, height = 60, cols = 14, rows = 6, z = 24,
-    kind = "sticker", tab = { 44, 40 }, rscale = 0.4, gloss = 0.7, wedge = 0.4,
+    parent = films_group, spans = { { face = Geom.top, len = Geom.top.width } }, b0 = 0, height = Geom.top.height,
+    cols = 14, rows = 6, z = 24, kind = "sticker", tab = { 40, 40 }, rscale = 0.4, gloss = 0.7, wedge = 0.4,
     image = Prints.sticker(print_host), wrinkle = 0.02,
 })
-local top = Film.new({
-    parent = films_group, spans = { { face = T, len = Geom.LEN } }, b0 = 0, height = Geom.DEPTH, cols = 40, rows = 26, z = 22,
-    kind = "clear", tab = { 110, 150 }, image = Prints.top(print_host), rscale = 0.8,
-})
--- The shrink-wrap foil runs across the front glass and round the corner onto the side glass.
-local glass = Film.new({
-    parent = films_group, spans = { { face = L, len = Geom.LEN }, { face = R, len = Geom.DEPTH } }, b0 = 0,
-    height = Geom.HEIGHT, cols = 64, rows = 36, z = 20, kind = "clear", tab = { 110, 150 },
-    image = Prints.wrap(print_host),
-})
-local films = { sticker = sticker, top = top, glass = glass }
+local films = { side = side, front = front, sticker = sticker }
 -- What is drawn on top is grabbed first.
-local film_order = { sticker, top, glass }
-local bag = Bag.new(pc, Prints.bag(print_host, 960, 750), 40)
+local film_order = { sticker, front, side }
+local bag = Bag.new(pc, Prints.bag(print_host, Bag.sizes()), 40)
 local spare = Film.new({
-    parent = pc, spans = { { face = L, len = Geom.LEN } }, b0 = 0, height = Geom.HEIGHT, cols = 48, rows = 48, z = 26,
-    kind = "clear", tab = { 1, 1 }, image = Prints.protector(print_host),
+    parent = pc, spans = { { face = Geom.side, len = Geom.side.width } }, b0 = 0, height = Geom.side.height,
+    cols = 48, rows = 48, z = 26, kind = "clear", tab = { 1, 1 }, image = Prints.protector(print_host),
 })
-local protector = Protector.new(spare, stage, 60)
+local protector = Protector.new(spare, view, 60)
+-- Scene point -> design point.
 local function to_design(sx: number, sy: number): (number, number)
-    return sx * stage.scale + stage.x, sy * stage.scale + stage.y
+    local x, y = sx * view.scale + view.x, sy * view.scale + view.y
+    return x * stage.scale + stage.x, y * stage.scale + stage.y
 end
-local unbox = Unbox.new(stage, pc, bag, case_art, to_design, films_group)
+local unbox = Unbox.new(view, pc, bag, case_sprite, to_design, films_group)
 
 local State = require("lib/state")
 State.bag, State.films, State.protector, State.unbox, State.stage, State.pc = bag, films, protector, unbox, stage, pc
+State.view, State.to_design = view, to_design
 
 -- State and HUD ---------------------------------------------------------------------------
 
@@ -87,9 +94,9 @@ local tasks = {
     { key = "flaps", label = "Open the box", done = ui.signal(false) },
     { key = "foam", label = "Take out the foam", done = ui.signal(false) },
     { key = "lift", label = "Lift the PC out", done = ui.signal(false) },
-    { key = "bag", label = "Slide the bag off", done = ui.signal(false) },
-    { key = "glass", label = "Peel the glass film", done = ui.signal(false) },
-    { key = "top", label = "Peel the top film", done = ui.signal(false) },
+    { key = "bag", label = "Pull the bag off over the top", done = ui.signal(false) },
+    { key = "side", label = "Peel the side glass film", done = ui.signal(false) },
+    { key = "front", label = "Peel the front glass film", done = ui.signal(false) },
     { key = "sticker", label = "Remove the I/O sticker", done = ui.signal(false) },
     { key = "apply", label = "Fit a fresh protector (optional)", done = ui.signal(false), optional = true },
 }
@@ -141,7 +148,7 @@ local function refresh_hint()
     elseif not task("lift").done:peek() then
         hint:set("Lift the PC up and out of the box")
     elseif not task("bag").done:peek() then
-        hint:set("Grab the bag and slide it off the PC")
+        hint:set("Grab the bag and pull it up, off over the top of the PC")
     elseif remaining() > 0 then
         hint:set("Grab a corner tab and peel it back. Faster pulls crinkle more")
     elseif applying:peek() and not task("apply").done:peek() then
@@ -172,7 +179,7 @@ local function mid_x(): number
 end
 
 local function start_protector()
-    if applying:peek() or not task("glass").done:peek() then
+    if applying:peek() or not task("side").done:peek() then
         return
     end
     applying:set(true)
@@ -207,8 +214,8 @@ unbox.on_done = function()
     refresh_hint()
 end
 
-bag.on_slide_off = function(dx: number)
-    Sfx.whoosh(600, mid_x() + dx * 300)
+bag.on_slide_off = function(lean: number)
+    Sfx.whoosh(600, mid_x() + lean * 300)
     kulisa.haptics.pulse(0.4, 0.05)
 end
 bag.on_gone = function()
@@ -276,7 +283,7 @@ ui.screen("hud", function()
             anchor = "bottom_right",
             margin = 20,
             gap = 10,
-            applying() == false and task("glass").done() and ui.button({
+            applying() == false and task("side").done() and ui.button({
                 id = "apply",
                 on_click = start_protector,
                 padding = { 10, 18 },
@@ -395,10 +402,9 @@ kulisa.on("key", function(key)
     elseif key == "u" and unbox:active() then
         unbox:skip()
     elseif key == "b" and not bag.gone and not unbox:active() then
-        -- Shortcut: toss the bag off at once.
+        -- Shortcut: whip the bag off at once.
         bag.asleep = false
-        bag.glide = 0.4
-        bag.gdx, bag.gdy = -1, 0
+        bag.fling = true
     end
 end)
 

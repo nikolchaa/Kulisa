@@ -17,7 +17,7 @@ local pending = {}
 -- A transparent target of width x height, to be filled by `draw(parent)`. `flip` draws it upside
 -- down, for faces whose v axis runs up the screen (the top).
 local function make(parent, width: number, height: number, draw, flip: boolean?)
-    local target = kulisa.target({ parent = parent, width = width, height = height, clear = "#00000000" })
+    local target = kulisa.target({ parent = parent, width = math.ceil(width), height = math.ceil(height), clear = "#00000000" })
     if flip then
         draw(kulisa.group({ parent = target, y = height, scale_y = -1 }))
     else
@@ -59,79 +59,109 @@ local function tab(parent, y: number, h: number, w: number, number: string, text
     end
 end
 
--- The shrink-wrap foil around the glass: front glass, then the side glass. 1220 x 480.
-function Prints.wrap(parent)
-    local w, h = Geom.LEN + Geom.DEPTH, Geom.HEIGHT
+-- A protective film for a glass panel, w x h face units, with its pull tab.
+local function glass_film(parent, w: number, h: number, number: string, label_text: string, color: string)
     return make(parent, w, h, function(t)
         frame(t, w, h, 10, 1.5, "#9cc4ff", 0.5)
-        tab(t, h / 2 - 75, 150, 110, "1", "PULL", "#2f6fed")
-        label(t, 0, h - 44, "{b}PROTECTIVE FOIL{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, Geom.LEN, "center")
-        label(t, Geom.LEN, h - 44, "{b}SIDE PANEL{/b}  ·  peel off", 14, "#cfe0ff", 0.55, Geom.DEPTH, "center")
+        tab(t, h / 2 - 75, 150, 100, number, "PULL", color)
+        label(t, 0, h - 44, "{b}" .. label_text .. "{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, w, "center")
         for i = 0, 9 do
-            rect(t, 560 + i * 4 + (i % 2) * 2, h - 80, 2, 22, "#cfe0ff", 0.4)
+            rect(t, w * 0.62 + i * 4 + (i % 2) * 2, h - 80, 2, 22, "#cfe0ff", 0.4)
         end
-        for _, p in { { 16, 16 }, { w - 16, 16 }, { w - 16, h - 16 }, { 16, h - 16 }, { Geom.LEN, 16 }, { Geom.LEN, h - 16 } } do
+        for _, p in { { 16, 16 }, { w - 16, 16 }, { w - 16, h - 16 }, { 16, h - 16 } } do
             rect(t, p[1] - 6, p[2], 12, 1, "#cfe0ff", 0.6)
             rect(t, p[1], p[2] - 6, 1, 12, "#cfe0ff", 0.6)
         end
     end)
 end
 
--- The top film: 740 x 480 face pixels.
-function Prints.top(parent)
-    return make(parent, Geom.LEN, Geom.DEPTH, function(t)
-        frame(t, Geom.LEN, Geom.DEPTH, 10, 1.5, "#9cc4ff", 0.55)
-        tab(t, Geom.DEPTH / 2 - 75, 150, 110, "2", "PULL", "#e0663a")
-        label(t, 0, Geom.DEPTH - 44, "{b}TOP PANEL FILM{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, Geom.LEN, "center")
-    end, true)
+-- The film on the side glass.
+function Prints.side(parent)
+    local f = Geom.side
+    return glass_film(parent, f.width, f.height, "1", "SIDE PANEL", "#2f6fed")
 end
 
--- A spare protector to fit on the front glass: 740 x 480 face pixels.
+-- The film on the front glass (narrow: the tab is smaller).
+function Prints.front(parent)
+    local f = Geom.front
+    local w, h = f.width, f.height
+    return make(parent, w, h, function(t)
+        frame(t, w, h, 10, 1.5, "#9cc4ff", 0.5)
+        rect(t, 0, h / 2 - 60, 70, 120, "#e0663a", 0.92)
+        rect(t, 67, h / 2 - 60, 3, 120, "#ffffff", 0.45)
+        label(t, 10, h / 2 - 50, "{b}2{/b}", 38, "#ffffff")
+        label(t, 10, h / 2, "{b}PULL{/b}", 16, "#ffffff")
+        for i = 0, 2 do
+            label(t, 76 + i * 18, h / 2 - 16, "›", 30, "#ffffff", 0.7 - 0.2 * i)
+        end
+        label(t, 0, h - 44, "{b}FRONT PANEL{/b}", 14, "#cfe0ff", 0.55, w, "center")
+    end)
+end
+
+-- A spare protector to fit on the side glass.
 function Prints.protector(parent)
-    return make(parent, Geom.LEN, Geom.HEIGHT, function(t)
-        frame(t, Geom.LEN, Geom.HEIGHT, 10, 1.5, "#9cf0cf", 0.5)
-        label(t, 0, Geom.HEIGHT - 44, "{b}NEW PROTECTOR{/b}  ·  smooth out the air bubbles", 14, "#d7fff0", 0.6, Geom.LEN, "center")
-        for _, p in { { 16, 16 }, { Geom.LEN - 16, 16 }, { Geom.LEN - 16, Geom.HEIGHT - 16 }, { 16, Geom.HEIGHT - 16 } } do
+    local f = Geom.side
+    local w, h = f.width, f.height
+    return make(parent, w, h, function(t)
+        frame(t, w, h, 10, 1.5, "#9cf0cf", 0.5)
+        label(t, 0, h - 44, "{b}NEW PROTECTOR{/b}  ·  smooth out the air bubbles", 14, "#d7fff0", 0.6, w, "center")
+        for _, p in { { 16, 16 }, { w - 16, 16 }, { w - 16, h - 16 }, { 16, h - 16 } } do
             rect(t, p[1] - 6, p[2], 12, 1, "#d7fff0", 0.6)
             rect(t, p[1], p[2] - 6, 1, 12, "#d7fff0", 0.6)
         end
     end)
 end
 
--- The sticker over the I/O ports on top: 170 x 60 face pixels.
+-- The sticker over the I/O ports on top. Drawn upside down: the top face's b axis runs away from
+-- the viewer, so the texture's top row is at the front edge.
 function Prints.sticker(parent)
-    return make(parent, 170, 60, function(t)
-        rect(t, 0, 0, 170, 60, "#f4f4f6")
-        rect(t, 0, 0, 170, 6, "#f0b429")
-        rect(t, 0, 54, 170, 6, "#f0b429")
-        label(t, 10, 7, "{b}I/O{/b}", 38, "#1b1d26")
-        label(t, 72, 11, "{b}REMOVE{/b}", 15, "#1b1d26")
-        label(t, 72, 30, "before use", 12, "#555a6b")
+    local f = Geom.top
+    local w, h = f.width, f.height
+    return make(parent, w, h, function(t)
+        rect(t, 0, 0, w, h, "#f4f4f6")
+        rect(t, 0, 0, w, 4, "#f0b429")
+        rect(t, 0, h - 4, w, 4, "#f0b429")
+        label(t, 8, 3, "{b}I/O{/b}", 22, "#1b1d26")
+        label(t, 52, 5, "{b}REMOVE{/b}", 11, "#1b1d26")
+        label(t, 52, 19, "before use", 9, "#555a6b")
         for i = 0, 3 do
-            rect(t, 140 + i * 6, 13, 3, 32, "#1b1d26", 0.8)
+            rect(t, w - 30 + i * 5, 8, 2.5, h - 16, "#1b1d26", 0.8)
         end
     end, true)
 end
 
--- The bag: printed warnings, repeated, fading into the plastic.
-function Prints.bag(parent, w: number, h: number)
-    return make(parent, w, h, function(t)
-        frame(t, w, h, 8, 2, "#ffffff", 0.35)
-        -- A heat-sealed strip along the left (open) end, with a tear notch line.
-        rect(t, 36, 0, 14, h, "#ffffff", 0.22)
-        for y = 14, h - 14, 22 do
-            rect(t, 24, y, 8, 1.5, "#ffffff", 0.5)
-        end
-        for row = 0, 4 do
-            for col = 0, 2 do
-                local x = 110 + col * 290 + (row % 2) * 90
-                local y = 60 + row * 140
-                label(t, x, y, "{b}THIS SIDE UP{/b}", 20, "#ffffff", 0.35)
-                label(t, x, y + 26, "keep dry  ·  handle with care", 13, "#ffffff", 0.3)
+-- The bag's three pieces (sizes in face units from lib/bag.luau): printed warnings, a heat seal
+-- along the hem, fading into the milky plastic.
+function Prints.bag(parent, sizes)
+    local out = {}
+    for name, size in sizes do
+        local w, h = size[1], size[2]
+        out[name] = make(parent, w, h, function(t)
+            if name == "top" then
+                -- The welded seam across the closed end.
+                rect(t, 0, h / 2 - 5, w, 10, "#ffffff", 0.25)
+                return
             end
-        end
-        label(t, w - 420, h - 90, "{b}WARNING{/b}  plastic bag can cause suffocation, keep away from children", 14, "#ffffff", 0.45, 380)
-    end)
+            -- The hem: a heat seal strip near the open end, with a perforation line.
+            rect(t, 0, h - 40, w, 12, "#ffffff", 0.22)
+            for x = 10, w - 10, 20 do
+                rect(t, x, h - 52, 8, 1.5, "#ffffff", 0.45)
+            end
+            local cols = math.max(1, math.floor(w / 240))
+            for row = 0, 3 do
+                for col = 0, cols - 1 do
+                    local x = 30 + col * (w - 60) / cols + (row % 2) * 40
+                    local y = 50 + row * 110
+                    label(t, x, y, "{b}THIS SIDE UP{/b}", 18, "#ffffff", 0.35)
+                    label(t, x, y + 24, "keep dry  ·  handle with care", 12, "#ffffff", 0.3)
+                end
+            end
+            if name == "side" then
+                label(t, 30, h - 120, "{b}WARNING{/b}  plastic bags can cause suffocation, keep away from children", 13, "#ffffff", 0.45, w - 60)
+            end
+        end)
+    end
+    return out
 end
 
 -- Called every frame: stops rendering targets once their contents have settled.

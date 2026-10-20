@@ -1,112 +1,159 @@
--- The case is drawn at three quarters: its front glass faces left, its side glass right, and the
--- top is seen from above. Each visible face has a frame: an origin on the stage, the screen
--- directions of its axes `a` and `b` (per face unit) and of its normal `z` (per unit of lift),
--- plus the same three axes in world space. Films live in face coordinates, so a peel is the same
--- math on any face; the normals the shader gets are in world space, so a film that wraps from one
--- face onto the next is lit consistently.
+-- Where things are. Everything in the scene was rendered by one orthographic camera
+-- (art/pc-unwrap), and lib/art.luau holds what that camera does: the render pixel of any point
+-- given in centimetres. The stage (design units) is the render scaled by K and moved so the PC
+-- sits in the middle, so a point in centimetres has one stage position for the renders and the
+-- live meshes alike.
 --
--- World axes: x to the right, y up, z towards the viewer. The camera is turned 30 degrees (yaw)
--- and looks down by 12 degrees (pitch), orthographically.
+-- Case coordinates (cm): x from the front (-23) to the back (23), y up from the floor (0..49), z
+-- from the glass side (-11.5) to the motherboard side (11.5). The camera sees the glass side on the
+-- left, the front glass on the right and the top from above.
+--
+-- Faces: films and the bag live in face coordinates (a along, b across, lifted by z off the
+-- face), in face units (FU per centimetre, about a stage unit at the desk's zoom). Each face has
+-- the stage direction of one unit along a, b and its normal, and the same three axes in camera
+-- space (x right, y up, z towards the viewer), which the plastic shader lights with.
+
+local Art = require("lib/art")
+
+local sqrt = math.sqrt
 
 local Geom = {}
 
 export type Face = {
     name: string,
     ox: number, oy: number, -- stage position of a = b = 0
-    ux: number, uy: number, -- screen direction of one unit along a
+    ux: number, uy: number, -- stage direction of one unit along a
     vx: number, vy: number, -- ... along b
     zx: number, zy: number, -- ... along the normal (lifting a point off the face)
-    width: number, height: number, -- extent of the face in a and b
-    a3: { number }, b3: { number }, n3: { number }, -- the face axes in world space
+    width: number, height: number, -- extent of the face in a and b (face units)
+    a3: { number }, b3: { number }, n3: { number }, -- the face axes in camera space
 }
 
 Geom.STAGE_W, Geom.STAGE_H = 1280, 800
 
-local YAW, PITCH = math.rad(30), math.rad(12)
-local sy, cy, sp, cp = math.sin(YAW), math.cos(YAW), math.sin(PITCH), math.cos(PITCH)
+-- Render pixels -> stage: the PC is centred at (640, 390) and about 640 units tall.
+Geom.K = 0.56
+local RCX, RCY = 1024, 1232 -- the PC's centre in render pixels
+local SCX, SCY = 640, 390
 
--- Screen position per unit of a world vector (orthographic, pitched down).
-local function project(x: number, y: number, z: number): (number, number)
-    return x, -y * cp + z * sp
+local O, EX, EY, EZ = Art.origin, Art.ex, Art.ey, Art.ez
+
+-- Stage position of a render pixel.
+function Geom.from_render(rx: number, ry: number): (number, number)
+    return (rx - RCX) * Geom.K + SCX, (ry - RCY) * Geom.K + SCY
 end
 
--- Case size: front glass (length), side glass (depth) and height, in face units.
-Geom.LEN, Geom.DEPTH, Geom.HEIGHT = 740, 480, 480
-
--- The top corner nearest the viewer, where the two glass panels meet.
-Geom.KX, Geom.KY = 830, 235
-
--- World directions: along the front glass towards the corner, and along the side glass away.
-local AL = { cy, 0, sy } -- front glass a-axis (to the right, towards the viewer)
-local AR = { sy, 0, -cy } -- side glass a-axis (to the right, away from the viewer)
-local NL = { -sy, 0, cy } -- front glass normal
-local NR = { cy, 0, sy } -- side glass normal
-local DOWN = { 0, -1, 0 }
-local UP = { 0, 1, 0 }
-
-local function vec(w: { number }): (number, number)
-    return project(w[1], w[2], w[3])
+-- Stage position of a point in centimetres.
+function Geom.project(x: number, y: number, z: number): (number, number)
+    local rx = O[1] + x * EX[1] + y * EY[1] + z * EZ[1]
+    local ry = O[2] + x * EX[2] + y * EY[2] + z * EZ[2]
+    return Geom.from_render(rx, ry)
 end
 
-local ulx, uly = vec(AL)
-local urx, ury = vec(AR)
-local vx, vy = vec(DOWN)
-local zlx, zly = vec(NL)
-local zrx, zry = vec(NR)
-local ztx, zty = vec(UP)
+-- Stage offset of a vector in centimetres.
+function Geom.vec(x: number, y: number, z: number): (number, number)
+    return (x * EX[1] + y * EY[1] + z * EZ[1]) * Geom.K, (x * EX[2] + y * EY[2] + z * EZ[2]) * Geom.K
+end
 
-local LCX, LCY = Geom.KX - Geom.LEN * ulx, Geom.KY - Geom.LEN * uly -- top-left of the front glass
+-- Where a rendered image goes: its stage position and scale (stage units per image pixel).
+function Geom.image(name: string): (string, number, number, number)
+    local im = Art.images[name]
+    local x, y = Geom.from_render(im.x, im.y)
+    return im.path, x, y, im.scale * Geom.K
+end
 
--- The front glass (left): its a-axis runs towards the corner.
-Geom.left = {
-    name = "left", ox = LCX, oy = LCY, ux = ulx, uy = uly, vx = vx, vy = vy, zx = zlx, zy = zly,
-    width = Geom.LEN, height = Geom.HEIGHT, a3 = AL, b3 = DOWN, n3 = NL,
-} :: Face
+-- The orthographic scale (render pixels per centimetre across the view) and the case's axes in
+-- camera space, recovered from the projection: screen x and y are the camera's x and -y, the
+-- depth component completes a unit vector (its sign from which faces the camera sees).
+local SCALE = sqrt(EX[1] * EX[1] + EZ[1] * EZ[1])
+local function axis(e: { number }, toward: number): { number }
+    local x, y = e[1] / SCALE, -e[2] / SCALE
+    return { x, y, toward * sqrt(math.max(0, 1 - x * x - y * y)) }
+end
+Geom.X3 = axis(EX, -1) -- the front (-x) faces the camera
+Geom.Y3 = axis(EY, 1) -- the top (+y) faces it
+Geom.Z3 = axis(EZ, -1) -- the glass side (-z) faces it
 
--- The side glass (right), starting at the corner and running away.
-Geom.right = {
-    name = "right", ox = Geom.KX, oy = Geom.KY, ux = urx, uy = ury, vx = vx, vy = vy, zx = zrx, zy = zry,
-    width = Geom.DEPTH, height = Geom.HEIGHT, a3 = AR, b3 = DOWN, n3 = NR,
-} :: Face
+-- Face units per centimetre: one face unit is about one stage unit.
+Geom.FU = SCALE * Geom.K
 
--- The top: a runs along the front edge, b away from the viewer; lifting is straight up.
-Geom.top = {
-    name = "top", ox = LCX, oy = LCY, ux = ulx, uy = uly, vx = urx, vy = ury, zx = ztx, zy = zty,
-    width = Geom.LEN, height = Geom.DEPTH, a3 = AL, b3 = AR, n3 = UP,
-} :: Face
+local function scaled(v: { number }, k: number): { number }
+    return { v[1] * k, v[2] * k, v[3] * k }
+end
 
--- Light and viewer, in world space.
+-- A face: origin (cm), axes a, b and normal as case directions (unit vectors in cm), size in cm.
+local function face(name: string, origin: { number }, a: { number }, b: { number }, n: { number }, wa: number, wb: number): Face
+    local ox, oy = Geom.project(origin[1], origin[2], origin[3])
+    local fu = Geom.FU
+    local ux, uy = Geom.vec(a[1] / fu, a[2] / fu, a[3] / fu)
+    local vx, vy = Geom.vec(b[1] / fu, b[2] / fu, b[3] / fu)
+    local zx, zy = Geom.vec(n[1] / fu, n[2] / fu, n[3] / fu)
+    local function cam(v)
+        local r = { 0, 0, 0 }
+        for i, ax in { Geom.X3, Geom.Y3, Geom.Z3 } do
+            for k = 1, 3 do
+                r[k] += ax[k] * v[i]
+            end
+        end
+        return r
+    end
+    return {
+        name = name, ox = ox, oy = oy, ux = ux, uy = uy, vx = vx, vy = vy, zx = zx, zy = zy,
+        width = wa * fu, height = wb * fu, a3 = cam(a), b3 = cam(b), n3 = cam(n),
+    }
+end
+Geom.face = face
+
+-- The glass side (left on screen): from the back edge to the front corner, top to bottom.
+Geom.SIDE = { x0 = 22.0, x1 = -22.3, y0 = 47.3, y1 = 2.5, z = -11.5 }
+Geom.side = face("side", { 22.0, 47.3, -11.5 }, { -1, 0, 0 }, { 0, -1, 0 }, { 0, 0, -1 }, 44.3, 44.8)
+-- The front glass (right): from the corner to the far edge.
+Geom.front = face("front", { -23, 47.3, -10.7 }, { 0, 0, 1 }, { 0, -1, 0 }, { -1, 0, 0 }, 21.4, 44.8)
+-- The top, for the I/O sticker: along the front edge (away from the glass side), towards the back.
+Geom.top = face("top", { -22.6, 49.1, -6.9 }, { 0, 0, 1 }, { 1, 0, 0 }, { 0, 1, 0 }, 13.8, 3.4)
+
+-- Light and viewer in camera space.
 local function unit(x: number, y: number, z: number): { number }
-    local l = math.sqrt(x * x + y * y + z * z)
+    local l = sqrt(x * x + y * y + z * z)
     return { x / l, y / l, z / l }
 end
 Geom.light = unit(-0.35, 0.8, 0.5)
-Geom.view = unit(0, sp, cp)
+Geom.view = { 0, 0, 1 }
 
--- Screen position of the point (a, b) lifted by z off the face.
+-- Stage position of the point (a, b) lifted by z off the face.
 function Geom.to_screen(f: Face, a: number, b: number, z: number): (number, number)
     return f.ox + a * f.ux + b * f.vx + z * f.zx, f.oy + a * f.uy + b * f.vy + z * f.zy
 end
 
--- Face coordinates of a screen point, assuming it lies on the face (z = 0).
+-- Face coordinates of a stage point, assuming it lies on the face (z = 0).
 function Geom.to_face(f: Face, sx: number, sy: number): (number, number)
     local dx, dy = sx - f.ox, sy - f.oy
     local det = f.ux * f.vy - f.uy * f.vx
     return (dx * f.vy - dy * f.vx) / det, (f.ux * dy - f.uy * dx) / det
 end
 
--- A normal given in a face's (a, b, up) axes, in world space.
+-- A normal given in a face's (a, b, up) axes, in camera space.
 function Geom.world_normal(f: Face, na: number, nb: number, nz: number): (number, number, number)
     local a, b, n = f.a3, f.b3, f.n3
     return na * a[1] + nb * b[1] + nz * n[1], na * a[2] + nb * b[2] + nz * n[2], na * a[3] + nb * b[3] + nz * n[3]
 end
 
-Geom.PITCH_SIN, Geom.PITCH_COS = sp, cp
--- The case's bounding box on the stage (feet included).
-Geom.OX, Geom.OY = LCX, LCY
-Geom.CASE_LEFT = LCX
-Geom.CASE_RIGHT = Geom.KX + Geom.DEPTH * urx
-Geom.CASE_TOP = LCY + Geom.DEPTH * ury
-Geom.CASE_BOTTOM = Geom.KY + Geom.HEIGHT * vy + 16
+-- The case's outline on the stage (for the room's shadow and glow).
+do
+    local xs, ys = {}, {}
+    for _, x in { -23, 23 } do
+        for _, y in { 0, 49 } do
+            for _, z in { -11.5, 11.5 } do
+                local sx, sy = Geom.project(x, y, z)
+                table.insert(xs, sx)
+                table.insert(ys, sy)
+            end
+        end
+    end
+    Geom.CASE_LEFT, Geom.CASE_RIGHT = math.min(table.unpack(xs)), math.max(table.unpack(xs))
+    Geom.CASE_TOP, Geom.CASE_BOTTOM = math.min(table.unpack(ys)), math.max(table.unpack(ys))
+end
+-- Where the case stands: the stage point under its middle.
+Geom.FLOOR_X, Geom.FLOOR_Y = Geom.project(0, 0, 0)
 
 return Geom
