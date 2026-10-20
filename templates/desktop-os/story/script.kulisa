@@ -1,0 +1,92 @@
+# Gull Point: a short sample story told through the fake computer. Replace it with yours.
+#
+# Characters with `chat` talk in the Messages app (the value names the thread); `me = true`
+# sends messages as the player; anyone else, and narration, shows as a caption. A menu right
+# after chat lines becomes reply buttons in that thread. `desk.*` calls (os/story.luau) drive
+# the computer: notes, notifications, the browser, and waiting for the player to visit a page.
+
+define juno = Character("Juno", { chat = "juno", avatar = "avatars/juno.png" })
+define gull = Character("gullwatcher", { chat = "gull", avatar = "avatars/gull.png" })
+define stranger = Character("Unknown number", { chat = "unknown", avatar = "avatars/unknown.png" })
+define me = Character("You", { me = true })
+
+default trust = 0
+
+label start:
+    $ desk.clock(23, 41)
+    "Another night that refuses to end. The screen is the brightest thing in the room."
+    juno "you up?"
+    juno "ok weird question"
+    juno "can you check the lighthouse cam. gull point"
+    menu:
+        "What's going on?":
+            $ trust += 1
+            me "what's going on? you ok?"
+            juno "i'm fine. i think. just look"
+        "It's almost midnight, Juno":
+            me "it's almost midnight, juno"
+            juno "i know. please"
+    juno "lighthousecam.net"
+    $ desk.bookmark("lighthousecam.net")
+    $ desk.wait_visit("lighthousecam.net", "Open the browser and go to lighthousecam.net")
+    pause
+    juno "well??"
+    menu:
+        "It's dark. The light is off.":
+            me "it's dark. the light is off"
+        "Can't tell, the feed is grainy":
+            me "can't really tell, the feed is grainy"
+            juno "look at the TOWER. it's off"
+    juno "three nights now"
+    juno "it never goes off. not in forty years"
+    juno "and nobody's seen mr hale since tuesday"
+    juno "search it. it was on the coast news"
+    $ desk.wait_visit("coastnews.net/hale", "Search searchly.com for the keeper")
+    pause
+    juno "see? 'keeper missing'"
+    juno "there's a thread on tidepool too. people saying weird stuff"
+    $ desk.wait_visit("tidepool.forum/t/gull-point", "Find the Gull Point thread on tidepool.forum")
+    pause
+    gull "saw you reading the thread"
+    gull "you know saltwife? juno?"
+    menu:
+        "Who is this?":
+            me "who is this?"
+            gull "gullwatcher. i run the cam"
+        "How do you know what I'm reading?":
+            me "how do you know what i'm reading"
+            gull "forum shows who's viewing. relax"
+    gull "tell her to stop watching the cam at night"
+    gull "trust me on this one"
+    $ desk.note("gullwatcher", "Runs the lighthouse cam. Says Juno should stop watching it at night. Didn't say why.")
+    juno "who are you talking to"
+    juno "check the cam again. NOW"
+    $ desk.flag("cam_lit")
+    $ desk.wait_visit("lighthousecam.net", "Look at the lighthouse cam again")
+    pause
+    "The beam is turning. Slowly, as if someone had just climbed the stairs."
+    juno "it's on"
+    juno "IT'S ON"
+    menu:
+        "Maybe Hale is back.":
+            $ trust += 1
+            me "maybe hale is back. maybe he's fine"
+            juno "maybe"
+        "Gullwatcher said to stop watching.":
+            me "that gullwatcher guy says you should stop watching at night"
+            juno "what? why"
+    $ desk.photo("unknown", "web/img/cam_on.png")
+    pause 1.2
+    stranger "you're both watching."
+    juno "who is that"
+    juno "did you get that too??"
+    $ desk.note("Unknown number", "Sent a still from the cam. 'You're both watching.'")
+    if trust >= 2:
+        juno "i'm going up to the point tomorrow. come with me?"
+        me "yeah. first light."
+        juno "first light."
+    else:
+        juno "forget it. i'm logging off"
+        juno "goodnight"
+    "The beam sweeps across the window once, and the screen flickers."
+    return
