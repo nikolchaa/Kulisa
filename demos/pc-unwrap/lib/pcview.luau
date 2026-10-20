@@ -1,10 +1,13 @@
 -- The static scene: room, case body and its three visible faces. All of it is procedural WGSL,
--- so the demo ships no art.
+-- so the demo ships no art. The case is a dual-chamber showcase: front and side glass meet at a
+-- corner with no pillar, neon trim on the edges, a perforated top.
 
 local Geom = require("lib/geom")
 
 local PcView = {}
 
+-- A quad mesh from four stage points with the uvs of a face (top-left, top-right, bottom-right,
+-- bottom-left).
 local function quad_mesh(parent, shader, corners, params, z)
     local pos = {}
     for _, c in corners do
@@ -22,43 +25,71 @@ local function quad_mesh(parent, shader, corners, params, z)
     })
 end
 
-function PcView.build(stage)
+local function face_corners(f: Geom.Face)
+    local c = {}
+    for _, ab in { { 0, 0 }, { f.width, 0 }, { f.width, f.height }, { 0, f.height } } do
+        local sx, sy = Geom.to_screen(f, ab[1], ab[2], 0)
+        table.insert(c, { sx, sy })
+    end
+    return c
+end
+
+-- Builds the room and the case; returns the group the case parts live in (to move or scale).
+function PcView.build(stage, pc)
     local shaders = {
         room = kulisa.load_shader("shaders/room.wgsl"),
-        glass = kulisa.load_shader("shaders/case_glass.wgsl"),
+        front = kulisa.load_shader("shaders/case_front.wgsl"),
         top = kulisa.load_shader("shaders/case_top.wgsl"),
         side = kulisa.load_shader("shaders/case_side.wgsl"),
     }
-    local g, t = Geom.glass, Geom.top
+    local L, R, T = Geom.left, Geom.right, Geom.top
 
     -- The room is far bigger than the stage so wide windows never see its edge.
     local RX, RY, RW, RH = -1000, -700, 3280, 2200
-    local desk_y = Geom.OY + g.height + 14
+    local horizon = 585
     kulisa.sprite({
         parent = stage, x = RX, y = RY, width = RW, height = RH, shader = shaders.room, z = -10,
-        params = { desk_y - RY, Geom.OX + g.width * 0.55 + 60 - RX, 560, 46, RW, RH, 0, 0 },
+        params = {
+            horizon - RY, Geom.KX - 80 - RX, 440, 52,
+            RW, RH, 0, 0,
+            Geom.CASE_BOTTOM - 20 - RY, 0, 0, 0,
+            0, 0, 0, 0,
+        },
     })
 
-    -- Right side panel (the back of the case is hidden behind it).
-    local fx, fy = Geom.to_screen(g, g.width, 0, 0)
-    quad_mesh(stage, shaders.side, {
-        { fx, fy }, { fx + Geom.DEPTH_X, fy + Geom.DEPTH_Y },
-        { fx + Geom.DEPTH_X, fy + Geom.DEPTH_Y + g.height }, { fx, fy + g.height },
-    }, { 380, g.height, 0, 0 }, 1)
+    local case = kulisa.group({ parent = pc })
 
-    -- Top panel.
-    local c = {}
-    for _, ab in { { 0, 0 }, { t.width, 0 }, { t.width, t.height }, { 0, t.height } } do
-        local sx, sy = Geom.to_screen(t, ab[1], ab[2], 0)
-        table.insert(c, { sx, sy })
+    -- Feet: small dark blocks under the front corner and the ends.
+    local function foot(a: number, face: Geom.Face, dir: number)
+        local x, y = Geom.to_screen(face, a, face.height, 0)
+        local pts = { { x - 24, y }, { x + 24, y }, { x + 18, y + 16 }, { x - 18, y + 16 } }
+        local pos = {}
+        for _, p in pts do
+            table.insert(pos, p[1])
+            table.insert(pos, p[2])
+        end
+        kulisa.mesh({
+            parent = case, positions = pos, indices = { 1, 2, 3, 1, 3, 4 },
+            tint = "#0a0b10", z = 0,
+        })
     end
-    quad_mesh(stage, shaders.top, c, { t.width, t.height, 0, 0 }, 2)
+    foot(40, L, 1)
+    foot(L.width - 8, L, 1)
+    foot(R.width - 40, R, 1)
 
-    -- Glass panel with the machine behind it.
-    kulisa.sprite({
-        parent = stage, x = g.ox, y = g.oy, width = g.width, height = g.height, shader = shaders.glass,
-        params = { g.width, g.height, 1, 0 }, z = 3,
+    quad_mesh(case, shaders.side, face_corners(R), { R.width, R.height, 1, 0 }, 3)
+    quad_mesh(case, shaders.top, face_corners(T), { T.width, T.height, 0, 0 }, 2)
+    quad_mesh(case, shaders.front, face_corners(L), { L.width, L.height, 1, 0 }, 3)
+
+    -- The corner post of light where the two glass panels meet: a thin bright line.
+    local kx, ky = Geom.to_screen(L, L.width, 0, 0)
+    local kx2, ky2 = Geom.to_screen(L, L.width, L.height, 0)
+    kulisa.mesh({
+        parent = case,
+        positions = { kx - 1.2, ky, kx + 1.2, ky, kx + 1.2, ky2, kx - 1.2, ky2 },
+        indices = { 1, 2, 3, 1, 3, 4 }, tint = "#8a96c8", opacity = 0.6, z = 4,
     })
+    return case
 end
 
 return PcView

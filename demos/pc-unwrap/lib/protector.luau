@@ -321,9 +321,7 @@ function Protector:_rebuild()
     local pos, dat, spos, sdat = film.pos, film.dat, film.spos, film.sdat
     local BX, BY, SHI = film.BX, film.BY, film.SHI
     local Zx, Zy = face.zx, face.zy
-    local l = face.light
-    local sdx = (-l[1] / l[3]) * face.ux + (-l[2] / l[3]) * face.vx
-    local sdy = (-l[1] / l[3]) * face.uy + (-l[2] / l[3]) * face.vy
+    local sdx, sdy = 0.55, 0.42
     local ia, ib = 1 / (2 * self.hx), 1 / (2 * self.hy)
     for r = 0, rows do
         for c = 0, cols do
@@ -338,9 +336,10 @@ function Protector:_rebuild()
             local o8, o16 = (i - 1) * 8, (i - 1) * 16
             buffer.writef32(pos, o8, BX[i] + z * Zx)
             buffer.writef32(pos, o8 + 4, BY[i] + z * Zy)
-            buffer.writef32(dat, o16, nx * il)
-            buffer.writef32(dat, o16 + 4, ny * il)
-            buffer.writef32(dat, o16 + 8, il)
+            local wx, wy, wz = Geom.world_normal(face, nx, ny, 1)
+            buffer.writef32(dat, o16, wx * il)
+            buffer.writef32(dat, o16 + 4, wy * il)
+            buffer.writef32(dat, o16 + 8, wz * il)
             buffer.writef32(dat, o16 + 12, AIR[i])
             local shi = SHI[i]
             if shi > 0 then

@@ -9,6 +9,7 @@ local Film = require("lib/film")
 local Bag = require("lib/bag")
 local Prints = require("lib/prints")
 local Protector = require("lib/protector")
+local Unbox = require("lib/unbox")
 local Sfx = require("lib/sfx")
 
 kulisa.display({ width = Geom.STAGE_W, height = Geom.STAGE_H, scale = "expand", orientation = "any" })
@@ -39,36 +40,53 @@ end
 
 -- The scene -----------------------------------------------------------------------------
 
-PcView.build(stage)
+-- Everything on the PC (case, films, bag) is in one group, so the box phase can scale it down.
+local pc = kulisa.group({ parent = stage, z = 15 })
+local case_art = PcView.build(stage, pc)
 Prints.init(FONT)
 local print_host = kulisa.group({ parent = stage })
+local films_group = kulisa.group({ parent = pc, z = 20 })
 
+local L, R, T = Geom.left, Geom.right, Geom.top
 local sticker = Film.new({
-    parent = stage, face = Geom.top, a0 = 140, b0 = 6, width = 190, height = 64, cols = 14, rows = 6, z = 24,
-    kind = "sticker", corner = { 140, 6 }, dir = 0.0, tab = { 56, 34 }, rscale = 0.4, gloss = 0.7,
+    parent = films_group, spans = { { face = T, len = 170, a0 = 540 } }, b0 = 8, height = 60, cols = 14, rows = 6, z = 24,
+    kind = "sticker", tab = { 44, 40 }, rscale = 0.4, gloss = 0.7, wedge = 0.4,
     image = Prints.sticker(print_host), wrinkle = 0.02,
 })
 local top = Film.new({
-    parent = stage, face = Geom.top, a0 = 0, b0 = 0, width = 760, height = 380, cols = 40, rows = 20, z = 22,
-    kind = "clear", corner = { 0, 0 }, dir = 0.4, tab = { 110, 70 }, image = Prints.top(print_host),
+    parent = films_group, spans = { { face = T, len = Geom.LEN } }, b0 = 0, height = Geom.DEPTH, cols = 40, rows = 26, z = 22,
+    kind = "clear", tab = { 110, 150 }, image = Prints.top(print_host), rscale = 0.8,
 })
+-- The shrink-wrap foil runs across the front glass and round the corner onto the side glass.
 local glass = Film.new({
-    parent = stage, face = Geom.glass, a0 = 0, b0 = 0, width = 760, height = 440, cols = 48, rows = 48, z = 20,
-    kind = "clear", corner = { 0, 0 }, dir = 0.5, tab = { 110, 70 }, image = Prints.glass(print_host),
+    parent = films_group, spans = { { face = L, len = Geom.LEN }, { face = R, len = Geom.DEPTH } }, b0 = 0,
+    height = Geom.HEIGHT, cols = 64, rows = 36, z = 20, kind = "clear", tab = { 110, 150 },
+    image = Prints.wrap(print_host),
 })
 local films = { sticker = sticker, top = top, glass = glass }
 -- What is drawn on top is grabbed first.
 local film_order = { sticker, top, glass }
-local bag = Bag.new(stage, Prints.bag(print_host), 40)
+local bag = Bag.new(pc, Prints.bag(print_host, 960, 750), 40)
 local spare = Film.new({
-    parent = stage, face = Geom.glass, a0 = 0, b0 = 0, width = 760, height = 440, cols = 48, rows = 48, z = 26,
-    kind = "clear", corner = { 0, 0 }, dir = 0.5, tab = { 1, 1 }, image = Prints.protector(print_host),
+    parent = pc, spans = { { face = L, len = Geom.LEN } }, b0 = 0, height = Geom.HEIGHT, cols = 48, rows = 48, z = 26,
+    kind = "clear", tab = { 1, 1 }, image = Prints.protector(print_host),
 })
 local protector = Protector.new(spare, stage, 60)
+local function to_design(sx: number, sy: number): (number, number)
+    return sx * stage.scale + stage.x, sy * stage.scale + stage.y
+end
+local unbox = Unbox.new(stage, pc, bag, case_art, to_design, films_group)
+
+local State = require("lib/state")
+State.bag, State.films, State.protector, State.unbox, State.stage, State.pc = bag, films, protector, unbox, stage, pc
 
 -- State and HUD ---------------------------------------------------------------------------
 
 local tasks = {
+    { key = "tape", label = "Peel the tape off the box", done = ui.signal(false) },
+    { key = "flaps", label = "Open the box", done = ui.signal(false) },
+    { key = "foam", label = "Take out the foam", done = ui.signal(false) },
+    { key = "lift", label = "Lift the PC out", done = ui.signal(false) },
     { key = "bag", label = "Slide the bag off", done = ui.signal(false) },
     { key = "glass", label = "Peel the glass film", done = ui.signal(false) },
     { key = "top", label = "Peel the top film", done = ui.signal(false) },
@@ -94,6 +112,15 @@ local function task(key: string)
     error(`no task {key}`)
 end
 
+State.done = function(key: string): boolean
+    for _, t in tasks do
+        if t.key == key then
+            return t.done:peek()
+        end
+    end
+    return false
+end
+
 local function remaining(): number
     local n = 0
     for _, t in tasks do
@@ -105,7 +132,15 @@ local function remaining(): number
 end
 
 local function refresh_hint()
-    if not task("bag").done:peek() then
+    if not task("tape").done:peek() then
+        hint:set("Grab the end of the tape and pull it along the seam")
+    elseif not task("flaps").done:peek() then
+        hint:set("Pull the flaps open")
+    elseif not task("foam").done:peek() then
+        hint:set("Drag the foam blocks out of the box")
+    elseif not task("lift").done:peek() then
+        hint:set("Lift the PC up and out of the box")
+    elseif not task("bag").done:peek() then
         hint:set("Grab the bag and slide it off the PC")
     elseif remaining() > 0 then
         hint:set("Grab a corner tab and peel it back. Faster pulls crinkle more")
@@ -151,7 +186,7 @@ local function reset_all()
         g.obj:release()
         grabs[id] = nil
     end
-    bag:reset()
+    unbox:reset()
     for _, film in films do
         film:reset()
     end
@@ -164,6 +199,13 @@ local function reset_all()
     refresh_hint()
 end
 
+
+unbox.on_task = function(key: string)
+    complete(key)
+end
+unbox.on_done = function()
+    refresh_hint()
+end
 
 bag.on_slide_off = function(dx: number)
     Sfx.whoosh(600, mid_x() + dx * 300)
@@ -290,6 +332,13 @@ ui.show("hud")
 
 
 local function find_target(sx: number, sy: number)
+    if unbox:active() then
+        local obj = unbox:target(sx, sy)
+        if obj then
+            return obj, "box"
+        end
+        return nil, nil
+    end
     if not bag.gone and bag:contains(sx, sy) then
         return bag, "bag"
     end
@@ -343,7 +392,9 @@ kulisa.on("key", function(key)
         show_stats:set(not show_stats:peek())
     elseif key == "r" then
         reset_all()
-    elseif key == "b" and not bag.gone then
+    elseif key == "u" and unbox:active() then
+        unbox:skip()
+    elseif key == "b" and not bag.gone and not unbox:active() then
         -- Shortcut: toss the bag off at once.
         bag.asleep = false
         bag.glide = 0.4
@@ -354,21 +405,29 @@ end)
 -- Frame loop -----------------------------------------------------------------------------
 
 local frames, frame_time, script_time = 0, 0, 0
+local cost_bag, cost_films, cost_protector = 0, 0, 0
 kulisa.on("update", function(dt)
     local t0 = os.clock()
     Prints.tick()
+    unbox:update(dt)
     bag:update(dt)
+    local t1 = os.clock()
     protector:update(dt)
+    local t2 = os.clock()
     for _, film in film_order do
         film:update(dt)
     end
+    local t3 = os.clock()
+    cost_bag += t1 - t0
+    cost_protector += t2 - t1
+    cost_films += t3 - t2
     -- Sound and wrinkles follow how fast each held thing is being dragged.
     for _, g in grabs do
         local obj = g.obj
         local x, y
         if g.kind == "bag" then
             x, y = obj.lx or g.lx, obj.ly or g.ly
-        elseif g.kind == "tool" then
+        elseif g.kind == "tool" or g.kind == "box" then
             x, y = g.lx, g.ly
         else
             x, y = obj:corner_screen()
@@ -378,8 +437,8 @@ kulisa.on("update", function(dt)
         g.lx, g.ly = x, y
         if g.kind == "bag" then
             Sfx.rustle(g.speed, x)
-        elseif g.kind == "tool" then
-            -- (the protector makes its own sounds)
+        elseif g.kind == "tool" or g.kind == "box" then
+            -- (the protector and the box make their own sounds)
         else
             obj:crinkle(math.min(0.2, g.speed * dt * 0.0005))
             Sfx.crinkle(g.speed, x)
@@ -389,8 +448,13 @@ kulisa.on("update", function(dt)
     frames += 1
     frame_time += dt
     if frame_time >= 0.5 then
-        stats_text:set(string.format("%.0f fps  ·  script %.2f ms/frame", frames / frame_time, script_time / frames * 1000))
+        local ms = 1000 / frames
+        stats_text:set(string.format(
+            "%.0f fps  ·  script %.2f ms/frame  (bag %.2f, films %.2f, protector %.2f)",
+            frames / frame_time, script_time * ms, cost_bag * ms, cost_films * ms, cost_protector * ms
+        ))
         frames, frame_time, script_time = 0, 0, 0
+        cost_bag, cost_films, cost_protector = 0, 0, 0
     end
 end)
 

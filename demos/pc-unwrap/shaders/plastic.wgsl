@@ -137,7 +137,8 @@ fn fragment(in: VertexOut) -> vec4<f32> {
     let cx = min(in.uv.x, 1.0 - in.uv.x) * size.x;
     let cy = min(in.uv.y, 1.0 - in.uv.y) * size.y;
     let corner = exp(-(cx * cx + cy * cy) / 90.0) * 0.5;
-    let edge = (rim + corner) * select(1.0, 0.35, is_bag);
+    // Thin strips (tape) are all edge: skip the glints there.
+    let edge = (rim + corner) * select(1.0, 0.35, is_bag) * smoothstep(20.0, 60.0, min(size.x, size.y));
     color = color + vec3<f32>(0.9, 0.95, 1.0) * edge * 0.6;
     a = min(1.0, a + edge * 0.5);
 

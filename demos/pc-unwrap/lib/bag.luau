@@ -13,19 +13,18 @@ local exp, sqrt, abs, min, max = math.exp, math.sqrt, math.abs, math.min, math.m
 local Bag = {}
 Bag.__index = Bag
 
-local COLS, ROWS = 16, 10
-local X0, Y0, W, H = 140, 100, 1000, 660
+local COLS, ROWS = 18, 12
+local X0, Y0, W, H = 150, 36, 960, 750
 
 function Bag.new(parent, image, z: number)
     local self = setmetatable({}, Bag)
     local n = (COLS + 1) * (ROWS + 1)
     self.n = n
     self.hx, self.hy = W / COLS, H / ROWS
-    local face = Geom.glass
-    local light, view = face.light, face.view
+    local light, view = Geom.light, Geom.view
     self.params = {
         light[1], light[2], light[3], 0.3,
-        view[1], view[2], view[3], 0.2,
+        view[1], view[2], view[3], 0.1,
         0.85, 0.9, 1.0, 0.1,
         W, H, 1 + 8, 1,
     }
@@ -83,6 +82,7 @@ function Bag:reset()
     end
     self.held = false
     self.gone = false
+    self.crumple = self.crumple or 0
     self.glide = 0
     self.gdx, self.gdy = 0, 0
     self.mesh.visible = true
@@ -90,6 +90,12 @@ function Bag:reset()
     self.mesh.params = self.params
     self.moved = 0
     self.nx, self.ny = nil, nil
+    self.asleep = false
+    self:_write()
+end
+
+-- Redraw now (after something other than the cloth changed, e.g. the crumpling).
+function Bag:wake()
     self.asleep = false
     self:_write()
 end
@@ -144,9 +150,9 @@ end
 -- How far the bag has slid towards clearing the case, 0..1 (the best direction).
 function Bag:progress(): number
     local minx, maxx, miny, maxy = extents(self)
-    local o = 28 -- margin beyond the case
-    local ox0, ox1 = Geom.OX - o, Geom.OX + 760 + Geom.DEPTH_X + o
-    local oy0, oy1 = Geom.OY + Geom.DEPTH_Y - o, Geom.OY + 440 + o
+    local o = 24 -- margin beyond the case
+    local ox0, ox1 = Geom.CASE_LEFT - o, Geom.CASE_RIGHT + o
+    local oy0, oy1 = Geom.CASE_TOP - o, Geom.CASE_BOTTOM + o
     local left = (X0 + W - maxx) / ((X0 + W) - ox0)
     local right = (minx - X0) / (ox1 - X0)
     local up = (Y0 + H - maxy) / ((Y0 + H) - oy0)
@@ -254,11 +260,18 @@ end
 
 function Bag:_write()
     local n, X, Y, Hh, comp, gw = self.n, self.X, self.Y, self.Hh, self.comp, self.gw
-    local face = Geom.glass
+    local face = Geom.left
     local Zx, Zy = face.zx, face.zy
     local tent = if self.held then 20 else 0
+    local crumple = self.crumple or 0
     for i = 1, n do
-        local target = min(comp[i] * 70, 26) + tent * gw[i]
+        local c, r = (i - 1) % (COLS + 1), (i - 1) // (COLS + 1)
+        local noise = 0
+        if crumple > 0 then
+            -- A crumpled bag in the box: fixed lumps and folds.
+            noise = crumple * (13 * math.sin(c * 1.9 + r * 1.1) * math.cos(r * 2.3 - c * 0.7) + 7 * math.sin((c + r) * 2.7))
+        end
+        local target = min(comp[i] * 70, 26) + tent * gw[i] + noise
         Hh[i] += (target - Hh[i]) * 0.35
     end
     local pos, dat = self.pos, self.dat
@@ -280,9 +293,10 @@ function Bag:_write()
             local o8, o16 = (i - 1) * 8, (i - 1) * 16
             buffer.writef32(pos, o8, X[i] + z * Zx)
             buffer.writef32(pos, o8 + 4, Y[i] + z * Zy)
-            buffer.writef32(dat, o16, nx * k)
-            buffer.writef32(dat, o16 + 4, ny * k)
-            buffer.writef32(dat, o16 + 8, k)
+            local wx, wy, wz = Geom.world_normal(face, nx, ny, 1)
+            buffer.writef32(dat, o16, wx * k)
+            buffer.writef32(dat, o16 + 4, wy * k)
+            buffer.writef32(dat, o16 + 8, wz * k)
         end
     end
     self.mesh:set_positions(pos)

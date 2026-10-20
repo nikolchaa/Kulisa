@@ -1,6 +1,8 @@
--- Printed layers of the films, the sticker and the bag. They are drawn once with ordinary nodes
--- into render targets, and the targets' textures are then the images of the film meshes (the
--- shader composites them as the print). Rendering stops once the glyphs have been drawn.
+-- Printed layers of the foil, the films, the sticker and the bag. They are drawn once with
+-- ordinary nodes into render targets, and the targets' textures are then the images of the meshes
+-- (the shader composites them as the print). Rendering stops once the glyphs have been drawn.
+
+local Geom = require("lib/geom")
 
 local Prints = {}
 
@@ -12,11 +14,11 @@ end
 
 local pending = {}
 
--- A transparent target of width x height, to be filled by `draw(parent)`.
+-- A transparent target of width x height, to be filled by `draw(parent)`. `flip` draws it upside
+-- down, for faces whose v axis runs up the screen (the top).
 local function make(parent, width: number, height: number, draw, flip: boolean?)
     local target = kulisa.target({ parent = parent, width = width, height = height, clear = "#00000000" })
     if flip then
-        -- On the top face, v runs away from the viewer (up the screen): draw the print upside down.
         draw(kulisa.group({ parent = target, y = height, scale_y = -1 }))
     else
         draw(target)
@@ -43,87 +45,92 @@ local function frame(parent, w, h, inset, thickness, color, alpha)
     rect(parent, w - inset - thickness, inset, thickness, h - inset * 2, color, alpha)
 end
 
--- The tab you grab: a colored corner patch with a step number and a hint.
-local function tab(parent, w, h, number: string, text: string, color: string, flip_x: boolean?)
-    rect(parent, 0, 0, w, h, color, 0.92)
-    rect(parent, 0, h - 3, w, 3, "#ffffff", 0.5)
-    rect(parent, w - 3, 0, 3, h, "#ffffff", 0.5)
-    label(parent, 12, 6, "{b}" .. number .. "{/b}", 34, "#ffffff")
-    label(parent, 46, 16, "{b}" .. text .. "{/b}", 17, "#ffffff")
-    label(parent, 46, 38, "peel diagonally", 12, "#e8f0ff", 0.85)
+-- The pull tab at the start of a foil: a colored patch in the middle of its left edge.
+local function tab(parent, y: number, h: number, w: number, number: string, text: string, color: string)
+    rect(parent, 0, y, w, h, color, 0.92)
+    rect(parent, 0, y + h - 3, w, 3, "#ffffff", 0.45)
+    rect(parent, w - 3, y, 3, h, "#ffffff", 0.45)
+    label(parent, 12, y + 10, "{b}" .. number .. "{/b}", 38, "#ffffff")
+    label(parent, 12, y + 58, "{b}" .. text .. "{/b}", 18, "#ffffff")
+    label(parent, 12, y + 82, "pull across", 13, "#e8f0ff", 0.85)
+    -- Chevrons showing the direction.
+    for i = 0, 2 do
+        label(parent, w + 6 + i * 20, y + h / 2 - 16, "›", 34, "#ffffff", 0.7 - 0.2 * i)
+    end
 end
 
--- The glass film: 760 x 440 face pixels.
-function Prints.glass(parent)
-    return make(parent, 760, 440, function(t)
-        frame(t, 760, 440, 10, 1.5, "#9cc4ff", 0.55)
-        tab(t, 110, 70, "1", "PEEL", "#2f6fed")
-        label(t, 0, 392, "{b}PROTECTIVE FILM{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, 760, "center")
+-- The shrink-wrap foil around the glass: front glass, then the side glass. 1220 x 480.
+function Prints.wrap(parent)
+    local w, h = Geom.LEN + Geom.DEPTH, Geom.HEIGHT
+    return make(parent, w, h, function(t)
+        frame(t, w, h, 10, 1.5, "#9cc4ff", 0.5)
+        tab(t, h / 2 - 75, 150, 110, "1", "PULL", "#2f6fed")
+        label(t, 0, h - 44, "{b}PROTECTIVE FOIL{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, Geom.LEN, "center")
+        label(t, Geom.LEN, h - 44, "{b}SIDE PANEL{/b}  ·  peel off", 14, "#cfe0ff", 0.55, Geom.DEPTH, "center")
         for i = 0, 9 do
-            rect(t, 560 + i * 4 + (i % 2) * 2, 400, 2, 22, "#cfe0ff", 0.4)
+            rect(t, 560 + i * 4 + (i % 2) * 2, h - 80, 2, 22, "#cfe0ff", 0.4)
         end
-        -- Tiny registration marks in the corners.
-        for _, p in { { 744, 14 }, { 744, 426 }, { 16, 426 } } do
+        for _, p in { { 16, 16 }, { w - 16, 16 }, { w - 16, h - 16 }, { 16, h - 16 }, { Geom.LEN, 16 }, { Geom.LEN, h - 16 } } do
             rect(t, p[1] - 6, p[2], 12, 1, "#cfe0ff", 0.6)
             rect(t, p[1], p[2] - 6, 1, 12, "#cfe0ff", 0.6)
         end
     end)
 end
 
--- The top film: 760 x 380 face pixels.
+-- The top film: 740 x 480 face pixels.
 function Prints.top(parent)
-    return make(parent, 760, 380, function(t)
-        frame(t, 760, 380, 10, 1.5, "#9cc4ff", 0.55)
-        tab(t, 110, 70, "2", "PEEL", "#e0663a")
-        label(t, 0, 330, "{b}TOP PANEL FILM{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, 760, "center")
+    return make(parent, Geom.LEN, Geom.DEPTH, function(t)
+        frame(t, Geom.LEN, Geom.DEPTH, 10, 1.5, "#9cc4ff", 0.55)
+        tab(t, Geom.DEPTH / 2 - 75, 150, 110, "2", "PULL", "#e0663a")
+        label(t, 0, Geom.DEPTH - 44, "{b}TOP PANEL FILM{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, Geom.LEN, "center")
     end, true)
 end
 
--- A spare protector to fit on the glass: 760 x 440 face pixels.
+-- A spare protector to fit on the front glass: 740 x 480 face pixels.
 function Prints.protector(parent)
-    return make(parent, 760, 440, function(t)
-        frame(t, 760, 440, 10, 1.5, "#9cf0cf", 0.5)
-        label(t, 0, 386, "{b}NEW PROTECTOR{/b}  ·  smooth out the air bubbles", 14, "#d7fff0", 0.6, 760, "center")
-        for _, p in { { 16, 16 }, { 744, 16 }, { 744, 424 }, { 16, 424 } } do
+    return make(parent, Geom.LEN, Geom.HEIGHT, function(t)
+        frame(t, Geom.LEN, Geom.HEIGHT, 10, 1.5, "#9cf0cf", 0.5)
+        label(t, 0, Geom.HEIGHT - 44, "{b}NEW PROTECTOR{/b}  ·  smooth out the air bubbles", 14, "#d7fff0", 0.6, Geom.LEN, "center")
+        for _, p in { { 16, 16 }, { Geom.LEN - 16, 16 }, { Geom.LEN - 16, Geom.HEIGHT - 16 }, { 16, Geom.HEIGHT - 16 } } do
             rect(t, p[1] - 6, p[2], 12, 1, "#d7fff0", 0.6)
             rect(t, p[1], p[2] - 6, 1, 12, "#d7fff0", 0.6)
         end
     end)
 end
 
--- The sticker over the front I/O ports: 190 x 64 face pixels.
+-- The sticker over the I/O ports on top: 170 x 60 face pixels.
 function Prints.sticker(parent)
-    return make(parent, 190, 64, function(t)
-        rect(t, 0, 0, 190, 64, "#f4f4f6")
-        rect(t, 0, 0, 190, 6, "#f0b429")
-        rect(t, 0, 58, 190, 6, "#f0b429")
-        label(t, 12, 8, "{b}I/O{/b}", 40, "#1b1d26")
-        label(t, 82, 12, "{b}REMOVE{/b}", 16, "#1b1d26")
-        label(t, 82, 33, "before use", 13, "#555a6b")
+    return make(parent, 170, 60, function(t)
+        rect(t, 0, 0, 170, 60, "#f4f4f6")
+        rect(t, 0, 0, 170, 6, "#f0b429")
+        rect(t, 0, 54, 170, 6, "#f0b429")
+        label(t, 10, 7, "{b}I/O{/b}", 38, "#1b1d26")
+        label(t, 72, 11, "{b}REMOVE{/b}", 15, "#1b1d26")
+        label(t, 72, 30, "before use", 12, "#555a6b")
         for i = 0, 3 do
-            rect(t, 156 + i * 7, 14, 4, 34, "#1b1d26", 0.8)
+            rect(t, 140 + i * 6, 13, 3, 32, "#1b1d26", 0.8)
         end
     end, true)
 end
 
--- The bag: printed warnings, repeated, fading into the plastic. 1000 x 640.
-function Prints.bag(parent)
-    return make(parent, 1000, 640, function(t)
-        frame(t, 1000, 640, 8, 2, "#ffffff", 0.35)
+-- The bag: printed warnings, repeated, fading into the plastic.
+function Prints.bag(parent, w: number, h: number)
+    return make(parent, w, h, function(t)
+        frame(t, w, h, 8, 2, "#ffffff", 0.35)
         -- A heat-sealed strip along the left (open) end, with a tear notch line.
-        rect(t, 36, 0, 14, 640, "#ffffff", 0.22)
-        for y = 14, 626, 22 do
+        rect(t, 36, 0, 14, h, "#ffffff", 0.22)
+        for y = 14, h - 14, 22 do
             rect(t, 24, y, 8, 1.5, "#ffffff", 0.5)
         end
-        for row = 0, 3 do
+        for row = 0, 4 do
             for col = 0, 2 do
-                local x = 110 + col * 300 + (row % 2) * 90
-                local y = 60 + row * 150
+                local x = 110 + col * 290 + (row % 2) * 90
+                local y = 60 + row * 140
                 label(t, x, y, "{b}THIS SIDE UP{/b}", 20, "#ffffff", 0.35)
                 label(t, x, y + 26, "keep dry  ·  handle with care", 13, "#ffffff", 0.3)
             end
         end
-        label(t, 600, 560, "{b}WARNING{/b}  plastic bag can cause suffocation, keep away from children", 14, "#ffffff", 0.45, 380)
+        label(t, w - 420, h - 90, "{b}WARNING{/b}  plastic bag can cause suffocation, keep away from children", 14, "#ffffff", 0.45, 380)
     end)
 end
 
