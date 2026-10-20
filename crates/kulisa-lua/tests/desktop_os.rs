@@ -122,7 +122,6 @@ fn reply(g: &mut Game) {
     frames(g, 2);
 }
 
-
 #[test]
 fn desktop_os_plays() {
     let Some(mut g) = game() else { return };

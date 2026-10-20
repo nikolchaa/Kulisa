@@ -90,6 +90,9 @@ pub(crate) struct State {
     pub volumes: BTreeMap<String, f32>,
     /// Taken out while the VM runs (see the module docs).
     pub story: Option<StoryState>,
+    /// The story variables while the story is checked out (a story line is running), so Luau
+    /// helpers those lines call can still read and write them.
+    pub busy_vars: Option<mlua::Table>,
     pub handlers: HashMap<String, Vec<(u64, Function)>>,
     pub pointer: Option<Vec2>,
     pub keys: HashSet<String>,
@@ -256,12 +259,15 @@ pub(crate) fn with_story<R>(
 ) -> Result<R, String> {
     let story = shared.borrow_mut().story.take();
     let mut story = story.ok_or_else(|| "the story is busy (called from a story line?)".to_string())?;
+    let outer = shared.borrow_mut().busy_vars.replace(story.host.vars().clone());
     let result = if need_loaded && !story.loaded {
         Err("no story loaded; call kulisa.story.load() first".to_string())
     } else {
         f(&mut story)
     };
-    shared.borrow_mut().story = Some(story);
+    let mut st = shared.borrow_mut();
+    st.story = Some(story);
+    st.busy_vars = outer;
     result
 }
 
@@ -483,6 +489,7 @@ impl Game {
             tracks: BTreeMap::new(),
             volumes: BTreeMap::new(),
             story: None,
+            busy_vars: None,
             handlers: HashMap::new(),
             pointer: None,
             keys: HashSet::new(),

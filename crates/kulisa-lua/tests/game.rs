@@ -208,6 +208,23 @@ fn drives_stories() {
 }
 
 #[test]
+fn helpers_called_from_story_lines_reach_the_variables() {
+    let g = game!("main.luau" => r##"
+        function give(item)
+            local v = kulisa.story.vars()
+            v.bag[item] = (v.bag[item] or 0) + 1
+        end
+        kulisa.story.load()
+        kulisa.story.start()
+    "##, "story/s.kulisa" => "default bag = {}
+label start:
+    $ give(\"key\")
+    \"Got [bag.key].\"
+");
+    assert_eq!(g.eval::<i64>("t", "return kulisa.story.vars().bag.key").unwrap(), 1);
+}
+
+#[test]
 fn saves_and_loads() {
     let id = format!("kulisa_test_{}", std::process::id());
     let g = game!("main.luau" => STORY_MAIN, "story/script.kulisa" => STORY);

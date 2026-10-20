@@ -1257,7 +1257,14 @@ fn story_api(lua: &Lua) -> mlua::Result<Table> {
     )?;
     s.set(
         "vars",
-        lua.create_function(|lua, ()| rt(with_story(&shared(lua), false, |s| Ok(s.host.vars().clone()))))?,
+        lua.create_function(|lua, ()| {
+            let sh = shared(lua);
+            // While a story line runs the story is checked out; its variables stay reachable.
+            if let Some(vars) = sh.borrow().busy_vars.clone() {
+                return Ok(vars);
+            }
+            rt(with_story(&sh, false, |s| Ok(s.host.vars().clone())))
+        })?,
     )?;
     s.set(
         "define",

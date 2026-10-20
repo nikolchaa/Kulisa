@@ -103,7 +103,7 @@ Properties (read and write unless noted):
 | `x`, `y`, `rotation`, `scale`, `scale_x`, `scale_y`, `origin_x`, `origin_y` | all | Transform relative to the parent; rotation in radians. |
 | `z` | all | Draw order among siblings; negative children draw behind their parent. |
 | `opacity`, `visible`, `tint`, `blend` | all | `blend`: `alpha`, `add`, `multiply`, `screen`. |
-| `clip` | all | `{ x, y, width, height }` in local units, or nil. |
+| `clip` | all | `{ x, y, width, height }` (a list of four numbers) in local units, or nil. |
 | `shader`, `params` | all | A shader for this node and up to 16 numbers for it. |
 | `mask` | all, after `shader` | A second image for the shader (`mask_tex`), e.g. a wipe mask. |
 | `slice`, `slice_scale` | sprites | Nine-slice borders in image pixels: one number for all four or `{ left, top, right, bottom }`. Corners keep their size (times `slice_scale`, default 1), edges and the middle stretch. |
@@ -519,7 +519,8 @@ looping music start then.
 - `kulisa.story.block_rollback()`: the player cannot roll back past the current line.
 - `kulisa.story.seen()`: whether the current line had been seen before, in any session (for
   "skip seen text"). Seen lines are kept with the persistent data (needs `kulisa.save.setup`).
-- `kulisa.story.vars()` (the story variables table), `kulisa.story.define(name, value)`
+- `kulisa.story.vars()` (the story variables table; it also works inside Luau helpers that story
+  `$` lines and conditions call, so a game's `give("key")` can change the inventory), `kulisa.story.define(name, value)`
   (a constant stories can use), `kulisa.story.stage()`.
 
 The engine never draws the story. It calls handlers, and the game decides what they look
