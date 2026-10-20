@@ -559,16 +559,19 @@ pub(crate) fn areas(st: &State) -> Areas {
     Areas { screen, safe, design: Rect { min: Vec2::ZERO, max: st.viewport.design } }
 }
 
-/// Removes the nodes of dropped widgets.
+/// Removes the nodes of dropped widgets. Embedded nodes (`ui.node`) belong to the game: they are
+/// all moved out first, so removing an ancestor's group cannot take them with it.
 fn free(st: &mut State, removed: Vec<UiNodes>) {
     let root = st.scene.root();
-    for n in removed {
+    for n in &removed {
         if let Some(e) = n.embedded
             && let Some(node) = st.scene.get_mut(e)
         {
             node.visible = false;
             st.scene.reparent(e, root);
         }
+    }
+    for n in removed {
         if let Some(g) = n.group {
             st.scene.remove(g);
         }

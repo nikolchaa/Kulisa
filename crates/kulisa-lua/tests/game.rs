@@ -1517,3 +1517,26 @@ fn display_profiles_pick_the_device_override() {
     let err = g.eval::<()>("t", "kulisa.display{ orientation = 'sideways' }").unwrap_err();
     assert!(err.contains("`orientation` must be"), "{err}");
 }
+
+#[test]
+fn embedded_nodes_survive_their_screen_being_hidden() {
+    // A game node shown inside nested boxes of a screen: hiding the screen must hide the node,
+    // not remove it, however deep it sits, so the screen can be shown again.
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        local ui = kulisa.ui
+        holder = kulisa.group({})
+        kulisa.sprite({ parent = holder, width = 10, height = 10 })
+        ui.screen("main", function()
+            return ui.box{ ui.column{ ui.box{ padding = 2, ui.node{ node = holder, width = 10, height = 10 } } } }
+        end)
+        ui.show("main")
+    "##);
+    g.frame(0.016);
+    g.eval::<()>("t", "kulisa.ui.hide('main')").unwrap();
+    g.frame(0.016);
+    assert!(g.eval::<bool>("t", "return holder:exists() and not holder.visible").unwrap());
+    g.eval::<()>("t", "kulisa.ui.show('main')").unwrap();
+    g.frame(0.016);
+    assert!(g.eval::<bool>("t", "return holder:exists() and holder.visible").unwrap());
+}

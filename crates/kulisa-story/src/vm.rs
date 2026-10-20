@@ -454,10 +454,16 @@ impl Vm {
                     return Ok(Event::Scene { image, with });
                 }
                 Op::Show { image, at, with } => {
-                    let shown = Shown { image: image.clone(), at: at.clone() };
                     match self.stage.shown.iter_mut().find(|s| s.image[0] == image[0]) {
-                        Some(existing) => *existing = shown,
-                        None => self.stage.shown.push(shown),
+                        // A new look for a shown tag keeps its place unless `at` gives a new one,
+                        // as in Ren'Py (saves and rollback must remember the place too).
+                        Some(existing) => {
+                            existing.image = image.clone();
+                            if at.is_some() {
+                                existing.at = at.clone();
+                            }
+                        }
+                        None => self.stage.shown.push(Shown { image: image.clone(), at: at.clone() }),
                     }
                     return Ok(Event::Show { image, at, with });
                 }
@@ -969,11 +975,12 @@ label leave:
 
     #[test]
     fn stage_tracks_scene_shows_and_music() {
-        let src = "label start:\n    show a x\n    show b at right\n    show a y at left\n    hide b\n    play music \"m.ogg\"\n    play sound \"click.wav\"\n    \"!\"\n    scene bg\n    stop music\n    \"done\"\n";
+        let src = "label start:\n    show a x\n    show b at right\n    show a y at left\n    show a z\n    hide b\n    play music \"m.ogg\"\n    play sound \"click.wav\"\n    \"!\"\n    scene bg\n    stop music\n    \"done\"\n";
         let (mut vm, mut h) = vm(src);
         assert_eq!(next_line(&mut vm, &mut h), "!");
         let st = vm.stage().clone();
-        assert_eq!(st.shown, vec![Shown { image: vec!["a".into(), "y".into()], at: Some("left".into()) }]);
+        // `show a z` (no `at`) changed the look and kept the place.
+        assert_eq!(st.shown, vec![Shown { image: vec!["a".into(), "z".into()], at: Some("left".into()) }]);
         assert_eq!(st.tracks.len(), 1, "one-shot sounds are not stage state");
         assert_eq!(Stage::from_value(&st.to_value()), st);
         assert_eq!(next_line(&mut vm, &mut h), "done");

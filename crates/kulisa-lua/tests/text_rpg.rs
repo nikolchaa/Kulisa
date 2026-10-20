@@ -99,6 +99,17 @@ fn text_rpg_plays() {
     g.eval::<()>("t", "errors = {}; kulisa.on('error', function(m) table.insert(errors, m) end)").unwrap();
     frames(&mut g, 4);
     shot(&mut g, "rpg-title");
+    // Load from the title shows the play screen behind it again (its illustration is a game node
+    // that hiding the screen must keep), then back to the title.
+    click(&mut g, "menu", "title_load", 1.5);
+    frames(&mut g, 2);
+    assert!(
+        truth(&g, "#errors == 0"),
+        "{}",
+        g.eval::<String>("t", "return table.concat(errors, '\\n')").unwrap()
+    );
+    click(&mut g, "menu", "close", 1.5);
+    frames(&mut g, 2);
     click(&mut g, "menu", "new", 1.5);
     assert!(!truth(&g, "kulisa.ui.shown('menu')"));
     frames(&mut g, 20);
