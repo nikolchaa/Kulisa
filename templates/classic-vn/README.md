@@ -21,7 +21,8 @@ cargo xtask apk --game templates/classic-vn
 - **Dialogs and overlays** (`ui/overlays.luau`): confirm, notifications, script errors, and a
   "turn your device" hint on the web when the orientation cannot be locked.
 - **Transitions** for `with` (`game/config.luau`, `shaders/`): fade, dissolve, wipes and an
-  image dissolve (`swirl`, from `masks/swirl.png`).
+  swirl computed in the shader; mode 4 of `shaders/wipe.wgsl` dissolves along any grayscale image
+  you give a transition as `mask` (example in `game/config.luau`).
 
 ## Ren'Py behaviour
 

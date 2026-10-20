@@ -78,7 +78,9 @@ config.transitions = {
     wipeleft = { shader = "shaders/wipe.wgsl", time = 0.8, params = { 1, 0.15 } },
     wipedown = { shader = "shaders/wipe.wgsl", time = 0.8, params = { 2, 0.15 } },
     wipeup = { shader = "shaders/wipe.wgsl", time = 0.8, params = { 3, 0.15 } },
-    swirl = { shader = "shaders/wipe.wgsl", time = 1.2, params = { 4, 0.2 }, mask = "masks/swirl.png" },
+    swirl = { shader = "shaders/wipe.wgsl", time = 1.2, params = { 5, 0.12 } },
+    -- Mode 4 dissolves along any grayscale image (darker first), for example:
+    -- heart = { shader = "shaders/wipe.wgsl", time = 1.0, params = { 4, 0.1 }, mask = "masks/heart.png" },
 }
 
 -- Preference defaults (players change them in Preferences).

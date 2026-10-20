@@ -134,6 +134,18 @@ fn classic_vn_plays() {
     assert_eq!(line(&g), "By evening the whole gang had gathered in the playroom.");
     frames(&mut g, 40);
     shot(&mut g, "classic-vn-4-playroom");
+    if std::env::var_os("KULISA_SHOTS").is_some() {
+        // Half way through a swirl back to the kitchen (only for the screenshots).
+        g.eval::<()>(
+            "t",
+            "local s = require('game/stage'); s.transition('swirl'); s.scene({ 'bg', 'kitchen' })",
+        )
+        .unwrap();
+        frames(&mut g, 12);
+        shot(&mut g, "classic-vn-5-swirl");
+        frames(&mut g, 20);
+        g.eval::<()>("t", "require('game/stage').scene({ 'bg', 'playroom' })").unwrap();
+    }
     g.eval::<()>("t", "require('game/actions').quick_load()").unwrap();
     frames(&mut g, 5);
     assert_eq!(line(&g), "...Fine. One crunchy each. Don't tell the humans.");
