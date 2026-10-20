@@ -45,7 +45,7 @@ function PcView.build(stage, pc)
     local L, R, T = Geom.left, Geom.right, Geom.top
 
     -- The room is far bigger than the stage so wide windows never see its edge.
-    local RX, RY, RW, RH = -1000, -700, 3280, 2200
+    local RX, RY, RW, RH = -3200, -2600, 7700, 5600
     local horizon = 585
     kulisa.sprite({
         parent = stage, x = RX, y = RY, width = RW, height = RH, shader = shaders.room, z = -10,

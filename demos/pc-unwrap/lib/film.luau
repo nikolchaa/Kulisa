@@ -770,6 +770,15 @@ function Film:update(dt: number)
         or abs(self.thv) > 0.01 or self.slip > 0
         or (self.f > 0 and abs(self.droop - (if self.held then 0 else 0.0042)) > 0.0001)
         or abs(self.qh) > 0.05
+    -- The idle "breathing" tab only needs about 20 updates a second.
+    if hint > 0 and not moving and not self.dirty then
+        local now = kulisa.now()
+        if now - (self.hint_at or -1) < 0.05 then
+            hint = 0
+        else
+            self.hint_at = now
+        end
+    end
     if moving or hint > 0 or self.dirty then
         if hint > 0 and self.f == 0 then
             -- Draw the breathing tab as a tiny peel without changing the state.
