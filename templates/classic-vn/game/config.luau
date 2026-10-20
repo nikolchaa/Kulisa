@@ -23,11 +23,11 @@ config.fonts = { "fonts/Inter-Regular.ttf", "fonts/Inter-Bold.ttf" }
 config.font = "Inter"
 
 config.colors = {
-    ink = "#111116",
+    ink = "#0d0d1c",
     paper = "#f4f1ea",
-    accent = "#ff6a3d",
+    accent = "#ff8a63",
     haze = "#8a8794",
-    panel = "#1b1a22",
+    panel = "#15152b",
     idle = "#c9c5bc",
     disabled = "#5a5862",
 }
