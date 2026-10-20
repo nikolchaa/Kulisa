@@ -1,5 +1,6 @@
 -- What buttons and keys do: open menus, save, load, start, quit.
 
+local config = require("game/config")
 local flow = require("game/flow")
 local history = require("game/history")
 local prefs = require("game/prefs")
@@ -119,7 +120,7 @@ function actions.main_menu()
     state.window:set(false)
     state.line = nil
     stage.clear()
-    stage.scene({ "bg", "night" })
+    stage.scene(config.menu_background)
     kulisa.story.load()
     ui.show("main_menu")
 end

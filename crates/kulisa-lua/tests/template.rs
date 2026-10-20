@@ -1,4 +1,5 @@
 //! Plays `templates/classic-vn` headless: the template must keep working with the engine.
+//! With `KULISA_SHOTS=<dir>` it saves screenshots along the way.
 
 use kulisa_core::Vec2;
 use kulisa_lua::Game;
@@ -39,6 +40,16 @@ fn click(g: &mut Game, screen: &str, id: &str) {
 fn frames(g: &mut Game, n: usize) {
     for _ in 0..n {
         g.frame(0.05);
+    }
+}
+
+fn shot(g: &mut Game, name: &str) {
+    let Some(dir) = std::env::var_os("KULISA_SHOTS") else { return };
+    g.render();
+    if let Some(img) = g.renderer().read_pixels() {
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(std::path::Path::new(&dir).join(format!("{name}.png")), img.encode_png().unwrap())
+            .unwrap();
     }
 }
 
@@ -86,25 +97,28 @@ fn classic_vn_plays() {
     g.eval::<()>("t", "errors = {}; kulisa.on('error', function(m) table.insert(errors, m) end)").unwrap();
     frames(&mut g, 2);
     assert!(eval::<bool>(&g, "kulisa.ui.shown('main_menu')"));
+    shot(&mut g, "classic-vn-1-menu");
     click(&mut g, "main_menu", "start");
     frames(&mut g, 40);
     assert!(eval::<bool>(&g, "kulisa.ui.shown('say') and not kulisa.ui.shown('main_menu')"));
-    assert_eq!(line(&g), "The light in the window had gone from gold to violet.");
+    assert_eq!(line(&g), "Afternoon sun had found the kitchen counter, and someone small had found the sun.");
     // The text box waited for the fade, then typed the line.
     assert!(eval::<bool>(&g, "kulisa.ui.find('say', 'what') ~= nil"));
     advance(&mut g);
-    assert_eq!(line(&g), "You found the place. Most people walk right past the door.");
+    assert_eq!(line(&g), "Mrrp? You're new here. Are you here about the counter too?");
     advance(&mut g);
     advance(&mut g);
     advance(&mut g);
     assert!(eval::<bool>(&g, "kulisa.ui.shown('choice')"), "at the menu: {}", line(&g));
+    shot(&mut g, "classic-vn-2-choice");
     assert!(eval::<bool>(&g, "kulisa.save.exists('auto')"), "autosave at menus");
 
     // Keys pick choices; rollback returns to the menu and the choice can change.
     g.key("2", true);
     g.key("2", false);
     frames(&mut g, 30);
-    assert_eq!(line(&g), "Maybe later. I want to look around first.");
+    assert_eq!(line(&g), "Later, then. I'll be in my sunbeam.");
+    shot(&mut g, "classic-vn-3-later");
     g.key("pageup", true);
     g.key("pageup", false);
     frames(&mut g, 5);
@@ -112,15 +126,17 @@ fn classic_vn_plays() {
     g.key("1", true);
     g.key("1", false);
     frames(&mut g, 30);
-    assert_eq!(line(&g), "I'd love some.");
+    assert_eq!(line(&g), "...Fine. One crunchy each. Don't tell the humans.");
 
     // Quick save, play on, quick load.
     g.eval::<()>("t", "require('game/actions').quick_save()").unwrap();
     advance(&mut g);
-    assert_eq!(line(&g), "Later, the street outside went quiet.");
+    assert_eq!(line(&g), "By evening the whole gang had gathered in the playroom.");
+    frames(&mut g, 40);
+    shot(&mut g, "classic-vn-4-playroom");
     g.eval::<()>("t", "require('game/actions').quick_load()").unwrap();
     frames(&mut g, 5);
-    assert_eq!(line(&g), "I'd love some.");
+    assert_eq!(line(&g), "...Fine. One crunchy each. Don't tell the humans.");
     assert!(eval::<bool>(&g, "kulisa.save.list()[1].thumbnail ~= nil"));
 
     // Skip runs through seen lines and stops at the first unseen one.
@@ -128,7 +144,7 @@ fn classic_vn_plays() {
     g.key("tab", false);
     frames(&mut g, 40);
     assert_eq!(eval::<String>(&g, "require('game/state').mode:peek()"), "normal");
-    assert_eq!(line(&g), "Thanks for staying. The tea was better with company.");
+    assert_eq!(line(&g), "Thanks for sharing. Treats taste better with company.");
 
     // The game menu, then back to the main menu.
     g.key("escape", true);
@@ -145,7 +161,7 @@ fn classic_vn_plays() {
     g.key("enter", true);
     g.key("enter", false);
     frames(&mut g, 40);
-    assert_eq!(line(&g), "The light in the window had gone from gold to violet.");
+    assert_eq!(line(&g), "Afternoon sun had found the kitchen counter, and someone small had found the sun.");
     let press = |g: &mut Game, button: &str| {
         g.gamepad_button(0, button, true);
         g.gamepad_button(0, button, false);
@@ -165,7 +181,7 @@ fn classic_vn_plays() {
     press(&mut g, "down");
     press(&mut g, "a");
     frames(&mut g, 30);
-    assert_eq!(line(&g), "Maybe later. I want to look around first.");
+    assert_eq!(line(&g), "Later, then. I'll be in my sunbeam.");
     // Y opens the history, RB changes section, B closes; LB rolls back to the menu.
     press(&mut g, "y");
     frames(&mut g, 2);

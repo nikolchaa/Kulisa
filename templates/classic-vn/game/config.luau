@@ -3,7 +3,7 @@
 
 local config = {}
 
-config.title = "Classic VN"
+config.title = "Whiskers & Sunbeams"
 config.version = "1.0"
 -- Save folder name. Change it for your game, or its saves mix with other games' saves.
 config.id = "kulisa_classic_vn"
@@ -22,14 +22,15 @@ config.display = {
 config.fonts = { "fonts/Inter-Regular.ttf", "fonts/Inter-Bold.ttf" }
 config.font = "Inter"
 
+-- Warm cream on cocoa, with a pink accent (the colour of a kitten's nose).
 config.colors = {
-    ink = "#0d0d1c",
-    paper = "#f4f1ea",
-    accent = "#ff8a63",
-    haze = "#8a8794",
-    panel = "#15152b",
-    idle = "#c9c5bc",
-    disabled = "#5a5862",
+    ink = "#1c1310",
+    paper = "#fbf3e6",
+    accent = "#f2948a",
+    haze = "#a8968a",
+    panel = "#2b1d18",
+    idle = "#dccbb8",
+    disabled = "#6a5a52",
 }
 
 config.text = {
@@ -57,6 +58,16 @@ config.positions = {
     right = 0.82,
 }
 config.default_position = "center"
+
+-- How big characters are drawn (their images are scaled by this), per tag; `default` for the rest.
+config.sprite_scale = {
+    default = 1,
+    kitty = 0.62,
+    fluffy = 0.85,
+}
+
+-- The scene behind the main menu.
+config.menu_background = { "bg", "playroom" }
 
 -- Transitions for `with name`. `shader` gets the old screen as `tex` and the progress in
 -- params.p[0].x; `params` fill the rest (see shaders/). Add your own here.

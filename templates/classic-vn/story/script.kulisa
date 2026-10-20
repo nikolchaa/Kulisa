@@ -1,39 +1,39 @@
 # A short sample story. Replace it with yours: every .kulisa file in the game is loaded,
 # and the story starts at `label start`.
 
-define mila = Character("Mila", { color = "#e8a0bf" })
-define ren = Character("Ren", { color = "#7fb8d8" })
-default tea = false
+define kitty = Character("Kitty", { color = "#f6c1c7" })
+define fluffy = Character("Fluffy", { color = "#c9a98a" })
+default snack = false
 
 label start:
-    scene bg room with fade
-    "The light in the window had gone from gold to violet."
-    show mila neutral at left with dissolve
-    mila "You found the place. Most people walk right past the door."
-    show ren neutral at right with dissolve
-    ren "I almost did. The sign is {i}very{/i} small."
-    show mila happy
-    mila "That's the point. Tea?"
+    scene bg kitchen with fade
+    "Afternoon sun had found the kitchen counter, and someone small had found the sun."
+    show kitty neutral at left with dissolve
+    kitty "Mrrp? You're new here. Are you here about the counter too?"
+    show fluffy left at midright with dissolve
+    fluffy "Nobody is here about the counter. The counter is {i}off limits{/i}."
+    show kitty happy
+    kitty "Which is exactly why the treats live up there. Want one?"
     menu:
-        mila "Tea?"
+        kitty "Want one?"
         "Yes, please.":
-            $ tea = true
-            show ren happy
-            ren "I'd love some."
+            $ snack = true
+            fluffy "...Fine. One crunchy each. Don't tell the humans."
         "Maybe later.":
-            ren "Maybe later. I want to look around first."
-    jump evening
+            show fluffy right
+            fluffy "Later, then. I'll be in my sunbeam."
+    jump playroom
 
-label evening:
-    scene bg night with swirl
-    "Later, the street outside went quiet."
-    show mila neutral at center
+label playroom:
+    scene bg playroom with swirl
+    "By evening the whole gang had gathered in the playroom."
+    show kitty neutral at center
     with wiperight
-    if tea:
-        mila "Thanks for staying. The tea was better with company."
+    if snack:
+        kitty "Thanks for sharing. Treats taste better with company."
     else:
-        mila "You never did have that tea."
-    mila "Come back tomorrow? I'll tell you why the sign is so small."
-    hide mila with dissolve
+        kitty "You never did get that treat."
+    kitty "Come back tomorrow? I'll show you the tunnel."
+    hide kitty with dissolve
     "{w=0.3}The end. {size=0.8}Try the quick menu: Back, History, Skip and Auto.{/size}"
     return

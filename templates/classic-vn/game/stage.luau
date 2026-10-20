@@ -1,9 +1,10 @@
 -- The stage: the background and character sprites the story's scene/show/hide lines ask
 -- for, and transitions for `with`.
 --
--- Images are found by name, as in Ren'Py: `show mila happy` shows images/mila happy.png,
--- `scene bg room` shows images/bg room.png. The first word is the tag: showing
--- `mila neutral` replaces `mila happy`. `scene black` and `scene white` need no image.
+-- Images are found by name, as in Ren'Py: `show kitty happy` shows images/kitty happy.png,
+-- `scene bg kitchen` shows images/bg kitchen.png. The first word is the tag: showing
+-- `kitty neutral` replaces `kitty happy`. `scene black` and `scene white` need no image.
+-- Characters stand on the bottom edge, scaled by config.sprite_scale (per tag).
 
 local config = require("game/config")
 local prefs = require("game/prefs")
@@ -92,8 +93,10 @@ local function place(entry)
         print(`unknown position \`{at}\`; using {config.default_position}`)
         x = config.positions[config.default_position]
     end
-    node.x = W * x - node.width / 2
-    node.y = H - node.height
+    local s = config.sprite_scale[entry.words[1]] or config.sprite_scale.default or 1
+    node.scale = s
+    node.x = W * x - node.width * s / 2
+    node.y = H - node.height * s
 end
 
 function stage.show(words, at: string?)

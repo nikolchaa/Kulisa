@@ -177,6 +177,6 @@ end)
 -- Start ----------------------------------------------------------------------------------
 
 kulisa.story.load()
-stage.scene({ "bg", "night" })
+stage.scene(require("game/config").menu_background)
 kulisa.ui.show("main_menu")
 overlays.check_rotation()

@@ -46,9 +46,14 @@ cargo xtask apk --game templates/classic-vn
 
 ## Images
 
-`scene bg room` shows `images/bg room.png`, `show mila happy at left` shows
-`images/mila happy.png` (the first word is the tag; showing `mila neutral` replaces it).
-Missing images show a labelled placeholder. Positions are in `config.positions`.
+`scene bg kitchen` shows `images/bg kitchen.png`, `show kitty happy at left` shows
+`images/kitty happy.png` (the first word is the tag; showing `kitty neutral` replaces it).
+Characters stand on the bottom edge; `config.sprite_scale` sets their size per tag. Crop
+character images to the character (one rectangle for all of a character's images, so changing
+expression keeps the framing). Missing images show a labelled placeholder. Positions are in
+`config.positions`; the main menu's scene is `config.menu_background`.
 
-The art here (characters, backgrounds, panels) is original placeholder art; replace it.
+The sample story stars two cats: Kitty, a white kitten, and Fluffy, an older ragdoll, in the
+kitchen and the playroom. Replace the story, the images and the colours (`config.colors`) with
+yours.
 Inter is under the SIL Open Font License (`fonts/Inter-OFL.txt`).

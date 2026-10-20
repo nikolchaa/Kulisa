@@ -23,7 +23,7 @@ ui.screen("main_menu", function()
             anchor = "left",
             height = "fill",
             width = style.size(560),
-            background = "#0d0c12c8",
+            background = c.ink .. "c8",
             padding = { style.size(90), style.size(70) },
             ui.column({
                 height = "fill",

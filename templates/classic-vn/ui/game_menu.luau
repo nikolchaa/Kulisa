@@ -221,7 +221,7 @@ ui.screen("game_menu", function()
         content = backlog()
     end
     return ui.box({
-        background = "#0d0c12",
+        background = c.ink,
         ui.row({
             width = "fill",
             height = "fill",
