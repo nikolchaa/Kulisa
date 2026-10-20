@@ -174,9 +174,9 @@ local tri = kulisa.mesh{ positions = { 0, 0, 100, 0, 0, 100 }, indices = { 1, 2,
   `mesh:vertex_at(col, row)` → the number of a grid vertex (columns `0..cols`).
 - `mesh:set_geometry{ positions, uvs, colors, data, indices }` replaces everything, including the
   vertex count (the mesh stops being a grid).
-- A mesh has at most 65,536 vertices. Small images share atlas pages, so UVs outside 0..1
-  would read a neighbour's pixels: keep meshes inside 0..1, or use an image larger than 512
-  pixels per side for tiling effects.
+- A mesh has at most 65,536 vertices. Small images share atlas pages, so without a `shader`
+  UVs outside 0..1 would read a neighbour's pixels: keep plain meshes inside 0..1. (A node
+  with a `shader` reads its image through a texture of its own, see Shaders.)
 - `node:contains` and `kulisa.pick` test the triangles, so a deformed mesh is hit where it is drawn.
 
 Text markup: `{b}`, `{i}`, `{color=#hex}`, `{size=N}`, `{font=Name}`, `{wave}`, `{shake}`,
@@ -467,7 +467,9 @@ optionally `fn vertex(in: VertexIn) -> VertexOut`. The engine provides `tex`, `s
 `mask_tex`, `mask_samp` (the node's `mask`, white without one), `globals.time`,
 `globals.resolution`, `params.p[0..4]` (the 16 numbers as four `vec4`s) and, in `fragment`, the
 interpolated `in.uv`, `in.color`, `in.pixel` (target pixels) and `in.data` (a mesh's `data`,
-zero for other nodes). See
+zero for other nodes). On a sprite or mesh with a `shader`, `in.uv` runs 0..1 over its image
+(or the `uv` you gave a mesh) whatever the image's size, so procedural shaders can use it as
+coordinates, and UVs may leave 0..1 (the image is clamped, not read from a neighbour). See
 `demos/smoke/shaders`. `effects` lists are `{ shader, ... }` or
 `{ { shader = s, params = { ... }, mask = image }, ... }` and run in order.
 

@@ -141,8 +141,9 @@ pub struct Renderer {
     shaders: Vec<wgpu::ShaderModule>,
     pipelines: HashMap<(u32, Blend, wgpu::TextureFormat), wgpu::RenderPipeline>,
     textures: Vec<Tex>,
-    /// Unpacked copies of atlas images used as masks (masks sample their own 0..1 UVs).
-    mask_copies: HashMap<TextureId, GpuTexture>,
+    /// Unpacked copies of atlas images used as masks or by shaded sprites and meshes (they
+    /// sample their own 0..1 UVs).
+    own_copies: HashMap<TextureId, GpuTexture>,
     /// 1x1 white: the mask when a material has none.
     white_tex: GpuTexture,
     pages: Vec<Page>,
@@ -514,7 +515,7 @@ impl Renderer {
             shaders: Vec::new(),
             pipelines: HashMap::new(),
             textures: Vec::new(),
-            mask_copies: HashMap::new(),
+            own_copies: HashMap::new(),
             white_tex,
             pages: Vec::new(),
             page_size: limits.max_texture_dimension_2d.min(2048),
@@ -661,7 +662,7 @@ impl Renderer {
         if let Some(t) = self.textures.get_mut(id.0 as usize) {
             *t = Tex::Freed;
         }
-        self.mask_copies.remove(&id);
+        self.own_copies.remove(&id);
     }
 
     /// Creates a render target for a [`kulisa_core::Target`] node; sprites can show it.
@@ -796,6 +797,8 @@ impl Renderer {
         for pass in &frame.passes {
             for item in &pass.items {
                 let uv = match item.texture {
+                    // Unpacked items sample their own copy: UVs stay 0..1 over the image.
+                    TexRef::Texture(_) | TexRef::White if item.unpack => continue,
                     TexRef::Texture(id) => match self.textures.get(id.0 as usize) {
                         Some(Tex::Atlas { uv, .. }) => *uv,
                         Some(Tex::Own(_)) => continue,
@@ -852,13 +855,19 @@ impl Renderer {
         [found[0], found[1]]
     }
 
-    fn texture_bind_group(&self, t: TexRef) -> &wgpu::BindGroup {
-        match t {
+    fn texture_bind_group(&self, item: &DrawItem) -> &wgpu::BindGroup {
+        match item.texture {
             TexRef::Texture(id) => match self.textures.get(id.0 as usize) {
+                // Unpacked items use a copy of the atlas image (made by `prepare_copies`).
+                Some(Tex::Atlas { .. }) if item.unpack => {
+                    self.own_copies.get(&id).map_or(&self.white_tex.bind_group, |t| &t.bind_group)
+                }
                 Some(Tex::Atlas { page, .. }) => &self.pages[*page].tex.bind_group,
                 Some(Tex::Own(t)) => &t.bind_group,
+                Some(Tex::Freed) | None if item.unpack => &self.white_tex.bind_group,
                 Some(Tex::Freed) | None => &self.pages[0].tex.bind_group,
             },
+            TexRef::White if item.unpack => &self.white_tex.bind_group,
             TexRef::White => &self.pages[0].tex.bind_group,
             TexRef::Transient(k) => &self.transients[k as usize].bind_group,
         }
@@ -869,24 +878,29 @@ impl Renderer {
         match self.textures.get(id.0 as usize) {
             Some(Tex::Own(t)) => &t.bind_group,
             Some(Tex::Atlas { .. }) => {
-                self.mask_copies.get(&id).map_or(&self.white_tex.bind_group, |t| &t.bind_group)
+                self.own_copies.get(&id).map_or(&self.white_tex.bind_group, |t| &t.bind_group)
             }
             _ => &self.white_tex.bind_group,
         }
     }
 
-    /// Copies atlas images used as masks into their own textures.
-    fn prepare_masks(&mut self, frame: &Frame, encoder: &mut wgpu::CommandEncoder) {
-        let masks = frame.passes.iter().flat_map(|p| {
+    /// Copies atlas images used as masks, or drawn by sprites and meshes with a shader, into
+    /// their own textures (once), so those shaders see 0..1 UVs over the image.
+    fn prepare_copies(&mut self, frame: &Frame, encoder: &mut wgpu::CommandEncoder) {
+        let wanted = frame.passes.iter().flat_map(|p| {
             p.items
                 .iter()
                 .filter_map(|i| i.material.and_then(|m| m.mask))
+                .chain(p.items.iter().filter_map(|i| match i.texture {
+                    TexRef::Texture(id) if i.unpack => Some(id),
+                    _ => None,
+                }))
                 .chain(p.effects.iter().filter_map(|e| e.mask))
         });
         let mut missing: Vec<TextureId> = Vec::new();
-        for id in masks {
+        for id in wanted {
             if matches!(self.textures.get(id.0 as usize), Some(Tex::Atlas { .. }))
-                && !self.mask_copies.contains_key(&id)
+                && !self.own_copies.contains_key(&id)
                 && !missing.contains(&id)
             {
                 missing.push(id);
@@ -912,7 +926,7 @@ impl Renderer {
                 },
                 wgpu::Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
             );
-            self.mask_copies.insert(id, copy);
+            self.own_copies.insert(id, copy);
         }
     }
 
@@ -1008,7 +1022,7 @@ impl Renderer {
             self.pipeline(PRESENT_SHADER, Blend::Replace, self.out_format);
         }
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        self.prepare_masks(&frame, &mut encoder);
+        self.prepare_copies(&frame, &mut encoder);
 
         // Acquire the output.
         let surface_tex = match (&self.output, capturing) {
@@ -1211,7 +1225,7 @@ impl Renderer {
                 continue;
             }
             let shader = item.material.map_or(SPRITE_SHADER, |m| self.shader_index(m.shader));
-            let bg = self.texture_bind_group(item.texture);
+            let bg = self.texture_bind_group(item);
             let mask = self.mask_bind_group(item.material.and_then(|m| m.mask));
             let state = (shader, item.blend, bg as *const _, mask as *const _, param, item.clip);
             if let Some((_, range, _)) = &mut pending

@@ -251,8 +251,12 @@ Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame
   wait. `create_texture_unpacked` + `free_texture` give thumbnails memory back.
 - **Known limits (M1):** linear filtering only (no per-texture nearest/repeat
   yet); no mipmaps; atlas space is not reclaimed when textures are dropped;
-  vertex colors are 8-bit, so very dark tint gradients band; custom shaders that
-  offset UVs should use non-atlas textures (render targets, large images).
+  vertex colors are 8-bit, so very dark tint gradients band.
+- **Shaded nodes get their own texture** (M7). A sprite or mesh with a material draws from an
+  unpacked copy of its image (made on first use, like masks), so its UVs stay 0..1 over the image:
+  procedural shaders (`kulisa.sprite{ shader = ... }` with no image) get real coordinates and may
+  offset UVs safely. These nodes never batched with unshaded ones, so draw calls do not change
+  (`DrawItem::unpack`; text with a shader keeps the shared atlas).
 - **Quality tiers** (planned, M9): `low/medium/high` from adapter info, limits
   and platform; overridable. Tiers scale render-target resolution, MSAA and
   which effect chains a scene enables.

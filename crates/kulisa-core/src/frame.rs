@@ -74,6 +74,9 @@ pub struct DrawItem {
     pub texture: TexRef,
     pub blend: BlendMode,
     pub material: Option<Material>,
+    /// Sprites and meshes with a material sample their image through a texture of its own, so
+    /// shaders see `uv` running 0..1 over the image instead of an atlas page's coordinates.
+    pub unpack: bool,
     /// Scissor rectangle in target pixels: x, y, width, height.
     pub clip: Option<[u32; 4]>,
     pub vertices: Range<u32>,
@@ -337,8 +340,9 @@ impl Walker<'_> {
                     let r = rect;
                     let quad = [r.min, Vec2::new(r.max.x, r.min.y), r.max, Vec2::new(r.min.x, r.max.y)]
                         .map(|p| m.transform_point2(p));
-                    let item =
+                    let mut item =
                         self.quad(quad, uv, tint, TexRef::Texture(s.texture), node.blend, node.material);
+                    item.unpack = node.material.is_some();
                     self.push(items, item, c.clip, c.bounds);
                 }
                 self.children_in(id, c, items, |z| z >= 0);
@@ -369,7 +373,15 @@ impl Walker<'_> {
             });
         }
         self.frame.indices.extend([0, 1, 2, 0, 2, 3].map(|i| v0 + i));
-        DrawItem { texture, blend, material, clip: None, vertices: v0..v0 + 4, indices: i0..i0 + 6 }
+        DrawItem {
+            texture,
+            blend,
+            material,
+            unpack: false,
+            clip: None,
+            vertices: v0..v0 + 4,
+            indices: i0..i0 + 6,
+        }
     }
 
     /// Appends a mesh's geometry (positions transformed by `m`, vertex colors times the
@@ -405,6 +417,7 @@ impl Walker<'_> {
             texture: TexRef::Texture(mesh.texture),
             blend,
             material,
+            unpack: material.is_some(),
             clip: None,
             vertices: v0..v0 + n,
             indices: i0..i0 + mesh.indices.len() as u32,
@@ -434,6 +447,7 @@ impl Walker<'_> {
             && last.texture == item.texture
             && last.blend == item.blend
             && last.material == item.material
+            && last.unpack == item.unpack
             && last.clip == item.clip
             && last.vertices.end == item.vertices.start
             && last.indices.end == item.indices.start

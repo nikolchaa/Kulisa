@@ -227,6 +227,35 @@ fn masks_bind_a_second_texture() {
 }
 
 #[test]
+fn shaded_nodes_see_uvs_over_their_own_image() {
+    let Some(mut r) = renderer() else { return };
+    let (mut s, v) = scene();
+    // A small image lives in an atlas page, yet a shaded sprite's UVs still run 0..1 over it.
+    let img = solid(&mut r, [10, 20, 30, 255]);
+    let shader = r
+        .create_shader(
+            "uv.wgsl",
+            "fn fragment(in: VertexOut) -> vec4<f32> { return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0); }",
+        )
+        .unwrap();
+    let mut node = Node::sprite(img, Vec2::splat(64.0));
+    node.material = Some(Material::new(shader, [0.0; 16]));
+    s.add(s.root(), node);
+    r.render(&s, &v, 0.0);
+    let out = r.read_pixels().unwrap();
+    // The display re-encodes linear to sRGB, so compare loosely: top-left dark, right bright red,
+    // bottom bright green.
+    let px = |x: u32, y: u32| {
+        let i = ((y * out.width + x) * 4) as usize;
+        (out.pixels[i], out.pixels[i + 1])
+    };
+    let (tl, tr, bl) = (px(2, 2), px(61, 2), px(2, 61));
+    assert!(tl.0 < 60 && tl.1 < 60, "{tl:?}");
+    assert!(tr.0 > 200 && tr.1 < 60, "{tr:?}");
+    assert!(bl.1 > 200 && bl.0 < 60, "{bl:?}");
+}
+
+#[test]
 fn captures_scenes_into_targets_and_reads_them_back() {
     let Some(mut r) = renderer() else { return };
     let (mut s, v) = scene();
