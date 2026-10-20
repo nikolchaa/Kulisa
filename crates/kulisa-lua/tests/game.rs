@@ -225,6 +225,35 @@ label start:
 }
 
 #[test]
+fn effect_chains_take_scale_inputs_and_masks() {
+    let g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        local s = kulisa.load_shader("fx.wgsl")
+        kulisa.screen.effects = {
+            { shader = s, scale = 0.5 },
+            { shader = s, scale = 0.25, input = "source" },
+            { shader = s, input = 1, mask = "source" },
+        }
+        kulisa.sprite{ width = 64, height = 64, tint = "#ff0000" }
+    "##, "fx.wgsl" => "fn fragment(in: VertexOut) -> vec4<f32> { return textureSample(tex, samp, in.uv) + textureSample(mask_tex, mask_samp, in.uv) * 0.0; }");
+    let (scale, input, mask): (f32, i64, String) =
+        g.eval("t", "local e = kulisa.screen.effects; return e[2].scale, e[3].input, e[3].mask").unwrap();
+    assert_eq!((scale, input, mask.as_str()), (0.25, 1, "source"));
+    assert_eq!(g.eval::<String>("t", "return kulisa.screen.effects[2].input").unwrap(), "source");
+    let err = g
+        .eval::<()>("t", "kulisa.screen.effects = { { shader = kulisa.load_shader('fx.wgsl'), input = 1 } }")
+        .unwrap_err();
+    assert!(err.contains("must name an earlier effect"), "{err}");
+    let err = g
+        .eval::<()>("t", "kulisa.screen.effects = { { shader = kulisa.load_shader('fx.wgsl'), scale = 2 } }")
+        .unwrap_err();
+    assert!(err.contains("`scale`"), "{err}");
+    let mut g = g;
+    g.frame(0.016);
+    g.render();
+}
+
+#[test]
 fn saves_and_loads() {
     let id = format!("kulisa_test_{}", std::process::id());
     let g = game!("main.luau" => STORY_MAIN, "story/script.kulisa" => STORY);

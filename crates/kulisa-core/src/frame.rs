@@ -623,7 +623,7 @@ mod tests {
         let mut s = Scene::new(DESIGN);
         let mut layer = Node::layer(1.0);
         if let NodeKind::Layer(l) = &mut layer.kind {
-            l.effects.push(Material::new(crate::ShaderId(1), [0.0; 16]));
+            l.effects.push(Effect::new(crate::ShaderId(1), [0.0; 16]));
         }
         let l = s.add(s.root(), layer);
         s.add(l, Node::sprite(tex(1), Vec2::ONE));

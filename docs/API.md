@@ -493,6 +493,30 @@ coordinates, and UVs may leave 0..1 (the image is clamped, not read from a neigh
 `demos/smoke/shaders`. `effects` lists are `{ shader, ... }` or
 `{ { shader = s, params = { ... }, mask = image }, ... }` and run in order.
 
+Effect entries can also take:
+
+- `scale` (above 0, at most 1): the effect renders at that fraction of the pass's size, so
+  blur and bloom can work on small images (`globals.resolution` is the effect's own output size).
+  The last effect always writes the full-size result.
+- `input`: what `tex` is. By default the previous effect's output (what was drawn, for the first);
+  `"source"` is what was drawn before any effect, and a number is the output of that earlier
+  effect in the list (counting from 1).
+- `mask` as `"source"` or a number: `mask_tex` reads that image of the chain instead of an image
+  file, so an effect can combine two stages (bloom adds a blurred bright pass to the source).
+
+```lua
+kulisa.screen.effects = {
+    { shader = bright, scale = 0.5 },                -- 1: bright parts, half size
+    { shader = blur, scale = 0.25 },                 -- 2: blurred down
+    { shader = blur, scale = 0.125 },                -- 3
+    { shader = blur, scale = 0.25 },                 -- 4: and back up
+    { shader = combine, mask = "source", params = { 0.8 } },  -- the drawn scene + the glow
+}
+```
+
+Everything is plain render passes, so chains work under WebGL2. Images no later effect reads are
+reused, so a chain of full-size effects ping-pongs between two textures.
+
 ## Audio
 
 Channels: `music` and `voice` (one sound at a time, crossfading) and `sound` (overlapping).

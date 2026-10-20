@@ -4,7 +4,8 @@
 //! which CI does so they cannot silently pass.
 
 use kulisa_core::{
-    BlendMode, Color, Material, Node, NodeKind, Rect, ScaleMode, Scene, Slice, UVec2, Vec2, Viewport,
+    BlendMode, Color, Effect, EffectInput, Material, Node, NodeKind, Rect, ScaleMode, Scene, Slice, UVec2,
+    Vec2, Viewport,
 };
 use kulisa_render::{Image, Renderer};
 
@@ -163,7 +164,7 @@ fn screen_and_layer_effects_chain() {
         )
         .unwrap();
     let red = solid(&mut r, [255, 0, 0, 255]);
-    let effect = |shader| Material::new(shader, [0.0; 16]);
+    let effect = |shader| Effect::new(shader, [0.0; 16]);
     // Layer effect: red becomes green inside the layer only.
     let mut layer = Node::layer(1.0);
     if let NodeKind::Layer(l) = &mut layer.kind {
@@ -182,6 +183,43 @@ fn screen_and_layer_effects_chain() {
     assert_px(&img, 40, 8, [255, 0, 255]);
     // Background black -> white after invert.
     assert_px(&img, 8, 40, [255, 255, 255]);
+}
+
+#[test]
+fn effects_run_at_lower_resolution_and_read_earlier_images() {
+    let Some(mut r) = renderer() else { return };
+    let (mut s, v) = scene();
+    let report = r
+        .create_shader(
+            "size.wgsl",
+            // Writes the output size into the color, so the next effect can check it.
+            "fn fragment(in: VertexOut) -> vec4<f32> { let c = textureSample(tex, samp, in.uv); return vec4<f32>(c.r, globals.resolution.x / 64.0, 0.0, 1.0); }",
+        )
+        .unwrap();
+    let combine = r
+        .create_shader(
+            "combine.wgsl",
+            // Blue from the drawn source (the mask), red and green from the low-resolution image.
+            "fn fragment(in: VertexOut) -> vec4<f32> { let lo = textureSample(tex, samp, in.uv); let src = textureSample(mask_tex, mask_samp, in.uv); return vec4<f32>(lo.r, lo.g, src.b, 1.0); }",
+        )
+        .unwrap();
+    let magenta = solid(&mut r, [255, 0, 255, 255]);
+    s.add(s.root(), Node::sprite(magenta, Vec2::splat(64.0)));
+    let mut low = Effect::new(report, [0.0; 16]);
+    low.scale = 0.25;
+    let mut last = Effect::new(combine, [0.0; 16]);
+    last.input = EffectInput::Output(0);
+    last.mask_input = Some(EffectInput::Source);
+    s.effects = vec![low, last];
+    r.render(&s, &v, 0.0);
+    let img = r.read_pixels().unwrap();
+    // Red survives the low pass; green is 16/64 (the quarter-size pass); blue comes from the source.
+    let p = pixel(&img, 32, 32);
+    assert!(p[0] > 250 && p[2] > 250, "{p:?}");
+    let g = p[1] as f32 / 255.0;
+    // 0.25 linear, stored as sRGB.
+    assert!((g - 0.537).abs() < 0.02, "green {g}");
+    assert_eq!(r.stats().passes, 3, "draw, low pass, combine");
 }
 
 #[test]

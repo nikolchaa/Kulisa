@@ -88,8 +88,43 @@ impl Material {
     }
 }
 
-/// A full-screen pass in a post-processing chain. Same shader contract as [`Material`].
-pub type Effect = Material;
+/// Where an effect reads an image from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EffectInput {
+    /// The output of the effect before it (what the pass drew, for the first effect).
+    #[default]
+    Previous,
+    /// What the pass drew, before any effect.
+    Source,
+    /// The output of effect `k` (counted from 0), which must come earlier in the chain.
+    Output(u8),
+}
+
+/// A full-screen pass in a post-processing chain. Same shader contract as [`Material`]; the
+/// shader samples `input` as `tex` and, with `mask_input`, another image of the chain as
+/// `mask_tex`. Effects other than the last can run at a fraction of the pass's resolution
+/// (blur and bloom work at 1/2 to 1/16); the last always writes the pass's target.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Effect {
+    pub material: Material,
+    /// Output size as a fraction of the pass size (0..=1).
+    pub scale: f32,
+    pub input: EffectInput,
+    /// When set, `mask_tex` reads this image of the chain instead of `material.mask`.
+    pub mask_input: Option<EffectInput>,
+}
+
+impl Effect {
+    pub fn new(shader: ShaderId, params: Params) -> Self {
+        Self::from(Material::new(shader, params))
+    }
+}
+
+impl From<Material> for Effect {
+    fn from(material: Material) -> Self {
+        Self { material, scale: 1.0, input: EffectInput::Previous, mask_input: None }
+    }
+}
 
 /// Local transform. `origin` is the pivot in local units (e.g. half the size to rotate a
 /// sprite around its center).

@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use kulisa_audio::PlayOptions;
 use kulisa_core::{
-    BlendMode, Camera, Color, Ease, Material, Migrations, Node, NodeId, NodeKind, Params, Prop, Rect,
-    SaveFile, SaveHeader, ScaleMode, Slice, Sprite, Tween, UVec2, Value, Vec2, Viewport,
+    BlendMode, Camera, Color, Ease, Effect, EffectInput, Material, Migrations, Node, NodeId, NodeKind,
+    Params, Prop, Rect, SaveFile, SaveHeader, ScaleMode, Slice, Sprite, Tween, UVec2, Value, Vec2, Viewport,
 };
 use kulisa_platform::Storage;
 use kulisa_render::Image;
@@ -157,47 +157,102 @@ fn params_table(lua: &Lua, p: &Params) -> mlua::Result<LuaValue> {
     lua.create_sequence_from(p[..end].iter().copied()).map(LuaValue::Table)
 }
 
-/// `{ shader, shader, ... }` or `{ { shader = s, params = {...}, mask = image }, ... }`.
-fn effects(st: &mut State, v: &LuaValue) -> mlua::Result<Vec<Material>> {
-    let bad =
-        || mlua::Error::runtime("`effects` must be a list of shaders or { shader = s, params = {...} }");
+/// An image of an effect chain: `"source"` (what was drawn) or the number of an earlier
+/// effect in the list (from 1). `k` is the effect's own index (from 0).
+fn effect_input(v: &LuaValue, what: &str, k: usize) -> mlua::Result<EffectInput> {
     match v {
-        LuaValue::Nil => Ok(Vec::new()),
-        LuaValue::Table(t) => t
-            .sequence_values::<LuaValue>()
-            .map(|item| match item? {
-                LuaValue::UserData(ud) => {
-                    Ok(Material::new(ud.borrow::<ShaderRef>().map_err(|_| bad())?.0, [0.0; 16]))
-                }
-                LuaValue::Table(e) => {
-                    let shader = e.get::<AnyUserData>("shader").map_err(|_| bad())?;
-                    let shader = shader.borrow::<ShaderRef>().map_err(|_| bad())?.0;
-                    let p = match e.get::<LuaValue>("params")? {
-                        LuaValue::Nil => [0.0; 16],
-                        v => params(&v)?,
-                    };
-                    let mask = match e.get::<LuaValue>("mask")? {
-                        LuaValue::Nil => None,
-                        v => Some(image_arg(st, &v)?.id),
-                    };
-                    Ok(Material { shader, params: p, mask })
-                }
-                _ => Err(bad()),
-            })
-            .collect(),
-        _ => Err(bad()),
+        LuaValue::String(s) if s.to_string_lossy() == "source" => Ok(EffectInput::Source),
+        LuaValue::String(s) if s.to_string_lossy() == "previous" => Ok(EffectInput::Previous),
+        LuaValue::Integer(_) | LuaValue::Number(_) => {
+            let n = number(v, what)? as usize;
+            if n >= 1 && n <= k {
+                Ok(EffectInput::Output((n - 1) as u8))
+            } else {
+                Err(mlua::Error::runtime(format!(
+                    "`{what}` of effect {} must name an earlier effect (1 to {k})",
+                    k + 1
+                )))
+            }
+        }
+        _ => Err(mlua::Error::runtime(format!(
+            "`{what}` must be \"source\", \"previous\" or the number of an earlier effect"
+        ))),
     }
 }
 
-fn effects_table(lua: &Lua, list: &[Material]) -> mlua::Result<LuaValue> {
+/// `{ shader, shader, ... }` or `{ { shader = s, params = {...}, mask = image | "source" | n,
+/// input = "source" | n, scale = 0.5 }, ... }`.
+fn effects(st: &mut State, v: &LuaValue) -> mlua::Result<Vec<Effect>> {
+    let bad =
+        || mlua::Error::runtime("`effects` must be a list of shaders or { shader = s, params = {...} }");
+    let LuaValue::Table(t) = v else {
+        return if v.is_nil() { Ok(Vec::new()) } else { Err(bad()) };
+    };
+    let mut out = Vec::new();
+    for (k, item) in t.sequence_values::<LuaValue>().enumerate() {
+        out.push(match item? {
+            LuaValue::UserData(ud) => Effect::new(ud.borrow::<ShaderRef>().map_err(|_| bad())?.0, [0.0; 16]),
+            LuaValue::Table(e) => {
+                let shader = e.get::<AnyUserData>("shader").map_err(|_| bad())?;
+                let shader = shader.borrow::<ShaderRef>().map_err(|_| bad())?.0;
+                let p = match e.get::<LuaValue>("params")? {
+                    LuaValue::Nil => [0.0; 16],
+                    v => params(&v)?,
+                };
+                let mut fx = Effect::new(shader, p);
+                match e.get::<LuaValue>("mask")? {
+                    LuaValue::Nil => {}
+                    v @ (LuaValue::Integer(_) | LuaValue::Number(_)) => {
+                        fx.mask_input = Some(effect_input(&v, "mask", k)?)
+                    }
+                    LuaValue::String(s) if matches!(s.to_string_lossy().as_str(), "source" | "previous") => {
+                        fx.mask_input = Some(effect_input(&LuaValue::String(s), "mask", k)?)
+                    }
+                    v => fx.material.mask = Some(image_arg(st, &v)?.id),
+                }
+                if let v @ (LuaValue::String(_) | LuaValue::Integer(_) | LuaValue::Number(_)) =
+                    e.get::<LuaValue>("input")?
+                {
+                    fx.input = effect_input(&v, "input", k)?;
+                }
+                if let Some(scale) = e.get::<Option<f32>>("scale")? {
+                    if !(scale > 0.0 && scale <= 1.0) {
+                        return Err(mlua::Error::runtime(
+                            "an effect's `scale` must be above 0 and at most 1",
+                        ));
+                    }
+                    fx.scale = scale;
+                }
+                fx
+            }
+            _ => return Err(bad()),
+        });
+    }
+    Ok(out)
+}
+
+fn effects_table(lua: &Lua, list: &[Effect]) -> mlua::Result<LuaValue> {
+    let input = |i: EffectInput| -> mlua::Result<LuaValue> {
+        Ok(match i {
+            EffectInput::Previous => LuaValue::String(lua.create_string("previous")?),
+            EffectInput::Source => LuaValue::String(lua.create_string("source")?),
+            EffectInput::Output(j) => LuaValue::Integer(j as i64 + 1),
+        })
+    };
     let t = lua.create_table()?;
-    for m in list {
+    for fx in list {
+        let m = &fx.material;
         let e = lua.create_table()?;
         e.set("shader", ShaderRef(m.shader))?;
         e.set("params", params_table(lua, &m.params)?)?;
         if let Some(mask) = m.mask {
             e.set("mask", ImageRef(ImageInfo { id: mask, size: UVec2::ZERO }))?;
         }
+        if let Some(i) = fx.mask_input {
+            e.set("mask", input(i)?)?;
+        }
+        e.set("input", input(fx.input)?)?;
+        e.set("scale", fx.scale)?;
         t.push(e)?;
     }
     Ok(LuaValue::Table(t))

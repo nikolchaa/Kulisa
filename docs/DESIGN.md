@@ -227,8 +227,11 @@ Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame
   material or effect, uploaded with dynamic offsets). Shaders are validated with
   naga before reaching wgpu; `reload_shader` keeps the old shader on error.
   Pipelines are cached by `(shader, blend, format)`.
-- **Effects.** Screens, layers and targets carry ordered effect chains. Effects
-  ping-pong between two scratch textures; the last writes into the pass target.
+- **Effects.** Screens, layers and targets carry ordered effect chains. Each effect may run at
+  a fraction of the pass's size (`scale`) and read the chain's source or any earlier output as
+  `tex` or `mask_tex` (M8), which is enough for multi-pass blur and bloom without compute. The
+  renderer plans scratch textures per size and returns each to the pool after its last reader, so
+  a plain chain still ping-pongs between two; the last effect writes into the pass target.
   Vignette, grain and wave ship as examples in the runtime, not built-ins.
 - **Blend modes** (premultiplied): alpha, add, multiply, screen.
 - **Color.** Textures and targets are `Rgba8UnormSrgb`; blending happens in

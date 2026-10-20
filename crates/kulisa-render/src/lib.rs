@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use kulisa_core::{
-    BlendMode, DrawItem, Frame, Pass, PassTarget, Rect, Scene, ShaderId, TexRef, TextureId, UVec2, Vec2,
-    Vertex, Viewport,
+    BlendMode, DrawItem, EffectInput, Frame, Pass, PassTarget, Rect, Scene, ShaderId, TexRef, TextureId,
+    UVec2, Vec2, Vertex, Viewport,
 };
 
 pub use image::Image;
@@ -117,6 +117,35 @@ struct Uniforms {
     params: Vec<u8>,
     item_params: Vec<Vec<u32>>,
     effect_params: Vec<Vec<u32>>,
+    /// Globals slot (byte offset) per pass and effect: `resolution` is the effect's output size.
+    effect_globals: Vec<Vec<u32>>,
+}
+
+/// Where a pass's effect chain reads and writes: indices into `Renderer::scratch`.
+struct EffectPlan {
+    /// What the pass's items are drawn into.
+    source: usize,
+    /// Each effect's output texture (`None` for the last, which writes the pass target).
+    outputs: Vec<Option<usize>>,
+}
+
+/// The output size of effect `k` of `pass`.
+fn effect_size(pass: &Pass, k: usize) -> UVec2 {
+    if k + 1 == pass.effects.len() {
+        return pass.size;
+    }
+    let s = pass.effects[k].scale.clamp(0.0, 1.0);
+    (pass.size.as_vec2() * s).round().as_uvec2().max(UVec2::ONE)
+}
+
+/// The image (0 = source, k + 1 = output of effect k) that `input` of effect `k` names.
+fn effect_image(input: EffectInput, k: usize) -> usize {
+    match input {
+        EffectInput::Previous => k,
+        EffectInput::Source => 0,
+        EffectInput::Output(j) if (j as usize) < k => j as usize + 1,
+        EffectInput::Output(_) => k,
+    }
 }
 
 /// Draws scenes with wgpu. One per window (or one headless instance for tests/thumbnails).
@@ -576,7 +605,6 @@ impl Renderer {
         if width == 0 || height == 0 || UVec2::new(width, height) == self.size {
             return;
         }
-        let old = self.size;
         self.size = UVec2::new(width, height);
         let new_headless =
             matches!(self.output, Output::Headless(_)).then(|| self.new_texture(self.size, true));
@@ -590,10 +618,10 @@ impl Renderer {
             }
             Output::Headless(tex) => *tex = new_headless.unwrap(),
         }
-        // Screen-sized textures are recreated on demand.
+        // Screen-sized textures (and effect scratch at fractions of it) are recreated on demand.
         self.transients.clear();
         self.screen = None;
-        self.scratch.retain(|t| t.size != old);
+        self.scratch.clear();
     }
 
     /// Drops the window surface (Android destroys the window on suspend). The device,
@@ -817,17 +845,22 @@ impl Renderer {
     fn uniforms(&self, frame: &Frame, time: f32) -> Uniforms {
         let a = self.align as usize;
         let mut u = Uniforms::default();
-        for pass in &frame.passes {
+        let push_globals = |u: &mut Uniforms, size: UVec2| {
             let at = u.globals.len();
             u.globals.resize(at + a, 0);
             u.globals[at..at + GLOBALS_SIZE as usize]
-                .copy_from_slice(bytemuck::bytes_of(&Globals::new(pass.size, time)));
+                .copy_from_slice(bytemuck::bytes_of(&Globals::new(size, time)));
+            at as u32
+        };
+        for pass in &frame.passes {
+            push_globals(&mut u, pass.size);
         }
-        // Present pass globals.
-        let at = u.globals.len();
-        u.globals.resize(at + a, 0);
-        u.globals[at..at + GLOBALS_SIZE as usize]
-            .copy_from_slice(bytemuck::bytes_of(&Globals::new(self.size, time)));
+        // Present pass globals, then one slot per effect.
+        push_globals(&mut u, self.size);
+        for pass in &frame.passes {
+            let slots = (0..pass.effects.len()).map(|k| push_globals(&mut u, effect_size(pass, k))).collect();
+            u.effect_globals.push(slots);
+        }
 
         u.params.resize(a, 0); // slot 0: zeros
         let mut push = |params: &[f32; 16]| {
@@ -839,20 +872,55 @@ impl Renderer {
         for pass in &frame.passes {
             u.item_params
                 .push(pass.items.iter().map(|i| i.material.map_or(0, |m| push(&m.params))).collect());
-            u.effect_params.push(pass.effects.iter().map(|e| push(&e.params)).collect());
+            u.effect_params.push(pass.effects.iter().map(|e| push(&e.material.params)).collect());
         }
         u
     }
 
-    /// Returns scratch texture indices `[a, b]` of the given size, creating them if needed.
-    fn scratch_pair(&mut self, size: UVec2) -> [usize; 2] {
-        let mut found: Vec<usize> =
-            self.scratch.iter().enumerate().filter(|(_, t)| t.size == size).map(|(i, _)| i).take(2).collect();
-        while found.len() < 2 {
+    /// A scratch texture of `size` not in `busy`, made if needed; it is added to `busy`.
+    fn take_scratch(&mut self, size: UVec2, busy: &mut Vec<usize>) -> usize {
+        let found = (0..self.scratch.len()).find(|i| self.scratch[*i].size == size && !busy.contains(i));
+        let i = found.unwrap_or_else(|| {
             self.scratch.push(self.new_texture(size, true));
-            found.push(self.scratch.len() - 1);
+            self.scratch.len() - 1
+        });
+        busy.push(i);
+        i
+    }
+
+    /// Picks scratch textures for a pass's effect chain: the source, then each effect's output
+    /// at its size. An image goes back to the pool after the last effect that reads it, so a
+    /// plain chain ping-pongs between two textures.
+    fn plan_effects(&mut self, pass: &Pass) -> EffectPlan {
+        let n = pass.effects.len();
+        // The last effect that reads each image (0 = source, k + 1 = effect k's output).
+        let mut last_use = vec![0usize; n + 1];
+        for (k, e) in pass.effects.iter().enumerate() {
+            for input in std::iter::once(e.input).chain(e.mask_input) {
+                let img = effect_image(input, k);
+                last_use[img] = last_use[img].max(k);
+            }
         }
-        [found[0], found[1]]
+        let mut busy = Vec::new();
+        let source = self.take_scratch(pass.size, &mut busy);
+        let mut images = vec![source];
+        let mut outputs = Vec::with_capacity(n);
+        for k in 0..n {
+            // Images that no effect from k on reads go back to the pool.
+            for (img, tex) in images.iter().enumerate() {
+                if last_use[img] < k {
+                    busy.retain(|b| b != tex);
+                }
+            }
+            if k + 1 == n {
+                outputs.push(None);
+            } else {
+                let t = self.take_scratch(effect_size(pass, k), &mut busy);
+                images.push(t);
+                outputs.push(Some(t));
+            }
+        }
+        EffectPlan { source, outputs }
     }
 
     fn texture_bind_group(&self, item: &DrawItem) -> &wgpu::BindGroup {
@@ -895,7 +963,7 @@ impl Renderer {
                     TexRef::Texture(id) if i.unpack => Some(id),
                     _ => None,
                 }))
-                .chain(p.effects.iter().filter_map(|e| e.mask))
+                .chain(p.effects.iter().filter_map(|e| e.material.mask))
         });
         let mut missing: Vec<TextureId> = Vec::new();
         for id in wanted {
@@ -965,12 +1033,12 @@ impl Renderer {
         kulisa_core::extract(scene, &viewport.layout(size), size, &mut frame);
         self.remap_uvs(&mut frame);
 
-        // A full-target quad for every pass with effects, plus one for present.
-        let effect_quads: Vec<_> = frame
+        // A full-target quad for every effect (at its output size), plus one for present.
+        let effect_quads: Vec<Vec<_>> = frame
             .passes
             .clone()
             .iter()
-            .map(|p| (!p.effects.is_empty()).then(|| ortho_quad(p.size, &mut frame)))
+            .map(|p| (0..p.effects.len()).map(|k| ortho_quad(effect_size(p, k), &mut frame)).collect())
             .collect();
         let present_quad = ortho_quad(self.size, &mut frame);
         let uniforms = self.uniforms(&frame, time);
@@ -987,9 +1055,9 @@ impl Renderer {
         if self.encode_on_present && self.screen.is_none() {
             self.screen = Some(self.new_texture(self.size, true));
         }
-        let mut pairs = Vec::with_capacity(frame.passes.len());
+        let mut plans = Vec::with_capacity(frame.passes.len());
         for pass in &frame.passes {
-            pairs.push((!pass.effects.is_empty()).then(|| self.scratch_pair(pass.size)));
+            plans.push((!pass.effects.is_empty()).then(|| self.plan_effects(pass)));
         }
         let vbytes: &[u8] = bytemuck::cast_slice(&frame.vertices);
         let ibytes: &[u8] = bytemuck::cast_slice(&frame.indices);
@@ -1015,7 +1083,7 @@ impl Renderer {
             }
             for (k, e) in pass.effects.iter().enumerate() {
                 let f = if k + 1 == pass.effects.len() { fmt } else { RT_FORMAT };
-                self.pipeline(self.shader_index(e.shader), Blend::Replace, f);
+                self.pipeline(self.shader_index(e.material.shader), Blend::Replace, f);
             }
         }
         if self.encode_on_present && !capturing {
@@ -1080,7 +1148,7 @@ impl Renderer {
             };
             let globals = (i as u64 * self.align) as u32;
             let fmt = self.target_format(pass.target, capturing);
-            match pairs[i] {
+            match &plans[i] {
                 None => self.draw_items(
                     &mut encoder,
                     target_view,
@@ -1090,36 +1158,40 @@ impl Renderer {
                     &uniforms.item_params[i],
                     &mut stats,
                 ),
-                Some([a, b]) => {
-                    let (sa, sb) = (&self.scratch[a], &self.scratch[b]);
+                Some(plan) => {
                     self.draw_items(
                         &mut encoder,
-                        &sa.view,
+                        &self.scratch[plan.source].view,
                         RT_FORMAT,
                         pass,
                         globals,
                         &uniforms.item_params[i],
                         &mut stats,
                     );
-                    let quad = effect_quads[i].clone().unwrap();
+                    let image =
+                        |img: usize| if img == 0 { plan.source } else { plan.outputs[img - 1].unwrap() };
                     for (k, effect) in pass.effects.iter().enumerate() {
-                        let last = k + 1 == pass.effects.len();
-                        let (src, dst) = if k % 2 == 0 { (sa, &sb.view) } else { (sb, &sa.view) };
-                        let (dst, f) = if last { (target_view, fmt) } else { (dst, RT_FORMAT) };
-                        let shader = self.shader_index(effect.shader);
-                        let params = uniforms.effect_params[i][k];
+                        let input = &self.scratch[image(effect_image(effect.input, k))];
+                        let mask = match effect.mask_input {
+                            Some(m) => &self.scratch[image(effect_image(m, k))].bind_group,
+                            None => self.mask_bind_group(effect.material.mask),
+                        };
+                        let (dst, f) = match plan.outputs[k] {
+                            Some(t) => (&self.scratch[t].view, RT_FORMAT),
+                            None => (target_view, fmt),
+                        };
                         self.draw_fullscreen(
                             &mut encoder,
                             dst,
                             f,
                             Fullscreen {
-                                shader,
-                                input: &src.bind_group,
-                                mask: self.mask_bind_group(effect.mask),
-                                globals,
-                                param: params,
+                                shader: self.shader_index(effect.material.shader),
+                                input: &input.bind_group,
+                                mask,
+                                globals: uniforms.effect_globals[i][k],
+                                param: uniforms.effect_params[i][k],
                             },
-                            quad.clone(),
+                            effect_quads[i][k].clone(),
                         );
                         stats.draw_calls += 1;
                         stats.passes += 1;

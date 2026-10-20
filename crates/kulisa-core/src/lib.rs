@@ -19,8 +19,8 @@ pub use glam::{Affine2, UVec2, Vec2, Vec4};
 pub use mesh::{MAX_VERTICES, Mesh};
 pub use save::{FORMAT_VERSION, Migrations, SaveFile, SaveHeader};
 pub use scene::{
-    AlphaSource, BlendMode, Effect, Layer, Material, Node, NodeId, NodeKind, Params, Quad, Rect, Scene,
-    ShaderId, Slice, Sprite, Target, TextureId, Transform,
+    AlphaSource, BlendMode, Effect, EffectInput, Layer, Material, Node, NodeId, NodeKind, Params, Quad, Rect,
+    Scene, ShaderId, Slice, Sprite, Target, TextureId, Transform,
 };
 pub use tween::{Ease, Prop, Tween};
 pub use value::Value;
