@@ -10,7 +10,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Affine2, UVec2, Vec2};
 
 use crate::{
-    BlendMode, Color, Effect, Material, Mesh, NodeId, NodeKind, Rect, Scene, Sprite, TextureId, ViewLayout,
+    BlendMode, Color, Effect, Material, Mesh, NodeId, NodeKind, ParticleBufferId, ParticleUniform, Rect,
+    Scene, Sprite, TextureId, ViewLayout,
 };
 
 /// Vertex in pass pixel space. `color` is linear, premultiplied, 8-bit. `data` is four
@@ -69,6 +70,14 @@ pub enum TexRef {
     Transient(u32),
 }
 
+/// An instanced draw of a particle system: `count` records from `buffer`, placed by `uniform`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ParticleDraw {
+    pub buffer: ParticleBufferId,
+    pub count: u32,
+    pub uniform: ParticleUniform,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawItem {
     pub texture: TexRef,
@@ -81,6 +90,8 @@ pub struct DrawItem {
     pub clip: Option<[u32; 4]>,
     pub vertices: Range<u32>,
     pub indices: Range<u32>,
+    /// A particle system (drawn from its own buffer; `vertices` and `indices` are empty).
+    pub particles: Option<ParticleDraw>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -331,6 +342,37 @@ impl Walker<'_> {
                 }
                 self.children(id, c, items);
             }
+            NodeKind::Particles(ps) => {
+                // Particles are not culled: where they are is known only on the GPU.
+                if let Some(buffer) = ps.buffer
+                    && c.tint.a * c.opacity > 0.0
+                {
+                    let m = self.to_pixels(&c);
+                    let v = self.frame.vertices.len() as u32;
+                    let i = self.frame.indices.len() as u32;
+                    let clip = c.clip.map(|r| {
+                        let r = r.intersect(&c.bounds);
+                        let (x0, y0) = (r.min.x.floor().max(0.0) as u32, r.min.y.floor().max(0.0) as u32);
+                        let (x1, y1) = (r.max.x.ceil().max(0.0) as u32, r.max.y.ceil().max(0.0) as u32);
+                        [x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0)]
+                    });
+                    items.push(DrawItem {
+                        texture: TexRef::Texture(ps.texture),
+                        blend: node.blend,
+                        material: node.material,
+                        unpack: true,
+                        clip,
+                        vertices: v..v,
+                        indices: i..i,
+                        particles: Some(ParticleDraw {
+                            buffer,
+                            count: ps.capacity() as u32,
+                            uniform: ps.uniform(m, c.tint, c.opacity),
+                        }),
+                    });
+                }
+                self.children(id, c, items);
+            }
             NodeKind::Sprite(s) => {
                 let m = self.to_pixels(&c);
                 let tint = Color { a: c.tint.a * c.opacity, ..c.tint };
@@ -381,6 +423,7 @@ impl Walker<'_> {
             clip: None,
             vertices: v0..v0 + 4,
             indices: i0..i0 + 6,
+            particles: None,
         }
     }
 
@@ -421,6 +464,7 @@ impl Walker<'_> {
             clip: None,
             vertices: v0..v0 + n,
             indices: i0..i0 + mesh.indices.len() as u32,
+            particles: None,
         })
     }
 
@@ -444,6 +488,7 @@ impl Walker<'_> {
             [x0, y0, x1.saturating_sub(x0), y1.saturating_sub(y0)]
         });
         if let Some(last) = items.last_mut()
+            && last.particles.is_none()
             && last.texture == item.texture
             && last.blend == item.blend
             && last.material == item.material

@@ -260,6 +260,17 @@ Implemented in M1. `kulisa-core` turns the scene into a renderer-agnostic `Frame
   procedural shaders (`kulisa.sprite{ shader = ... }` with no image) get real coordinates and may
   offset UVs safely. These nodes never batched with unshaded ones, so draw calls do not change
   (`DrawItem::unpack`; text with a shader keeps the shared atlas).
+- **Particles** (M8, `kulisa_core::ParticleSystem`, `NodeKind::Particles`). GPU particles without
+  compute shaders, so WebGL2 runs them: a ring buffer of 48-byte birth records (position,
+  velocity, birth time, life, size, spin, angle, seed, tint) lives in a GPU buffer per system and is
+  drawn as one instanced draw (6 vertices from `vertex_index`, one instance per record). The CPU
+  writes only the records born since the last frame. The vertex shader (`particles.wgsl`) computes
+  each particle in closed form from the system's own clock: velocity with linear drag and gravity,
+  a wander drift, size and three-stop color over life, fades, spin or velocity stretch, sprite-sheet
+  frames; dead records collapse to degenerate triangles. A system's uniform block (the material's 16
+  params plus eleven `vec4`s) carries the node-to-pixel transform, so particles follow the node,
+  camera and parallax. User particle shaders are the sprite `fragment` contract compiled against
+  the particle prelude. Particles are not culled (where they are is known only on the GPU).
 - **Quality tiers** (planned, M9): `low/medium/high` from adapter info, limits
   and platform; overridable. Tiers scale render-target resolution, MSAA and
   which effect chains a scene enables.

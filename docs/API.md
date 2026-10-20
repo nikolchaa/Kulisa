@@ -183,6 +183,59 @@ local tri = kulisa.mesh{ positions = { 0, 0, 100, 0, 0, 100 }, indices = { 1, 2,
   with a `shader` reads its image through a texture of its own, see Shaders.)
 - `node:contains` and `kulisa.pick` test the triangles, so a deformed mesh is hit where it is drawn.
 
+### Particles
+
+`kulisa.particles(opts)` makes a particle system: fire, snow, sparks, fireflies, dust. Particles are
+simulated on the GPU: the engine writes a small record when one is born, and the vertex shader
+works out where it is, how big, which color and which sprite frame from the system's clock, so
+thousands cost the CPU almost nothing. It works everywhere, WebGL2 included (no compute shaders).
+
+```lua
+local embers = kulisa.particles{
+    x = 960, y = 900, capacity = 800,
+    rate = 120, shape = "line", width = 300,         -- born along a 300-unit line
+    direction = -90, spread = 30, speed = { 40, 120 }, -- upwards (degrees; 0 is right, 90 down)
+    life = { 1.5, 3 }, size = { 18, 2 }, gravity = -20, drag = 0.6, wander = { 12, 0.7 },
+    colors = { "#fff3b0", "#ff8a3a", "#ff200000" },   -- over the life: start, middle, end
+    blend = "add",
+}
+embers:burst(50)                       -- 50 more now (optionally at x, y in the node's space)
+embers.emitting = false                -- stop emitting; live particles finish their life
+```
+
+The node itself moves, rotates, scales, fades and parallaxes like any node (particles live in its
+space). Options (also for `ps:set{...}`, which changes any of them later):
+
+| Option | Meaning |
+|---|---|
+| `capacity` | How many can live at once (default 500; only when creating). The oldest are reused. |
+| `image` | The particle's image (default a soft round dot); `frames = { cols, rows }` makes it a sprite sheet: a random frame per particle, or `animate = true` to play the frames over the life. |
+| `rate`, `emitting` | Particles per second, and whether it emits (default 30, true). |
+| `emitter` | `{ x, y }`: where they are born in the node's space (also `emitter_x`, `emitter_y` properties). |
+| `shape` | `"point"` (default), `"rect"` (`width`, `height`), `"circle"` or `"ring"` (`radius`), `"line"` (`width` long, `shape_angle` degrees). |
+| `direction`, `spread` | Degrees: the direction they fly (default -90, up) and the full angle around it (default 45). |
+| `speed`, `life`, `scale`, `spin` | A number or `{ min, max }` picked per particle: units per second, seconds, a size multiplier, degrees per second. |
+| `rotation` | Starting rotation in degrees, or `"random"`. |
+| `size` | Size in units at birth and death: a number or `{ start, end }`. |
+| `colors` | One color, or two or three over the life (with alpha; `tint` and `opacity` of the node multiply). |
+| `tints` | A list of colors; each particle takes one at random. |
+| `fade` | Fade in and out as fractions of the life: a number or `{ in, out }` (default `{ 0.1, 0.3 }`). |
+| `gravity` | A number (down) or `{ x, y }`, units per second squared. |
+| `drag` | Slows them down: velocity shrinks by `exp(-drag * age)`. |
+| `wander` | Sideways drift: `{ amplitude, frequency }` or just the amplitude. |
+| `stretch` | Stretches each particle along its velocity (sparks, rain): length grows by `stretch * speed`. |
+| `time_scale` | The system's clock speed (0 pauses it). |
+| `warm_up` | Seconds of emission to start with (only when creating), so a fire is burning from the first frame. |
+| `seed` | Seeds the random numbers (repeatable effects). |
+
+Read-only: `alive` (particles alive now), `capacity`, `clock`. Methods: `ps:burst(n, x?, y?)`,
+`ps:reset()` (removes them all), `ps:set{...}`.
+
+A `shader` gives particles a custom look: the same `fn fragment(in: VertexOut)` as for sprites, where
+`in.uv` runs over the particle (its frame), `in.color` is its color, and `in.data` is
+`(life fraction 0..1, random seed 0..1, age in seconds, speed)`. Particle shaders cannot define
+`vertex`.
+
 Text markup: `{b}`, `{i}`, `{color=#hex}`, `{size=N}`, `{font=Name}`, `{wave}`, `{shake}`,
 `{ruby=reading}`, `{speed=factor}` (typewriter speed), `{w=secs}` (typewriter pause); `{{` is a literal brace.
 

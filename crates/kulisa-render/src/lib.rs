@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use bytemuck::{Pod, Zeroable};
 use kulisa_core::{
-    BlendMode, DrawItem, EffectInput, Frame, Pass, PassTarget, Rect, Scene, ShaderId, TexRef, TextureId,
-    UVec2, Vec2, Vertex, Viewport,
+    BlendMode, DrawItem, EffectInput, Frame, Particle, ParticleBufferId, ParticleUniform, Pass, PassTarget,
+    Rect, Scene, ShaderId, TexRef, TextureId, UVec2, Vec2, Vertex, Viewport,
 };
 
 pub use image::Image;
@@ -43,6 +43,10 @@ const SPRITE_SHADER: u32 = 0;
 const PRESENT_SHADER: u32 = 1;
 const GLOBALS_SIZE: u64 = size_of::<Globals>() as u64;
 const PARAMS_SIZE: u64 = 64;
+/// A particle draw's uniform block: the material's params, then the system's [`ParticleUniform`].
+const PARTICLE_PARAMS_SIZE: u64 = PARAMS_SIZE + size_of::<ParticleUniform>() as u64;
+/// The particle pipeline key used for the built-in look (no material).
+const PARTICLE_DEFAULT: u32 = u32::MAX;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -119,6 +123,9 @@ struct Uniforms {
     effect_params: Vec<Vec<u32>>,
     /// Globals slot (byte offset) per pass and effect: `resolution` is the effect's output size.
     effect_globals: Vec<Vec<u32>>,
+    /// Particle uniform blocks, and each particle item's byte offset in them.
+    particles: Vec<u8>,
+    item_particles: Vec<Vec<u32>>,
 }
 
 /// Where a pass's effect chain reads and writes: indices into `Renderer::scratch`.
@@ -168,6 +175,9 @@ pub struct Renderer {
     texture_layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
     shaders: Vec<wgpu::ShaderModule>,
+    /// User shader sources by shader index (built-ins have none), for their particle variants.
+    sources: Vec<Option<(String, String)>>,
+    particles: Particles,
     pipelines: HashMap<(u32, Blend, wgpu::TextureFormat), wgpu::RenderPipeline>,
     textures: Vec<Tex>,
     /// Unpacked copies of atlas images used as masks or by shaded sprites and meshes (they
@@ -190,6 +200,20 @@ pub struct Renderer {
     frame: Frame,
     stats: FrameStats,
     warned_feedback: bool,
+}
+
+/// Particle drawing: its pipeline layout and uniform buffer, shader variants and buffers.
+struct Particles {
+    params_layout: wgpu::BindGroupLayout,
+    layout: wgpu::PipelineLayout,
+    ubuf: wgpu::Buffer,
+    bind_group: wgpu::BindGroup,
+    align: u64,
+    default: wgpu::ShaderModule,
+    /// Particle variants of user shaders (None: it failed to compile; the default is used).
+    modules: HashMap<u32, Option<wgpu::ShaderModule>>,
+    pipelines: HashMap<(u32, Blend, wgpu::TextureFormat), wgpu::RenderPipeline>,
+    buffers: Vec<Option<wgpu::Buffer>>,
 }
 
 /// Backends to try, in order. Vulkan is preferred wherever it exists.
@@ -468,6 +492,18 @@ impl Renderer {
             ..Default::default()
         });
 
+        let particle_params_layout = uniform_layout("particle params", PARTICLE_PARAMS_SIZE);
+        let particle_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("kulisa particles"),
+            bind_group_layouts: &[
+                Some(&globals_layout),
+                Some(&texture_layout),
+                Some(&particle_params_layout),
+                Some(&texture_layout),
+            ],
+            ..Default::default()
+        });
+
         let (output, out_format, encode_on_present) = match surface {
             Some(surface) => {
                 let caps = surface.get_capabilities(&adapter);
@@ -523,6 +559,17 @@ impl Renderer {
         let globals_bg = uniform_bind_group(&device, &globals_layout, &ubuf, GLOBALS_SIZE);
         let params_bg = uniform_bind_group(&device, &params_layout, &pbuf, PARAMS_SIZE);
         let vbuf = buffer("vertices", 1 << 16, wgpu::BufferUsages::VERTEX);
+        let particle_align = PARTICLE_PARAMS_SIZE.div_ceil(device_align) * device_align;
+        let particle_ubuf = buffer("particle params", 16 * particle_align, wgpu::BufferUsages::UNIFORM);
+        let particle_bg =
+            uniform_bind_group(&device, &particle_params_layout, &particle_ubuf, PARTICLE_PARAMS_SIZE);
+        let particle_default = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("particles"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader::build_particles(
+                "particles",
+                shader::PARTICLE,
+            )?)),
+        });
         let white_tex = create_gpu_texture(&device, &texture_layout, &sampler, UVec2::ONE, false);
         let ibuf = buffer("indices", 1 << 16, wgpu::BufferUsages::INDEX);
 
@@ -542,6 +589,18 @@ impl Renderer {
             texture_layout,
             pipeline_layout,
             shaders: Vec::new(),
+            sources: Vec::new(),
+            particles: Particles {
+                params_layout: particle_params_layout,
+                layout: particle_layout,
+                ubuf: particle_ubuf,
+                bind_group: particle_bg,
+                align: particle_align,
+                default: particle_default,
+                modules: HashMap::new(),
+                pipelines: HashMap::new(),
+                buffers: Vec::new(),
+            },
             pipelines: HashMap::new(),
             textures: Vec::new(),
             own_copies: HashMap::new(),
@@ -566,6 +625,7 @@ impl Renderer {
         let sprite = r.module("sprite", shader::build("sprite", shader::SPRITE)?);
         let present = r.module("present", shader::build("present", shader::PRESENT_ENCODE)?);
         r.shaders.extend([sprite, present]);
+        r.sources.extend([None, None]);
         // Page 0 holds a white texel for solid-color draws.
         r.add_page();
         let (_, uv) = r.pack(&Image::solid(1, 1, [255; 4])).expect("an empty page fits a texel");
@@ -713,6 +773,7 @@ impl Renderer {
     pub fn create_shader(&mut self, name: &str, source: &str) -> Result<ShaderId, String> {
         let full = shader::build(name, source)?;
         self.shaders.push(self.module(name, full));
+        self.sources.push(Some((name.to_string(), source.to_string())));
         Ok(ShaderId(self.shaders.len() as u32 - 1))
     }
 
@@ -723,8 +784,107 @@ impl Renderer {
         }
         let full = shader::build(name, source)?;
         self.shaders[id.0 as usize] = self.module(name, full);
+        self.sources[id.0 as usize] = Some((name.to_string(), source.to_string()));
         self.pipelines.retain(|(s, _, _), _| *s != id.0);
+        self.particles.modules.remove(&id.0);
+        self.particles.pipelines.retain(|(s, _, _), _| *s != id.0);
         Ok(())
+    }
+
+    /// Makes a GPU buffer for a particle system's `capacity` records.
+    pub fn create_particles(&mut self, capacity: u32) -> ParticleBufferId {
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("particles"),
+            size: (capacity.max(1) as u64) * size_of::<Particle>() as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        self.particles.buffers.push(Some(buffer));
+        ParticleBufferId(self.particles.buffers.len() as u32 - 1)
+    }
+
+    /// Uploads particle records starting at record `first`.
+    pub fn write_particles(&mut self, id: ParticleBufferId, first: usize, records: &[Particle]) {
+        if let Some(Some(buf)) = self.particles.buffers.get(id.0 as usize) {
+            let at = (first * size_of::<Particle>()) as u64;
+            let bytes: &[u8] = bytemuck::cast_slice(records);
+            if at + bytes.len() as u64 <= buf.size() {
+                self.queue.write_buffer(buf, at, bytes);
+            }
+        }
+    }
+
+    /// Releases a particle buffer (its system was removed).
+    pub fn free_particles(&mut self, id: ParticleBufferId) {
+        if let Some(b) = self.particles.buffers.get_mut(id.0 as usize) {
+            *b = None;
+        }
+    }
+
+    /// The particle shader key for an item (a user shader index, or the default look), making
+    /// the user shader's particle variant on first use.
+    fn particle_key(&mut self, item: &DrawItem) -> u32 {
+        let Some(m) = item.material else { return PARTICLE_DEFAULT };
+        let i = self.shader_index(m.shader);
+        if !self.particles.modules.contains_key(&i) {
+            let module = match self.sources.get(i as usize).cloned().flatten() {
+                Some((name, src)) => match shader::build_particles(&name, &src) {
+                    Ok(full) => Some(self.module(&name, full)),
+                    Err(e) => {
+                        log::warn!("{e}");
+                        None
+                    }
+                },
+                None => None,
+            };
+            self.particles.modules.insert(i, module);
+        }
+        if self.particles.modules[&i].is_some() { i } else { PARTICLE_DEFAULT }
+    }
+
+    fn particle_pipeline(&mut self, key: u32, blend: Blend, format: wgpu::TextureFormat) {
+        if self.particles.pipelines.contains_key(&(key, blend, format)) {
+            return;
+        }
+        let module = match key {
+            PARTICLE_DEFAULT => &self.particles.default,
+            k => self.particles.modules[&k].as_ref().unwrap_or(&self.particles.default),
+        };
+        let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("particles"),
+            layout: Some(&self.particles.layout),
+            vertex: wgpu::VertexState {
+                module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: size_of::<Particle>() as u64,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &wgpu::vertex_attr_array![
+                        0 => Float32x4, 1 => Float32x4, 2 => Float32x2, 3 => Unorm8x4
+                    ],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: blend_state(blend),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        self.particles.pipelines.insert((key, blend, format), pipeline);
     }
 
     fn add_page(&mut self) {
@@ -869,6 +1029,27 @@ impl Renderer {
             u.params[at..at + PARAMS_SIZE as usize].copy_from_slice(bytemuck::cast_slice(params));
             (at / a) as u32
         };
+        let pa = self.particles.align as usize;
+        for pass in &frame.passes {
+            let offsets = pass
+                .items
+                .iter()
+                .map(|i| match &i.particles {
+                    Some(pd) => {
+                        let at = u.particles.len();
+                        u.particles.resize(at + pa, 0);
+                        let params = i.material.map_or([0.0; 16], |m| m.params);
+                        u.particles[at..at + PARAMS_SIZE as usize]
+                            .copy_from_slice(bytemuck::cast_slice(&params));
+                        u.particles[at + PARAMS_SIZE as usize..at + PARTICLE_PARAMS_SIZE as usize]
+                            .copy_from_slice(bytemuck::bytes_of(&pd.uniform));
+                        at as u32
+                    }
+                    None => 0,
+                })
+                .collect();
+            u.item_particles.push(offsets);
+        }
         for pass in &frame.passes {
             u.item_params
                 .push(pass.items.iter().map(|i| i.material.map_or(0, |m| push(&m.params))).collect());
@@ -1070,6 +1251,17 @@ impl Renderer {
         if ensure_capacity(&self.device, &mut self.pbuf, uniforms.params.len() as u64) {
             self.params_bg = uniform_bind_group(&self.device, &self.params_layout, &self.pbuf, PARAMS_SIZE);
         }
+        if ensure_capacity(&self.device, &mut self.particles.ubuf, uniforms.particles.len() as u64) {
+            self.particles.bind_group = uniform_bind_group(
+                &self.device,
+                &self.particles.params_layout,
+                &self.particles.ubuf,
+                PARTICLE_PARAMS_SIZE,
+            );
+        }
+        if !uniforms.particles.is_empty() {
+            self.queue.write_buffer(&self.particles.ubuf, 0, &uniforms.particles);
+        }
         self.queue.write_buffer(&self.vbuf, 0, vbytes);
         self.queue.write_buffer(&self.ibuf, 0, ibytes);
         self.queue.write_buffer(&self.ubuf, 0, &uniforms.globals);
@@ -1078,6 +1270,11 @@ impl Renderer {
             let fmt = self.target_format(pass.target, capturing);
             let item_fmt = if pass.effects.is_empty() { fmt } else { RT_FORMAT };
             for item in &pass.items {
+                if item.particles.is_some() {
+                    let key = self.particle_key(item);
+                    self.particle_pipeline(key, Blend::Mode(item.blend), item_fmt);
+                    continue;
+                }
                 let shader = item.material.map_or(SPRITE_SHADER, |m| self.shader_index(m.shader));
                 self.pipeline(shader, Blend::Mode(item.blend), item_fmt);
             }
@@ -1155,7 +1352,7 @@ impl Renderer {
                     fmt,
                     pass,
                     globals,
-                    &uniforms.item_params[i],
+                    (&uniforms.item_params[i], &uniforms.item_particles[i]),
                     &mut stats,
                 ),
                 Some(plan) => {
@@ -1165,7 +1362,7 @@ impl Renderer {
                         RT_FORMAT,
                         pass,
                         globals,
-                        &uniforms.item_params[i],
+                        (&uniforms.item_params[i], &uniforms.item_particles[i]),
                         &mut stats,
                     );
                     let image =
@@ -1235,7 +1432,7 @@ impl Renderer {
         format: wgpu::TextureFormat,
         pass: &Pass,
         globals: u32,
-        params: &[u32],
+        (params, particle_params): (&[u32], &[u32]),
         stats: &mut FrameStats,
     ) {
         let load = match pass.clear {
@@ -1277,6 +1474,7 @@ impl Renderer {
             PassTarget::Transient(k) => Some(TexRef::Transient(k)),
             PassTarget::Surface => None,
         };
+        let mut particle_draws = 0;
         let mut flush = |rp: &mut wgpu::RenderPass,
                          p: &mut Option<(&DrawItem, std::ops::Range<u32>, u32)>| {
             if let Some((_, range, _)) = p.take() {
@@ -1284,7 +1482,38 @@ impl Renderer {
                 stats.draw_calls += 1;
             }
         };
-        for (item, &param) in pass.items.iter().zip(params) {
+        for ((item, &param), &particle_param) in pass.items.iter().zip(params).zip(particle_params) {
+            if let Some(pd) = &item.particles {
+                let Some(Some(buf)) = self.particles.buffers.get(pd.buffer.0 as usize) else { continue };
+                flush(&mut rp, &mut pending);
+                let key = match item.material {
+                    Some(m) => {
+                        let i = self.shader_index(m.shader);
+                        if self.particles.modules.get(&i).is_some_and(|m| m.is_some()) {
+                            i
+                        } else {
+                            PARTICLE_DEFAULT
+                        }
+                    }
+                    None => PARTICLE_DEFAULT,
+                };
+                let Some(pipeline) = self.particles.pipelines.get(&(key, Blend::Mode(item.blend), format))
+                else {
+                    continue;
+                };
+                rp.set_pipeline(pipeline);
+                rp.set_bind_group(1, self.texture_bind_group(item), &[]);
+                rp.set_bind_group(2, &self.particles.bind_group, &[particle_param]);
+                rp.set_bind_group(3, self.mask_bind_group(item.material.and_then(|m| m.mask)), &[]);
+                let [x, y, w, h] = item.clip.unwrap_or([0, 0, pass.size.x, pass.size.y]);
+                rp.set_scissor_rect(x, y, w, h);
+                rp.set_vertex_buffer(0, buf.slice(..));
+                rp.draw(0..6, 0..pd.count);
+                rp.set_vertex_buffer(0, self.vbuf.slice(..));
+                last_state = None;
+                particle_draws += 1;
+                continue;
+            }
             if own_target == Some(item.texture) {
                 if !self.warned_feedback {
                     log::warn!("a render target cannot draw itself; skipping");
@@ -1320,6 +1549,7 @@ impl Renderer {
             pending = Some((item, item.indices.clone(), param));
         }
         flush(&mut rp, &mut pending);
+        stats.draw_calls += particle_draws;
     }
 
     fn draw_fullscreen(

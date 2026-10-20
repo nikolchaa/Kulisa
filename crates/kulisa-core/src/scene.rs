@@ -212,6 +212,8 @@ pub enum NodeKind {
     Quads(Vec<Quad>),
     /// A triangle mesh whose vertices scripts edit (deformable sprites, cloth, peels).
     Mesh(Mesh),
+    /// A particle system drawn on the GPU (see [`crate::ParticleSystem`]).
+    Particles(Box<crate::ParticleSystem>),
     Layer(Layer),
     Target(Target),
 }
@@ -267,6 +269,10 @@ impl Node {
 
     pub fn mesh(mesh: Mesh) -> Self {
         Self::new(NodeKind::Mesh(mesh))
+    }
+
+    pub fn particles(system: crate::ParticleSystem) -> Self {
+        Self::new(NodeKind::Particles(Box::new(system)))
     }
 
     pub fn layer(parallax: f32) -> Self {

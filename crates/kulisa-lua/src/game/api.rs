@@ -20,6 +20,7 @@ use super::display;
 use super::hit;
 use super::media::{self, TransitionSpec};
 use super::mesh;
+use super::particles;
 use super::{
     ImageInfo, Shared, State, TextNode, Waiting, choice_key, report, story_advance, story_restored,
     with_story,
@@ -419,6 +420,7 @@ fn kind_name(kind: &NodeKind, is_text: bool) -> &'static str {
         NodeKind::Quads(_) if is_text => "text",
         NodeKind::Quads(_) => "quads",
         NodeKind::Mesh(_) => "mesh",
+        NodeKind::Particles(_) => "particles",
         NodeKind::Layer(_) => "layer",
         NodeKind::Target(_) => "target",
     }
@@ -529,6 +531,9 @@ fn get_prop(lua: &Lua, st: &State, id: NodeId, key: &str) -> mlua::Result<LuaVal
     if let Some(v) = mesh::get(st, id, key) {
         return Ok(v.map_or(LuaValue::Nil, LuaValue::Number));
     }
+    if let Some(v) = particles::get(st, id, key) {
+        return Ok(v);
+    }
     match key {
         "x" => num(t.position.x),
         "y" => num(t.position.y),
@@ -559,6 +564,10 @@ fn get_prop(lua: &Lua, st: &State, id: NodeId, key: &str) -> mlua::Result<LuaVal
             NodeKind::Mesh(m) => {
                 let size = st.renderer.texture_size(m.texture).unwrap_or_default();
                 ImageRef(ImageInfo { id: m.texture, size }).into_lua(lua)
+            }
+            NodeKind::Particles(p) => {
+                let size = st.renderer.texture_size(p.texture).unwrap_or_default();
+                ImageRef(ImageInfo { id: p.texture, size }).into_lua(lua)
             }
             _ => Ok(LuaValue::Nil),
         },
@@ -640,6 +649,9 @@ fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<
     if set_text_prop(st, id, key, &v)? {
         return Ok(());
     }
+    if let Some(r) = particles::set(st, id, key, &v) {
+        return r;
+    }
     let image =
         if (key == "image" || key == "mask") && !v.is_nil() { Some(image_arg(st, &v)?) } else { None };
     let fx = if key == "effects" { Some(effects(st, &v)?) } else { None };
@@ -695,7 +707,10 @@ fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<
                 }
             }
             NodeKind::Mesh(m) => m.texture = image.unwrap_or(white).id,
-            _ => return Err(mlua::Error::runtime("`image` can only be set on sprites and meshes")),
+            NodeKind::Particles(p) => p.texture = image.unwrap_or(white).id,
+            _ => {
+                return Err(mlua::Error::runtime("`image` can only be set on sprites, meshes and particles"));
+            }
         },
         "slice" => match &mut n.kind {
             NodeKind::Sprite(s) => {
@@ -848,6 +863,13 @@ impl UserData for NodeRef {
         m.add_method("vertex_at", |lua, this, (col, row): (u32, u32)| {
             with(lua, |st| mesh::grid_vertex(st, this.0, col, row))
         });
+        // Particles.
+        m.add_method("burst", |lua, this, (n, x, y): (f32, Option<f32>, Option<f32>)| {
+            let at = x.zip(y).map(|(x, y)| Vec2::new(x, y));
+            with(lua, |st| particles::burst(st, this.0, n.max(0.0) as usize, at))
+        });
+        m.add_method("reset", |lua, this, ()| with(lua, |st| particles::reset(st, this.0)));
+        m.add_method("set", |lua, this, o: Table| with(lua, |st| particles::set_options(st, this.0, &o)));
         m.add_method("children", |lua, this, ()| {
             let ids = with(lua, |st| Ok(node_of(st, this.0)?.children().to_vec()))?;
             lua.create_sequence_from(ids.into_iter().map(NodeRef))
@@ -1730,6 +1752,16 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "layer",
         lua.create_function(|lua, o: Option<Table>| {
             create(lua, o, &[], |_, _| Ok((Node::layer(1.0), None)))
+        })?,
+    )?;
+    k.set(
+        "particles",
+        lua.create_function(|lua, o: Option<Table>| {
+            let node = create(lua, o, particles::OPTIONS, |st, opts| Ok((particles::make(st, opts)?, None)))?;
+            with(lua, |st| {
+                particles::added(st, node.0);
+                Ok(node)
+            })
         })?,
     )?;
     k.set(

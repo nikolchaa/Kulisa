@@ -3,9 +3,16 @@
 use wgpu::naga;
 
 const PRELUDE: &str = include_str!("prelude.wgsl");
+const PARTICLE_PRELUDE: &str = include_str!("particles.wgsl");
 
 /// Textured, tinted sprite. Shader 0.
 pub(crate) const SPRITE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
+    return textureSample(tex, samp, in.uv) * in.color;
+}
+";
+
+/// The default look of particles: the image (or frame) times the color over life.
+pub(crate) const PARTICLE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     return textureSample(tex, samp, in.uv) * in.color;
 }
 ";
@@ -39,7 +46,22 @@ pub(crate) fn build(name: &str, user: &str) -> Result<String, String> {
     if !has_fn(user, "fragment") {
         return Err(format!("{name}: shader must define `fn fragment(in: VertexOut) -> vec4<f32>`"));
     }
-    let source = compose(user);
+    validate(name, compose(user))
+}
+
+/// The same for drawing particles: the user's `fragment` with the particle vertex stage. A
+/// user `vertex` function is not used (particles place themselves).
+pub(crate) fn build_particles(name: &str, user: &str) -> Result<String, String> {
+    if !has_fn(user, "fragment") {
+        return Err(format!("{name}: shader must define `fn fragment(in: VertexOut) -> vec4<f32>`"));
+    }
+    if has_fn(user, "vertex") {
+        return Err(format!("{name}: particle shaders cannot define `vertex` (particles place themselves)"));
+    }
+    validate(name, format!("{user}\n{PARTICLE_PRELUDE}"))
+}
+
+fn validate(name: &str, source: String) -> Result<String, String> {
     let module =
         naga::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string_with_path(&source, name))?;
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::empty())
@@ -56,6 +78,9 @@ mod tests {
     fn builtin_shaders_validate() {
         build("sprite", SPRITE).unwrap();
         build("present", PRESENT_ENCODE).unwrap();
+        build_particles("particles", PARTICLE).unwrap();
+        build_particles("particle sprite", SPRITE).unwrap();
+        assert!(build_particles("v", "fn vertex(in: VertexIn) -> VertexOut { return kulisa_vertex(in); }\nfn fragment(in: VertexOut) -> vec4<f32> { return in.color; }").is_err());
     }
 
     #[test]

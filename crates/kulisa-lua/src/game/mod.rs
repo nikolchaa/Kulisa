@@ -11,6 +11,7 @@ mod interact;
 mod media;
 mod mesh;
 mod pad;
+mod particles;
 mod pointer;
 mod sensors;
 mod typing;
@@ -118,6 +119,7 @@ pub(crate) struct State {
     pub display: display::DisplayState,
     pub alpha_masks: hit::Masks,
     pub interact: interact::Interact,
+    pub particles: particles::Systems,
     /// Every pointer: the mouse (id 0) and the touches that are down (ids from 1).
     pub pointers: BTreeMap<u32, pointer::Pointer>,
     pub pinch: Option<pointer::Pinch>,
@@ -511,6 +513,7 @@ impl Game {
             display: Default::default(),
             alpha_masks: Default::default(),
             interact: Default::default(),
+            particles: Default::default(),
             pointers: BTreeMap::new(),
             pinch: None,
             pads: Default::default(),
@@ -580,6 +583,7 @@ impl Game {
             report(&self.state, &e.to_string());
         }
         emit(&self.state, "update", dt);
+        particles::update(&mut self.state.borrow_mut(), dt);
 
         let due = {
             let mut st = self.state.borrow_mut();

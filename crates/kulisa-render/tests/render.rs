@@ -223,6 +223,48 @@ fn effects_run_at_lower_resolution_and_read_earlier_images() {
 }
 
 #[test]
+fn particles_move_on_the_gpu_and_expire() {
+    use kulisa_core::{ParticleSystem, Span};
+    let Some(mut r) = renderer() else { return };
+    let (mut s, v) = scene();
+    let white = solid(&mut r, [255, 255, 255, 255]);
+    let mut ps = ParticleSystem::new(white, 64);
+    ps.emitter.emitting = false;
+    ps.emitter.speed = Span::fixed(20.0); // to the right, 20 units per second
+    ps.emitter.direction = 0.0;
+    ps.emitter.spread = 0.0;
+    ps.emitter.life = Span::fixed(2.0);
+    ps.look.size = (8.0, 8.0);
+    ps.look.fade = (0.0, 0.0);
+    ps.look.colors = [Color::rgba(1.0, 0.0, 0.0, 1.0); 3];
+    ps.burst(1, Some(Vec2::new(10.0, 32.0)));
+    let buffer = r.create_particles(ps.capacity() as u32);
+    ps.buffer = Some(buffer);
+    let (first, recs) = ps.take_dirty().unwrap();
+    r.write_particles(buffer, first, recs);
+    let id = s.add(s.root(), Node::particles(ps));
+    r.render(&s, &v, 0.0);
+    let img = r.read_pixels().unwrap();
+    assert_px(&img, 10, 32, [255, 0, 0]);
+    assert_px(&img, 40, 32, [0, 0, 0]);
+    // A second later it has moved 20 units right; the GPU worked it out from the clock.
+    if let NodeKind::Particles(ps) = &mut s.get_mut(id).unwrap().kind {
+        ps.step(1.0);
+    }
+    r.render(&s, &v, 0.0);
+    let img = r.read_pixels().unwrap();
+    assert_px(&img, 30, 32, [255, 0, 0]);
+    assert_px(&img, 10, 32, [0, 0, 0]);
+    assert_eq!(r.stats().draw_calls, 1);
+    // After its life it is gone.
+    if let NodeKind::Particles(ps) = &mut s.get_mut(id).unwrap().kind {
+        ps.step(1.5);
+    }
+    r.render(&s, &v, 0.0);
+    assert_px(&r.read_pixels().unwrap(), 45, 32, [0, 0, 0]);
+}
+
+#[test]
 fn shader_errors_are_readable() {
     let Some(mut r) = renderer() else { return };
     let err = r

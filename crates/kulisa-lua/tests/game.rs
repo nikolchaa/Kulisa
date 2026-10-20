@@ -254,6 +254,52 @@ fn effect_chains_take_scale_inputs_and_masks() {
 }
 
 #[test]
+fn particles_emit_render_and_take_options() {
+    let mut g = game!("main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.screen.clear = "#000000"
+        ps = kulisa.particles{
+            capacity = 200, rate = 100, life = 1, speed = 0, size = 12, colors = "#ff0000",
+            fade = 0, emitter = { 32, 32 }, seed = 3,
+        }
+    "##);
+    for _ in 0..10 {
+        g.frame(0.05);
+    }
+    let alive: i64 = g.eval("t", "return ps.alive").unwrap();
+    assert!((48..=52).contains(&alive), "{alive} alive after half a second at 100/s");
+    assert_eq!(g.eval::<String>("t", "return ps.kind").unwrap(), "particles");
+    g.render();
+    let img = g.renderer().read_pixels().unwrap();
+    let i = ((32 * 64 + 32) * 4) as usize;
+    assert!(img.pixels[i] > 200 && img.pixels[i + 1] < 30, "red at the emitter: {:?}", &img.pixels[i..i + 4]);
+
+    g.eval::<()>("t", "ps.emitting = false").unwrap();
+    for _ in 0..25 {
+        g.frame(0.05);
+    }
+    assert_eq!(g.eval::<i64>("t", "return ps.alive").unwrap(), 0);
+    g.eval::<()>("t", "ps:burst(5, 10, 10)").unwrap();
+    assert_eq!(g.eval::<i64>("t", "return ps.alive").unwrap(), 5);
+    g.eval::<()>("t", "ps:reset()").unwrap();
+    assert_eq!(g.eval::<i64>("t", "return ps.alive").unwrap(), 0);
+    g.eval::<()>("t", "ps:set{ rate = 10, gravity = 98, shape = 'circle', radius = 5, colors = { '#fff', '#ff0', '#ff000000' } }")
+        .unwrap();
+    assert_eq!(g.eval::<f64>("t", "return ps.rate").unwrap(), 10.0);
+    g.eval::<()>("t", "ps.time_scale = 0; ps.emitting = true").unwrap();
+    g.frame(0.5);
+    assert_eq!(g.eval::<i64>("t", "return ps.alive").unwrap(), 0, "paused");
+    let err = g.eval::<()>("t", "ps:set{ shape = 'blob' }").unwrap_err();
+    assert!(err.contains("`shape`"), "{err}");
+    let err = g.eval::<()>("t", "kulisa.group{}:burst(3)").unwrap_err();
+    assert!(err.contains("particles node"), "{err}");
+    // Removing the node frees its buffer on the next frame.
+    g.eval::<()>("t", "ps:remove()").unwrap();
+    g.frame(0.05);
+    g.render();
+}
+
+#[test]
 fn saves_and_loads() {
     let id = format!("kulisa_test_{}", std::process::id());
     let g = game!("main.luau" => STORY_MAIN, "story/script.kulisa" => STORY);
