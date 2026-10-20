@@ -237,7 +237,7 @@ fn effects_table(lua: &Lua, list: &[Effect]) -> mlua::Result<LuaValue> {
         Ok(match i {
             EffectInput::Previous => LuaValue::String(lua.create_string("previous")?),
             EffectInput::Source => LuaValue::String(lua.create_string("source")?),
-            EffectInput::Output(j) => LuaValue::Integer(j as i64 + 1),
+            EffectInput::Output(j) => LuaValue::Integer(j as mlua::Integer + 1),
         })
     };
     let t = lua.create_table()?;
