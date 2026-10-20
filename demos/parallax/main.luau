@@ -1,5 +1,5 @@
--- Parallax demo: a valley in many layers (shader sky and ridges, painted forests, GPU particles,
--- a day-night cycle), a ray-marched diorama brought to life by its depth map, post-processing
+-- Parallax demo: a valley in many layers (shader sky, terrain-rendered mountains, painted forests,
+-- GPU particles, a day-night cycle), a ray-marched diorama brought to life by its depth map, post-processing
 -- (bloom, tilt-shift, grading, CRT, grain), and a display lab that shows one scene on every
 -- screen shape. Built only on the public `kulisa` API. See README.md.
 --

@@ -1,4 +1,4 @@
--- The valley: a sky shader, three ridge shaders, painted forest and grass strips, a cabin, and
+-- The valley: a sky shader, three mountain ranges, painted forest and grass strips, a cabin, and
 -- particles (fireflies, falling leaves, snow, chimney smoke, campfire embers), each on a layer
 -- with its own parallax factor. Everything is placed against what the screen shows, so any
 -- aspect ratio (and the phone's portrait design) gets a full scene. `set_time` recolors it for
@@ -7,16 +7,17 @@
 local Valley = {}
 
 local SKY = kulisa.load_shader("shaders/sky.wgsl")
-local RIDGE = kulisa.load_shader("shaders/ridge.wgsl")
+local MOUNTAINS = kulisa.load_shader("shaders/mountains.wgsl")
 
 -- How far beyond the screen edges every layer reaches (the camera moves by up to ~80 units).
 local MARGIN = 220
 
 local root
 local layers = {}
-local sky, ridges = nil, {}
-local strips = {} -- { layer, image, tiles = {}, baseline, height_frac, tint_key }
-local cabin, windows, fire_glow, ground
+local sky
+local strips = {} -- see `strip`
+local ranges = {} -- the mountain strips, far to near
+local cabin, windows, fire_glow
 local systems = {}
 Valley.time = 0.72
 Valley.weather = { fireflies = true, leaves = true, snow = false, smoke = true, embers = true }
@@ -27,13 +28,15 @@ local function layer(name: string, parallax: number, z: number)
     return l
 end
 
--- Keyframes of the palette over the day (0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk).
+-- Keyframes of the palette over the day (0 midnight, 0.25 dawn, 0.5 noon, 0.75 dusk). The three
+-- mountain ranges (far to near) each get a lit and a shadowed rock color; `haze` is the air in
+-- front of them, `snow` lit snow.
 local KEYS = {
-    { t = 0.0, ridge = { "#28325c", "#1b2246", "#121733" }, foot = { "#1a2142", "#131936", "#0d1128" }, far = "#161d33", near = "#0c101d", grass = "#06080d", light = 1 },
-    { t = 0.25, ridge = { "#7f6896", "#5c4c7c", "#3e3560" }, foot = { "#c48c86", "#8e6a80", "#5a4a6c" }, far = "#4a4462", near = "#2c2740", grass = "#16131f", light = 0.35 },
-    { t = 0.5, ridge = { "#6f88b4", "#4f6f98", "#3a5878" }, foot = { "#a9bfd8", "#87a4c2", "#6a8aa8" }, far = "#4a6a74", near = "#2f4a44", grass = "#22341a", light = 0 },
-    { t = 0.75, ridge = { "#8e6080", "#62466a", "#3e2e50" }, foot = { "#e09682", "#ad6e6c", "#714c62" }, far = "#4a3450", near = "#261c30", grass = "#100a14", light = 0.6 },
-    { t = 1.0, ridge = { "#28325c", "#1b2246", "#121733" }, foot = { "#1a2142", "#131936", "#0d1128" }, far = "#161d33", near = "#0c101d", grass = "#06080d", light = 1 },
+    { t = 0.0, lit = { "#2e385e", "#262f50", "#1b2139" }, shade = { "#0f1428", "#0c1021", "#090c18" }, haze = "#141a33", snow = "#8494c0", far = "#161d33", near = "#0c101d", grass = "#06080d", light = 1 },
+    { t = 0.25, lit = { "#f2b39a", "#d99a8c", "#8f6a78" }, shade = { "#5a4a78", "#4a3d66", "#2e2840" }, haze = "#b88a9c", snow = "#ffe2cf", far = "#4a4462", near = "#2c2740", grass = "#16131f", light = 0.35 },
+    { t = 0.5, lit = { "#d6d0c6", "#b7bdb2", "#7d8c68" }, shade = { "#3c4c70", "#384a60", "#26362c" }, haze = "#9fb8d6", snow = "#ffffff", far = "#4a6a74", near = "#2f4a44", grass = "#22341a", light = 0 },
+    { t = 0.75, lit = { "#ffae7a", "#e08a6e", "#8a5560" }, shade = { "#5c3f6e", "#4a325c", "#2c2040" }, haze = "#c9808a", snow = "#ffd2b0", far = "#4a3450", near = "#261c30", grass = "#100a14", light = 0.6 },
+    { t = 1.0, lit = { "#2e385e", "#262f50", "#1b2139" }, shade = { "#0f1428", "#0c1021", "#090c18" }, haze = "#141a33", snow = "#8494c0", far = "#161d33", near = "#0c101d", grass = "#06080d", light = 1 },
 }
 
 local function lin(hex: string): { number }
@@ -63,11 +66,13 @@ local function palette(t: number)
     end
     local k = (t - a.t) / (b.t - a.t)
     k = k * k * (3 - 2 * k)
-    local p = { ridge = {}, foot = {} }
+    local p = { lit = {}, shade = {} }
     for i = 1, 3 do
-        p.ridge[i] = lerp3(lin(a.ridge[i]), lin(b.ridge[i]), k)
-        p.foot[i] = lerp3(lin(a.foot[i]), lin(b.foot[i]), k)
+        p.lit[i] = lerp3(lin(a.lit[i]), lin(b.lit[i]), k)
+        p.shade[i] = lerp3(lin(a.shade[i]), lin(b.shade[i]), k)
     end
+    p.haze = lerp3(lin(a.haze), lin(b.haze), k)
+    p.snow = lerp3(lin(a.snow), lin(b.snow), k)
     p.far = lerp3(lin(a.far), lin(b.far), k)
     p.near = lerp3(lin(a.near), lin(b.near), k)
     p.grass = lerp3(lin(a.grass), lin(b.grass), k)
@@ -75,15 +80,22 @@ local function palette(t: number)
     return p
 end
 
-local RIDGE_SPECS = {
-    { parallax = 0.1, base = 0.5, peak = 0.5, freq = 1.3, seed = 3, snow = 0.9, rim = 0.5 },
-    { parallax = 0.2, base = 0.6, peak = 0.42, freq = 1.9, seed = 11, snow = 0.3, rim = 0.35 },
-    { parallax = 0.32, base = 0.7, peak = 0.34, freq = 2.7, seed = 23, snow = 0, rim = 0.25 },
+-- The mountain ranges, far to near: parallax, how much haze covers them (all over, and more at
+-- the foot), how much of their snow shows.
+local RANGES = {
+    { image = "images/mountains_far.png", parallax = 0.08, height = 0.56, bottom = 0.73, haze = 0.3, mist = 0.35, snow = 1 },
+    { image = "images/mountains_mid.png", parallax = 0.18, height = 0.44, bottom = 0.8, haze = 0.16, mist = 0.4, snow = 0.9 },
+    { image = "images/mountains_near.png", parallax = 0.3, height = 0.3, bottom = 0.84, haze = 0.05, mist = 0.35, snow = 0 },
 }
 
--- Strips of a horizontally tiling image, placed by `place`.
-local function strip(l, image: string, height_frac: number, bottom_frac: number, key: string)
-    local s = { layer = l, image = image, height_frac = height_frac, bottom_frac = bottom_frac, tiles = {}, key = key }
+-- A strip of a horizontally tiling image, placed by `place`. `fill` (the image's ground lightness,
+-- 0..1) puts a solid block of that color under the strip, down past the bottom edge, so whatever
+-- is behind never shows below it.
+local function strip(l, image: string, height_frac: number, bottom_frac: number, key: string?, fill: number?)
+    local s = { layer = l, image = image, height_frac = height_frac, bottom_frac = bottom_frac, tiles = {}, key = key, fill = fill }
+    if fill then
+        s.fill_sprite = kulisa.sprite({ parent = l, z = -1 })
+    end
     table.insert(strips, s)
     return s
 end
@@ -94,12 +106,14 @@ function Valley.build(parent)
     local w0 = vw0 + MARGIN * 2
     local sky_layer = layer("sky", 0.03, 0)
     sky = kulisa.sprite({ parent = sky_layer, shader = SKY })
-    for i, spec in RIDGE_SPECS do
-        local l = layer(`ridge{i}`, spec.parallax, 10 + i)
-        ridges[i] = kulisa.sprite({ parent = l, shader = RIDGE })
+    for i, spec in RANGES do
+        local l = layer(`range{i}`, spec.parallax, 10 + i)
+        local s = strip(l, spec.image, spec.height, spec.bottom)
+        s.shader, s.range = MOUNTAINS, spec
+        ranges[i] = s
     end
     local far = layer("far", 0.5, 20)
-    strip(far, "images/forest_far.png", 0.24, 0.8, "far")
+    strip(far, "images/forest_far.png", 0.24, 0.8, "far", 0.55)
     local vx0, vy0 = kulisa.screen:visible()
     local mid = layer("mid", 0.62, 25)
     systems.fireflies = kulisa.particles({
@@ -108,9 +122,7 @@ function Valley.build(parent)
         colors = { "#e8ff9a00", "#d8ff70", "#c0ff6000" }, fade = { 0.3, 0.4 }, blend = "add", warm_up = 6,
     })
     local near = layer("near", 0.75, 30)
-    -- Solid ground under the near forest, down past the bottom edge.
-    ground = kulisa.sprite({ parent = near, z = -1 })
-    strip(near, "images/forest_near.png", 0.36, 0.92, "near")
+    strip(near, "images/forest_near.png", 0.36, 0.92, "near", 0.26)
     cabin = kulisa.sprite({ parent = near, image = "images/cabin.png", z = 5 })
     -- A sibling, not a child: children take their parent's tint, and the windows must glow.
     windows = kulisa.sprite({ parent = near, image = "images/cabin_windows.png", blend = "add", opacity = 0, z = 6 })
@@ -141,7 +153,7 @@ function Valley.build(parent)
         colors = "#ffffffdd", fade = { 0.05, 0.1 }, emitting = false,
     })
     local grass_layer = layer("grass", 1.3, 50)
-    strip(grass_layer, "images/grass.png", 0.14, 1.0, "grass")
+    strip(grass_layer, "images/grass.png", 0.14, 1.0, "grass", 0.1)
     Valley.place()
     Valley.set_weather(Valley.weather)
     Valley.set_time(Valley.time)
@@ -155,17 +167,13 @@ function Valley.place()
     local vx, vy, vw, vh = kulisa.screen:visible()
     local x0, w = vx - MARGIN, vw + MARGIN * 2
     sky.x, sky.y, sky.width, sky.height = x0, vy - MARGIN, w, vh + MARGIN * 2
-    for i, spec in RIDGE_SPECS do
-        local r = ridges[i]
-        r.x, r.y, r.width, r.height = x0, vy + vh * 0.12, w, vh * 0.88 + MARGIN
-    end
     for _, s in strips do
         local img = kulisa.load_image(s.image)
         local h = vh * s.height_frac
         local tw = img.width / img.height * h
         local n = math.ceil(w / tw) + 1
         for i = #s.tiles + 1, n do
-            s.tiles[i] = kulisa.sprite({ parent = s.layer, image = s.image })
+            s.tiles[i] = kulisa.sprite({ parent = s.layer, image = s.image, shader = s.shader })
         end
         for i, t in s.tiles do
             t.visible = i <= n
@@ -175,10 +183,13 @@ function Valley.place()
         end
         s.bottom = vy + vh * s.bottom_frac
         s.h = h
+        if s.fill_sprite then
+            -- Overlaps the strip's own ground by a few pixels, so no seam shows.
+            s.fill_sprite.x, s.fill_sprite.y = x0, s.bottom - 3
+            s.fill_sprite.width, s.fill_sprite.height = w, vh * (1 - s.bottom_frac) + MARGIN + 3
+        end
     end
-    -- Below the strips the ground continues to the bottom edge.
-    local near = strips[2]
-    ground.x, ground.y, ground.width, ground.height = x0, near.bottom - 4, w, vh * 0.2 + MARGIN
+    local near = strips[#ranges + 2]
     local scale = near.h / 520
     cabin.width, cabin.height = 220 * scale * 1.3, 190 * scale * 1.3
     cabin.x = vx + vw * 0.6
@@ -204,24 +215,39 @@ function Valley.set_time(t: number)
     local _, _, vw, vh = kulisa.screen:visible()
     sky.params = { Valley.time, (vw + MARGIN * 2) / (vh + MARGIN * 2), kulisa.now() * 0.01, 0.55 }
     local p = palette(Valley.time)
-    for i, spec in RIDGE_SPECS do
-        local top, foot = p.ridge[i], p.foot[i]
-        local r = ridges[i]
-        local x0 = r.x
-        r.params = {
-            spec.base, spec.peak, spec.freq, spec.seed,
-            top[1], top[2], top[3], spec.snow,
-            foot[1], foot[2], foot[3], spec.rim * (1 - p.light * 0.6),
-            x0 / 1000, r.width / 1000, 0.6, 0,
+    -- Light from the sun by day, the moon by night; both cross the sky from left to right.
+    local a = (Valley.time - 0.25) * math.pi * 2
+    local side = if math.sin(a) > -0.05 then 0.5 - 0.5 * math.cos(a) else 0.5 + 0.5 * math.cos(a)
+    -- Lit from one side or the other (a mix of both would flatten the relief); noon still comes
+    -- from the morning side, the turn happens in the afternoon.
+    side = math.clamp((side - 0.45) / 0.3, 0, 1)
+    side = side * side * (3 - 2 * side)
+    for i, s in ranges do
+        local spec = s.range
+        local lit, shade, haze, snow = p.lit[i], p.shade[i], p.haze, p.snow
+        local params = {
+            lit[1], lit[2], lit[3], side,
+            shade[1], shade[2], shade[3], spec.snow,
+            haze[1], haze[2], haze[3], spec.haze,
+            snow[1], snow[2], snow[3], spec.mist,
         }
+        for _, t in s.tiles do
+            t.params = params
+        end
     end
     for _, s in strips do
-        for _, t in s.tiles do
-            t.tint = hex(p[s.key])
+        if s.key then
+            local c = p[s.key]
+            for _, t in s.tiles do
+                t.tint = hex(c)
+            end
+            if s.fill_sprite then
+                local g = s.fill ^ 2.2
+                s.fill_sprite.tint = hex({ c[1] * g, c[2] * g, c[3] * g })
+            end
         end
     end
     cabin.tint = hex(lerp3(p.near, p.far, 0.45))
-    ground.tint = hex(p.near)
     windows.opacity = p.light
     fire_glow.opacity = 0.35 + 0.5 * p.light
     systems.fireflies.rate = if Valley.weather.fireflies then 30 * p.light else 0

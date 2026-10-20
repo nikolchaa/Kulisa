@@ -6,9 +6,9 @@ fn fragment(in: VertexOut) -> vec4<f32> {
     let curve = params.p[0].x;
     uv *= 1.0 + curve * dot(uv.yx, uv.yx) * 0.5;
     uv = uv * 0.5 + 0.5;
-    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
+    // Outside the curved glass is black. Sample first and mask after: texture sampling must stay
+    // in uniform control flow (WebGPU rejects the shader otherwise).
+    let inside = step(0.0, uv.x) * step(0.0, uv.y) * step(uv.x, 1.0) * step(uv.y, 1.0);
     let ca = params.p[0].w / res.x * (uv.x - 0.5) * 2.0;
     let r = textureSample(tex, samp, uv + vec2<f32>(ca, 0.0)).r;
     let g = textureSample(tex, samp, uv).g;
@@ -21,5 +21,5 @@ fn fragment(in: VertexOut) -> vec4<f32> {
     col *= mix(vec3<f32>(1.0), mask * 2.2 + 0.25, params.p[0].z * 0.35);
     let v = uv * (1.0 - uv.yx);
     col *= pow(clamp(v.x * v.y * 18.0, 0.0, 1.0), 0.25);
-    return vec4<f32>(col * 1.1, 1.0);
+    return vec4<f32>(col * 1.1 * inside, 1.0);
 }

@@ -52,12 +52,13 @@ def forest(name, w, h, count, hmin, hmax, ground, shade, rim, seed):
             col = shade * (0.85 + 0.3 * hash2(k, 3, seed))
             c.shape(lambda x, y, cx=cx, base=base, th=th, k=k: pine_sdf(x, y, cx, base, th, k + seed),
                     [col, col, col * 1.05, 1], (cx - th * 0.4, base - th * 1.2, cx + th * 0.4, base + 4))
-    # Rim light along the top edges: lighter where the pixel above is empty.
+    # Rim light along the tops of the trees (not the ground between them, which would read as a
+    # gap): lighter where the pixel above is empty.
     px = c.px
     for y in range(h - 1, 0, -1):
         for x in range(w):
             p = px[y * w + x]
-            if p[3] > 0.5:
+            if p[3] > 0.5 and y < ground_y(x) - 3:
                 above = px[(y - 1) * w + x][3]
                 above2 = px[max(0, y - 3) * w + x][3]
                 k = clamp((1 - above) * 0.9 + (1 - above2) * 0.4)

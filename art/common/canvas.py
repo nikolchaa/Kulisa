@@ -225,17 +225,26 @@ class Canvas:
         write_png(path, self.w, self.h, self.px)
 
 
-def write_png(path, w, h, px, alpha=True):
+def write_png(path, w, h, px, alpha=True, up=False):
+    """`up` stores each row as its difference from the row above (smaller files for smooth images)."""
     rows = bytearray()
+    prev = None
     for y in range(h):
-        rows.append(0)
+        row = bytearray()
         for x in range(w):
             p = px[y * w + x]
-            rows.append(int(clamp(p[0]) * 255 + 0.5))
-            rows.append(int(clamp(p[1]) * 255 + 0.5))
-            rows.append(int(clamp(p[2]) * 255 + 0.5))
+            row.append(int(clamp(p[0]) * 255 + 0.5))
+            row.append(int(clamp(p[1]) * 255 + 0.5))
+            row.append(int(clamp(p[2]) * 255 + 0.5))
             if alpha:
-                rows.append(int(clamp(p[3]) * 255 + 0.5))
+                row.append(int(clamp(p[3]) * 255 + 0.5))
+        if up and prev is not None:
+            rows.append(2)
+            rows += bytes((row[i] - prev[i]) & 255 for i in range(len(row)))
+        else:
+            rows.append(0)
+            rows += row
+        prev = row
 
     def chunk(t, d):
         c = struct.pack(">I", len(d)) + t + d
