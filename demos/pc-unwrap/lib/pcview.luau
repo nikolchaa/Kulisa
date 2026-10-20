@@ -1,4 +1,4 @@
--- The static scene: the room (WGSL), the PC (a Blockbench render, art/pc-unwrap/pc.py) and its two
+-- The static scene: the room (WGSL), the PC (a Blockbench render, images/pc/pc.png) and its two
 -- glass panels. The render has no glass, so the panels are drawn live (lib/geom.luau puts them
 -- exactly on the render): smoked glass with soft reflections, under the films.
 

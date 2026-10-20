@@ -1,7 +1,7 @@
 -- The unboxing: a shipping box taped shut, the PC in its bag standing on two foam end caps with two
 -- more on top. Peel the tape, pull the flaps open, take the top caps out, lift the PC up and out.
 --
--- The box is a set of Blockbench renders (art/pc-unwrap/box.py) made with the same camera as the
+-- The box is a set of Blockbench renders (images/pc) made with the same camera as the
 -- PC, so they stack with the live PC between them: the back of the box and the bottom caps behind
 -- it, the two near walls in front, the flaps in front of everything while they are closed. The
 -- flaps are 12 frames of their opening animation. While the box is on the desk the whole view is
@@ -95,9 +95,9 @@ end
 function Unbox:_frame_view(k: number)
     local zoom = 0.8 + 0.2 * k
     local fx, fy = Geom.project(0, 26 * (1 - k) + 24.5 * k, 0)
-    -- The focus point goes to the middle of the stage.
+    -- The focus point goes a little below the middle of the stage (the stage is 1280 x 800).
     self.view.scale = zoom
-    self.view.x, self.view.y = 640 - fx * zoom, 390 - fy * zoom + 20 * (1 - k)
+    self.view.x, self.view.y = 640 - fx * zoom, 440 - fy * zoom - 15 * (1 - k)
 end
 
 function Unbox:reset()

@@ -1,7 +1,7 @@
 -- PC unwrap: a brand-new PC in a shipping box. Peel the tape, open the box, take the foam out,
 -- lift the PC out, pull its bag off over the top, peel the films off the side and the front glass
 -- and the I/O sticker (corner first, the fold rolling into a cylinder), then smooth a fresh
--- protector on with a squeegee. The box and the PC are Blockbench renders (art/pc-unwrap); the
+-- protector on with a squeegee. The box and the PC are Blockbench renders (images/pc); the
 -- bag, the films, the tape and the glass are live meshes laid exactly over them. Built only on
 -- the public `kulisa` API. See README.md.
 
@@ -25,14 +25,14 @@ local stage = kulisa.group({ parent = world })
 -- The camera on the scene: zoomed out while the box is there, in on the PC after (lib/unbox).
 local view = kulisa.group({ parent = stage })
 
--- Fits the stage into the visible part of the screen, leaving room for the HUD below it.
+-- Fits the stage into the visible part of the screen, centred (the HUD sits in the corners and
+-- along the bottom edge, over the desk).
 local function fit()
     local x, y, w, h = kulisa.screen:visible()
-    local usable_h = h - 120
-    local s = math.min(w / Geom.STAGE_W, usable_h / Geom.STAGE_H)
+    local s = math.min(w / Geom.STAGE_W, (h - 40) / Geom.STAGE_H)
     stage.scale = s
     stage.x = x + (w - Geom.STAGE_W * s) / 2
-    stage.y = y + math.max(10, (usable_h - Geom.STAGE_H * s) / 2)
+    stage.y = y + (h - Geom.STAGE_H * s) / 2
 end
 fit()
 kulisa.on("resize", fit)
@@ -56,11 +56,13 @@ local films_group = kulisa.group({ parent = pc, z = 20 })
 -- One film per glass panel, and the sticker over the I/O on top.
 local side = Film.new({
     parent = films_group, spans = { { face = Geom.side, len = Geom.side.width } }, b0 = 0, height = Geom.side.height,
-    cols = 48, rows = 36, z = 20, kind = "clear", tab = { 100, 150 }, image = Prints.side(print_host),
+    cols = 48, rows = 36, z = 20, kind = "clear", tab = { 100, 260 }, corner = true, wedge = 1,
+    image = Prints.side(print_host),
 })
 local front = Film.new({
     parent = films_group, spans = { { face = Geom.front, len = Geom.front.width } }, b0 = 0, height = Geom.front.height,
-    cols = 24, rows = 36, z = 21, kind = "clear", tab = { 70, 120 }, rscale = 0.7, image = Prints.front(print_host),
+    cols = 24, rows = 36, z = 21, kind = "clear", tab = { 70, 220 }, corner = true, wedge = 1, rscale = 0.7,
+    image = Prints.front(print_host),
 })
 local sticker = Film.new({
     parent = films_group, spans = { { face = Geom.top, len = Geom.top.width } }, b0 = 0, height = Geom.top.height,
@@ -150,7 +152,7 @@ local function refresh_hint()
     elseif not task("bag").done:peek() then
         hint:set("Grab the bag and pull it up, off over the top of the PC")
     elseif remaining() > 0 then
-        hint:set("Grab a corner tab and peel it back. Faster pulls crinkle more")
+        hint:set("Grab a film by its corner tab and peel it back. Faster pulls crinkle more")
     elseif applying:peek() and not task("apply").done:peek() then
         hint:set("Rub the squeegee over the film to push the air bubbles out to the edges")
     elseif task("apply").done:peek() then

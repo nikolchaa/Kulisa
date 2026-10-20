@@ -83,7 +83,10 @@ fn drag(g: &mut Game, path: &[(f32, f32)]) {
 /// Pulls a film from its tab by `dx`, `dy` scene units in a few steps.
 fn peel(g: &mut Game, film: &str, dx: f32, dy: f32) {
     let s = format!("require('lib/state').films.{film}");
-    let (fx, fy) = (num(g, &format!("{s}.Cx")) + 12.0, num(g, &format!("{s}.Cy")));
+    // Cx, Cy is where the tab starts: the top corner of a corner film, the middle of the edge
+    // otherwise; aim a little inside it.
+    let down = if truth(g, &format!("{s}.o.corner == true")) { 14.0 } else { 0.0 };
+    let (fx, fy) = (num(g, &format!("{s}.Cx")) + 12.0, num(g, &format!("{s}.Cy")) + down);
     let path: Vec<(f32, f32)> =
         (0..=6).map(|k| (fx + dx * k as f32 / 6.0, fy + dy * k as f32 / 6.0)).collect();
     drag(g, &path);
@@ -145,24 +148,39 @@ fn pc_unwrap_plays() {
     shot(&mut g, "pc-5-bagged");
 
     // The bag comes off over the top only: a sideways drag does not move it off.
+    let bag = "require('lib/state').bag";
     let b = point(&g, "require('lib/geom').project(0, 30, -12)");
     drag(&mut g, &[b, (b.0 - 200.0, b.1), (b.0 - 400.0, b.1)]);
     frames(&mut g, 60);
-    assert!(num(&g, "require('lib/state').bag:progress()") < 0.05, "sideways does not pull it off");
-    drag(&mut g, &[b, (b.0, b.1 - 150.0), (b.0 + 20.0, b.1 - 300.0)]);
-    frames(&mut g, 4);
-    shot(&mut g, "pc-6-bag-half");
-    drag(&mut g, &[(b.0 + 20.0, b.1 - 300.0), (b.0 + 20.0, b.1 - 500.0), (b.0 + 20.0, b.1 - 750.0)]);
+    assert!(num(&g, &format!("{bag}:progress()")) < 0.05, "sideways does not pull it off");
+    // Held high, it slides up as a whole (and slides back down when let go part way).
+    let hi = point(&g, "require('lib/geom').project(0, 45, -12)");
+    drag(&mut g, &[hi, (hi.0, hi.1 - 60.0), (hi.0, hi.1 - 120.0)]);
+    assert!(num(&g, &format!("{bag}.s")) > 5.0, "a high grab slides the bag");
+    assert!(num(&g, &format!("{bag}.c")) < 0.5, "a high grab does not bunch it");
+    frames(&mut g, 90);
+    assert!(num(&g, &format!("{bag}.s")) < 1.0, "let go, it slides back down");
+    // Held low, the hem climbs and the plastic above the hand bunches up; the bunch stays.
+    let lo = point(&g, "require('lib/geom').project(0, 8, -12)");
+    drag(&mut g, &[lo, (lo.0, lo.1 - 120.0), (lo.0, lo.1 - 250.0)]);
+    frames(&mut g, 30);
+    let c = num(&g, &format!("{bag}.c"));
+    assert!(c > 15.0, "a low grab bunches the bag: {c}");
+    assert!(num(&g, &format!("{bag}.s")) < 1.0, "a low grab does not slide it");
+    shot(&mut g, "pc-6-bag-bunched");
+    // Pulled on from below the bunch: bunched tight, the whole bunch comes off over the top.
+    let lo = point(&g, &format!("require('lib/geom').project(0, {}, -12)", c - 2.0));
+    drag(&mut g, &[lo, (lo.0, lo.1 - 250.0), (lo.0, lo.1 - 500.0), (lo.0, lo.1 - 800.0)]);
     frames(&mut g, 120);
     assert!(truth(&g, "require('lib/state').done('bag')"), "bag off");
     shot(&mut g, "pc-7-films");
 
     // The side film: from its tab across the glass.
-    peel(&mut g, "side", 520.0, 60.0);
+    peel(&mut g, "side", 1000.0, 420.0);
     frames(&mut g, 120);
     assert!(truth(&g, "require('lib/state').done('side')"), "side film peeled off");
     // The front film.
-    peel(&mut g, "front", 300.0, -100.0);
+    peel(&mut g, "front", 700.0, 200.0);
     frames(&mut g, 120);
     assert!(truth(&g, "require('lib/state').done('front')"), "front film peeled off");
     // The sticker: once off it falls.

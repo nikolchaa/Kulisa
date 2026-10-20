@@ -9,7 +9,8 @@
 --   s  distance along the foil from its start, q  distance across (from the middle)
 --   f  where the fold is: everything with s >= f is still stuck, s < f has been peeled. The fold
 --      is a V: it runs ahead at the middle (where you hold it) by `wedge` per unit of |q|, so the
---      foil comes away from the middle outwards
+--      foil comes away from the middle outwards. A `corner` film is held at its top corner
+--      instead (q runs from that edge), so the fold is a diagonal that sweeps across from it
 --   th how far the free part is bent up before it runs straight to the hand (the "wrap angle")
 --   R  the radius of the cylinder the foil rolls over at the fold (tunable), larger away from
 --      the middle (the roll is a cone)
@@ -83,6 +84,7 @@ export type Options = {
     kind: string, -- "clear", "sticker"
     image: any?,
     tab: { number }, -- grab area at the start: length along s, height across (units)
+    corner: boolean?, -- peeled from the top corner of the start (a diagonal fold), not the middle
     rscale: number?, -- roll radius relative to the shared setting (small films roll tighter)
     wedge: number?,
     alpha: number?, gloss: number?, wrinkle: number?, tint: { number }?,
@@ -112,7 +114,8 @@ function Film.new(o: Options)
     self.segs, self.L = segs, total
     self.face = segs[1].face -- the face of the grab area
     self.ds = total / cols
-    self.bmid = o.b0 + o.height * 0.5
+    -- Where the hand holds the start: the middle of the edge, or its top corner.
+    self.bmid = if o.corner then o.b0 else o.b0 + o.height * 0.5
     -- Callers (the protector) read these.
     o.width = total
     o.a0, o.b0 = 0, o.b0

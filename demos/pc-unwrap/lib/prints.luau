@@ -52,7 +52,7 @@ local function tab(parent, y: number, h: number, w: number, number: string, text
     rect(parent, w - 3, y, 3, h, "#ffffff", 0.45)
     label(parent, 12, y + 10, "{b}" .. number .. "{/b}", 38, "#ffffff")
     label(parent, 12, y + 58, "{b}" .. text .. "{/b}", 18, "#ffffff")
-    label(parent, 12, y + 82, "pull across", 13, "#e8f0ff", 0.85)
+    label(parent, 12, y + 82, "from the corner", 13, "#e8f0ff", 0.85)
     -- Chevrons showing the direction.
     for i = 0, 2 do
         label(parent, w + 6 + i * 20, y + h / 2 - 16, "›", 34, "#ffffff", 0.7 - 0.2 * i)
@@ -63,7 +63,7 @@ end
 local function glass_film(parent, w: number, h: number, number: string, label_text: string, color: string)
     return make(parent, w, h, function(t)
         frame(t, w, h, 10, 1.5, "#9cc4ff", 0.5)
-        tab(t, h / 2 - 75, 150, 100, number, "PULL", color)
+        tab(t, 0, 130, 100, number, "PULL", color)
         label(t, 0, h - 44, "{b}" .. label_text .. "{/b}  ·  remove before use", 14, "#cfe0ff", 0.55, w, "center")
         for i = 0, 9 do
             rect(t, w * 0.62 + i * 4 + (i % 2) * 2, h - 80, 2, 22, "#cfe0ff", 0.4)
@@ -87,12 +87,13 @@ function Prints.front(parent)
     local w, h = f.width, f.height
     return make(parent, w, h, function(t)
         frame(t, w, h, 10, 1.5, "#9cc4ff", 0.5)
-        rect(t, 0, h / 2 - 60, 70, 120, "#e0663a", 0.92)
-        rect(t, 67, h / 2 - 60, 3, 120, "#ffffff", 0.45)
-        label(t, 10, h / 2 - 50, "{b}2{/b}", 38, "#ffffff")
-        label(t, 10, h / 2, "{b}PULL{/b}", 16, "#ffffff")
+        rect(t, 0, 0, 70, 110, "#e0663a", 0.92)
+        rect(t, 67, 0, 3, 110, "#ffffff", 0.45)
+        rect(t, 0, 107, 70, 3, "#ffffff", 0.45)
+        label(t, 10, 8, "{b}2{/b}", 38, "#ffffff")
+        label(t, 10, 58, "{b}PULL{/b}", 16, "#ffffff")
         for i = 0, 2 do
-            label(t, 76 + i * 18, h / 2 - 16, "›", 30, "#ffffff", 0.7 - 0.2 * i)
+            label(t, 76 + i * 18, 40, "›", 30, "#ffffff", 0.7 - 0.2 * i)
         end
         label(t, 0, h - 44, "{b}FRONT PANEL{/b}", 14, "#cfe0ff", 0.55, w, "center")
     end)
@@ -130,8 +131,8 @@ function Prints.sticker(parent)
     end, true)
 end
 
--- The bag's three pieces (sizes in face units from lib/bag.luau): printed warnings, a heat seal
--- along the hem, fading into the milky plastic.
+-- The bag's two pieces, the wall round the case and the closed top (sizes in face units from
+-- lib/bag.luau): printed warnings, a heat seal along the hem, fading into the milky plastic.
 function Prints.bag(parent, sizes)
     local out = {}
     for name, size in sizes do
@@ -156,7 +157,7 @@ function Prints.bag(parent, sizes)
                     label(t, x, y + 24, "keep dry  ·  handle with care", 12, "#ffffff", 0.3)
                 end
             end
-            if name == "side" then
+            if name == "wall" then
                 label(t, 30, h - 120, "{b}WARNING{/b}  plastic bags can cause suffocation, keep away from children", 13, "#ffffff", 0.45, w - 60)
             end
         end)

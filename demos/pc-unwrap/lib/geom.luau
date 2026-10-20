@@ -1,5 +1,5 @@
 -- Where things are. Everything in the scene was rendered by one orthographic camera
--- (art/pc-unwrap), and lib/art.luau holds what that camera does: the render pixel of any point
+-- (the renders in images/pc), and lib/art.luau holds what that camera does: the render pixel of any point
 -- given in centimetres. The stage (design units) is the render scaled by K and moved so the PC
 -- sits in the middle, so a point in centimetres has one stage position for the renders and the
 -- live meshes alike.
