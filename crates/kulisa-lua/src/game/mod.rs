@@ -523,6 +523,10 @@ impl Game {
         state.display.device = device;
         let shared = Rc::new(RefCell::new(state));
         let lua = Lua::new();
+        // Luau resolves global paths like `kulisa.screen.mode` once, when a function loads, if
+        // it may assume globals never change (the sandbox lets it). The `kulisa` table holds
+        // live values (the camera, the screen, the window), so its paths are read every time.
+        lua.set_compiler(mlua::chunk::Compiler::new().set_mutable_globals(["kulisa"]));
         lua.set_app_data(shared.clone());
         let err = |e: mlua::Error| e.to_string();
         api::install(&lua).map_err(err)?;

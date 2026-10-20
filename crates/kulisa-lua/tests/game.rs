@@ -300,6 +300,23 @@ fn particles_emit_render_and_take_options() {
 }
 
 #[test]
+fn kulisa_paths_read_inside_functions_stay_live() {
+    let g = game!("main.luau" => r##"
+        function probe()
+            kulisa.display(64, 64, "fill")
+            local a = kulisa.screen.mode
+            kulisa.camera.x = 5
+            local b = kulisa.camera.x
+            kulisa.display(64, 64, "fit")
+            return a, b, kulisa.screen.mode
+        end
+        kulisa.display(64, 64, "expand")
+    "##);
+    let (a, b, c): (String, f32, String) = g.eval("t", "return probe()").unwrap();
+    assert_eq!((a.as_str(), b, c.as_str()), ("fill", 5.0, "fit"));
+}
+
+#[test]
 fn saves_and_loads() {
     let id = format!("kulisa_test_{}", std::process::id());
     let g = game!("main.luau" => STORY_MAIN, "story/script.kulisa" => STORY);
