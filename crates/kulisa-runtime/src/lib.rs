@@ -72,6 +72,23 @@ struct App {
     android: AndroidApp,
 }
 
+/// The game's icon for its window, if it has a readable one.
+#[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+fn window_icon(files: &Assets, path: &str) -> Option<winit::window::Icon> {
+    if !files.exists(path) {
+        return None;
+    }
+    let icon = files.read(path).and_then(|b| kulisa_render::Image::decode_icon(&b, 256));
+    match icon.and_then(|(w, h, rgba)| winit::window::Icon::from_rgba(rgba, w, h).map_err(|e| e.to_string()))
+    {
+        Ok(icon) => Some(icon),
+        Err(e) => {
+            log::warn!("icon `{path}`: {e}");
+            None
+        }
+    }
+}
+
 /// The game's settings for the window; errors are reported by the game itself.
 fn read_config(assets: &Assets) -> Option<GameConfig> {
     let source = assets.read_string(kulisa_platform::CONFIG_FILE).ok();
@@ -363,6 +380,12 @@ impl App {
         game.set_safe_area(self.safe_area());
         if let Some(w) = &self.window {
             w.set_title(&config.title);
+            // Desktop windows (title bar, taskbar). Phones and the web take theirs from the
+            // package `kulisa build` makes.
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+            if let Some(files) = &self.files {
+                w.set_window_icon(window_icon(files, &config.icon));
+            }
             let size = drawable_size(w);
             game.resize(size.width, size.height);
             w.request_redraw();

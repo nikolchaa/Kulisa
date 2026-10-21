@@ -12,6 +12,7 @@ use kulisa_platform::{CONFIG_FILE, GameConfig};
 
 pub mod android;
 pub mod desktop;
+pub mod icon;
 pub mod ios;
 pub mod serve;
 pub mod web;

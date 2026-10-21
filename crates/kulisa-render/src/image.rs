@@ -41,6 +41,19 @@ impl Image {
         Ok(Image::from_straight_rgba(width, height, img.into_raw()))
     }
 
+    /// Decodes an image and scales it to fit `size` (keeping its shape), as straight-alpha
+    /// RGBA8 pixels: what window icons take.
+    pub fn decode_icon(bytes: &[u8], size: u32) -> Result<(u32, u32, Vec<u8>), String> {
+        let img = image::load_from_memory(bytes).map_err(|e| e.to_string())?;
+        let img = if img.width() > size || img.height() > size {
+            img.resize(size, size, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+        let rgba = img.into_rgba8();
+        Ok((rgba.width(), rgba.height(), rgba.into_raw()))
+    }
+
     /// Wraps straight-alpha sRGB RGBA8 pixels, premultiplying them.
     pub fn from_straight_rgba(width: u32, height: u32, mut pixels: Vec<u8>) -> Image {
         assert_eq!(pixels.len(), (width * height * 4) as usize, "pixel buffer size mismatch");

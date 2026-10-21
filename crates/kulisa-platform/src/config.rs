@@ -120,6 +120,9 @@ pub struct GameConfig {
     pub fullscreen: bool,
     /// Page and window background before the game draws (`[window] background`).
     pub background: String,
+    /// The app icon, a square PNG in the game (`[game] icon`, default `icon.png`; ignored
+    /// when the file is missing). 1024x1024 covers every platform.
+    pub icon: String,
     /// `[quality] tier`: `auto`, `low`, `medium` or `high`.
     pub quality: String,
     pub android_package: String,
@@ -174,6 +177,7 @@ impl GameConfig {
             window: raw.pair("window.size")?,
             fullscreen: raw.bool("window.fullscreen")?.unwrap_or(false),
             background: raw.str("window.background")?.unwrap_or("#000000").to_string(),
+            icon: raw.str("game.icon")?.unwrap_or("icon.png").to_string(),
             quality: one_of("quality.tier", QUALITY_TIERS, "auto")?,
             android_package: raw
                 .str("android.package")?

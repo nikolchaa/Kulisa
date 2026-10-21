@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Game, Options, Result, escape, fetch, run, write};
+use crate::{Game, Options, Result, escape, fetch, icon, run, write};
 
 const WASI_SDK: &str = "34";
 const WASM_BINDGEN: &str = "0.2.129";
@@ -58,7 +58,12 @@ pub fn build(game: &Game, opts: &Options, out: &Path) -> Result {
         .args(["--target", "web", "--no-typescript", "--out-dir"])
         .arg(out)
         .arg(&wasm))?;
-    write(&out.join("index.html"), page(game))?;
+    let icon = icon::load(game)?;
+    if let Some(img) = &icon {
+        write(&out.join("icon.png"), icon::png(img, 192))?;
+        write(&out.join("apple-touch-icon.png"), icon::png(img, 180))?;
+    }
+    write(&out.join("index.html"), page(game, icon.is_some()))?;
     write(&out.join("game.kpak"), game.pack()?)?;
     let size = fs::metadata(out.join("kulisa_bg.wasm")).map(|m| m.len()).unwrap_or(0);
     eprintln!("web build ready: {} ({:.1} MB wasm)", out.display(), size as f64 / 1e6);
@@ -67,10 +72,18 @@ pub fn build(game: &Game, opts: &Options, out: &Path) -> Result {
 
 /// The page: the game's title and background, and a clear message for browsers without
 /// WebAssembly exception handling (exnref), which Luau needs.
-pub fn page(game: &Game) -> String {
+pub fn page(game: &Game, icon: bool) -> String {
     let background =
         game.config.background.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '#').collect::<String>();
-    INDEX_HTML.replace("{title}", &escape(&game.config.title)).replace("{background}", &background)
+    let icons = if icon {
+        "<link rel=\"icon\" type=\"image/png\" href=\"icon.png\">\n<link rel=\"apple-touch-icon\" href=\"apple-touch-icon.png\">\n"
+    } else {
+        ""
+    };
+    INDEX_HTML
+        .replace("{title}", &escape(&game.config.title))
+        .replace("{background}", &background)
+        .replace("{icons}", icons)
 }
 
 const INDEX_HTML: &str = r#"<!doctype html>
@@ -79,7 +92,7 @@ const INDEX_HTML: &str = r#"<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{title}</title>
-<style>
+{icons}<style>
   html, body { margin: 0; height: 100%; background: {background}; color: #f4f1ea; overflow: hidden; font: 16px system-ui, sans-serif; }
   canvas { display: block; width: 100vw !important; height: 100vh !important; touch-action: none; outline: none; }
   #error { max-width: 36em; margin: 20vh auto; padding: 0 16px; line-height: 1.5; }
@@ -121,8 +134,9 @@ mod tests {
         let config =
             GameConfig::parse(Some("[game]\ntitle = \"Cats <3\"\n[window]\nbackground = \"#102030\""))
                 .unwrap();
-        let html = page(&Game { dir: PathBuf::new(), config });
+        let html = page(&Game { dir: PathBuf::new(), config }, true);
         assert!(html.contains("<title>Cats &lt;3</title>"));
         assert!(html.contains("background: #102030;"));
+        assert!(html.contains("<link rel=\"icon\" type=\"image/png\" href=\"icon.png\">"));
     }
 }

@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Game, Options, Result, escape, run, write};
+use crate::{Game, Options, Result, escape, icon, run, write};
 
 /// Android ABI name and Rust target for each supported architecture.
 pub const ABIS: &[(&str, &str)] = &[
@@ -17,8 +17,16 @@ pub const ABIS: &[(&str, &str)] = &[
 const MIN_SDK: u32 = 26;
 const TARGET_SDK: u32 = 35;
 
-/// The manifest: the game's package, name, version and orientation.
-pub fn manifest(game: &Game) -> String {
+/// The adaptive launcher icon: the game's art fills the shape, nothing on top.
+const ADAPTIVE_ICON: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@mipmap/icon_art" />
+    <foreground android:drawable="@android:color/transparent" />
+</adaptive-icon>
+"#;
+
+/// The manifest: the game's package, name, version, orientation and (`icon`) launcher icon.
+pub fn manifest(game: &Game, icon: bool) -> String {
     let c = &game.config;
     // The sensor variants still turn the right way up; the runtime locks the same way.
     let orientation = match c.locked_orientation() {
@@ -33,7 +41,7 @@ pub fn manifest(game: &Game) -> String {
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
-    <application android:label="{label}" android:hasCode="false">
+    <application android:label="{label}"{icon} android:hasCode="false">
         <activity android:name="android.app.NativeActivity"
             android:exported="true"
             android:launchMode="singleTask"
@@ -53,6 +61,7 @@ pub fn manifest(game: &Game) -> String {
         build = c.build,
         version = escape(&c.version),
         label = escape(&c.title),
+        icon = if icon { " android:icon=\"@mipmap/icon\"" } else { "" },
     )
 }
 
@@ -121,7 +130,7 @@ pub fn build(game: &Game, opts: &Options, abis: &[&str], apk: &Path) -> Result {
         "linux-x86_64"
     };
     let bin = ndk.join("toolchains/llvm/prebuilt").join(host).join("bin");
-    let work = opts.engine.join("target/android");
+    let work = opts.engine.join("target").join("android");
     let staging = work.join("apk");
     let _ = fs::remove_dir_all(&staging);
 
@@ -152,12 +161,34 @@ pub fn build(game: &Game, opts: &Options, abis: &[&str], apk: &Path) -> Result {
 
     let tools = newest(&sdk.join("build-tools"))?;
     let platform = newest(&sdk.join("platforms"))?;
-    write(&work.join("AndroidManifest.xml"), manifest(game))?;
+
+    // The launcher icon. An adaptive icon with the art as its full-bleed background layer
+    // (432 px, the xxxhdpi size of 108 dp) fills the launcher's shape; the 192 px icon is
+    // for launchers that do not use adaptive icons.
+    let compiled = work.join("res-compiled");
+    let _ = fs::remove_dir_all(&compiled);
+    let _ = fs::remove_dir_all(work.join("res"));
+    let icon = icon::load(game)?;
+    if let Some(img) = &icon {
+        // aapt2 reads the resource type from the path, which must use one kind of separator.
+        let res = work.join("res");
+        let files = [
+            (res.join("mipmap").join("icon.png"), icon::png(img, 192)),
+            (res.join("mipmap").join("icon_art.png"), icon::png(img, 432)),
+            (res.join("mipmap-anydpi-v26").join("icon.xml"), ADAPTIVE_ICON.as_bytes().to_vec()),
+        ];
+        fs::create_dir_all(&compiled).map_err(|e| e.to_string())?;
+        for (path, bytes) in files {
+            write(&path, bytes)?;
+            run(Command::new(tools.join(exe("aapt2"))).arg("compile").arg("-o").arg(&compiled).arg(&path))?;
+        }
+    }
+    write(&work.join("AndroidManifest.xml"), manifest(game, icon.is_some()))?;
 
     let unsigned = work.join("unsigned.apk");
     let aligned = work.join("aligned.apk");
-    run(Command::new(tools.join(exe("aapt2")))
-        .arg("link")
+    let mut link = Command::new(tools.join(exe("aapt2")));
+    link.arg("link")
         .arg("-o")
         .arg(&unsigned)
         .arg("--manifest")
@@ -165,7 +196,11 @@ pub fn build(game: &Game, opts: &Options, abis: &[&str], apk: &Path) -> Result {
         .arg("-I")
         .arg(platform.join("android.jar"))
         .args(["--min-sdk-version", &MIN_SDK.to_string()])
-        .args(["--target-sdk-version", &TARGET_SDK.to_string()]))?;
+        .args(["--target-sdk-version", &TARGET_SDK.to_string()]);
+    for flat in fs::read_dir(&compiled).into_iter().flatten().flatten() {
+        link.arg(flat.path());
+    }
+    run(&mut link)?;
     // Paths inside the APK are relative to the working directory.
     let mut add = Command::new(tools.join(exe("aapt")));
     add.current_dir(&staging).arg("add").arg(&unsigned).arg("assets/game.kpak");
@@ -231,11 +266,12 @@ mod tests {
         let toml = "[game]\nid = \"cat-tales\"\ntitle = \"Cats & Co\"\nversion = \"1.2\"\nbuild = 7\n\
                     [display]\nwidth = 1080\nheight = 1920";
         let game = Game { dir: PathBuf::new(), config: GameConfig::parse(Some(toml)).unwrap() };
-        let m = manifest(&game);
+        let m = manifest(&game, true);
         assert!(
             m.contains(r#"package="dev.kulisa.cat_tales" android:versionCode="7" android:versionName="1.2""#)
         );
-        assert!(m.contains(r#"android:label="Cats &amp; Co""#));
+        assert!(m.contains(r#"android:label="Cats &amp; Co" android:icon="@mipmap/icon""#));
+        assert!(!manifest(&game, false).contains("android:icon"));
         assert!(m.contains(r#"android:screenOrientation="sensorPortrait""#));
     }
 }

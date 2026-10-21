@@ -12,6 +12,7 @@ name = "kulisa"
 path = "src/main.rs"
 
 [dependencies]
+image.workspace = true
 kulisa-platform.workspace = true
 kulisa-renpy.workspace = true
 kulisa-story.workspace = true

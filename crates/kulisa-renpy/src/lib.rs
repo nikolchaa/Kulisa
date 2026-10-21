@@ -29,6 +29,8 @@ pub struct GameInfo {
     pub version: Option<String>,
     /// `gui.init(width, height)`.
     pub size: Option<(u32, u32)>,
+    /// `config.window_icon`: the game's icon, a path in the game.
+    pub icon: Option<String>,
 }
 
 /// One logical line: continuation lines joined, the trailing comment removed.
@@ -290,6 +292,7 @@ impl Converter {
                 match name {
                     "config.name" => self.info.title = string(),
                     "config.version" => self.info.version = string(),
+                    "config.window_icon" => self.info.icon = string(),
                     n if n.starts_with("audio.") => {
                         if let Some(file) = string() {
                             self.audio_names.insert(n["audio.".len()..].to_string(), file);
@@ -1112,6 +1115,15 @@ pub fn import(project: &Path) -> Result<Import, String> {
             }
             None => conv.note(line, format!("image `{name}`: `{path}` was not found")),
         }
+    }
+    // The window icon becomes the app icon (Ren'Py projects start with gui/window_icon.png).
+    match &conv.info.icon {
+        Some(icon) if files.contains(icon) => out.copies.push((game.join(icon), "icon.png".into())),
+        Some(icon) => {
+            conv.file = "options.rpy".into();
+            conv.note(0, format!("the window icon `{icon}` was not found"));
+        }
+        None => {}
     }
     for a in &conv.audio {
         out.copies.push((game.join(a), a.clone()));

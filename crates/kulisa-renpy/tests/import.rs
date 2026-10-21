@@ -6,7 +6,11 @@ fn project() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("kulisa-renpy-import-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let files: &[(&str, &[u8])] = &[
-        ("game/options.rpy", b"define config.name = _(\"Harbor\")\ndefine config.version = \"2.0\"\n"),
+        (
+            "game/options.rpy",
+            b"define config.name = _(\"Harbor\")\ndefine config.version = \"2.0\"\ndefine config.window_icon = \"gui/window_icon.png\"\n",
+        ),
+        ("game/gui/window_icon.png", b"png"),
         ("game/gui.rpy", b"init python:\n    gui.init(1280, 720)\nscreen say(who, what):\n    text what\n"),
         (
             "game/script.rpy",
@@ -51,7 +55,8 @@ fn imports_a_project() {
     assert_eq!(dest(copies, "images/bg sea.webp"), Some(game.join("images/bg sea.webp")));
     assert_eq!(dest(copies, "images/bg pier.jpg"), Some(game.join("art/Pier Night.jpg")));
     assert_eq!(dest(copies, "audio/harbor.ogg"), Some(game.join("audio/harbor.ogg")));
-    assert_eq!(copies.len(), 4, "{copies:?}");
+    assert_eq!(dest(copies, "icon.png"), Some(game.join("gui/window_icon.png")));
+    assert_eq!(copies.len(), 5, "{copies:?}");
 
     assert_eq!(imported.info.title.as_deref(), Some("Harbor"));
     assert_eq!(imported.info.version.as_deref(), Some("2.0"));
