@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nikolchaa/Kulisa/actions/workflows/ci.yml"><img src="https://github.com/nikolchaa/Kulisa/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/nikolchaa/Kulisa/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nikolchaa/Kulisa/ci.yml?branch=main&style=flat-square&label=CI" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-FF6A3D?style=flat-square" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/scripting-Luau-8A8794?style=flat-square" alt="Scripting: Luau">
   <img src="https://img.shields.io/badge/renderer-wgpu-8A8794?style=flat-square" alt="Renderer: wgpu">
