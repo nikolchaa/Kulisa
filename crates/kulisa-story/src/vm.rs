@@ -943,6 +943,15 @@ label leave:
     }
 
     #[test]
+    fn pass_does_nothing() {
+        let (mut vm, mut h) = vm(
+            "label start:\n    if true:\n        pass\n    \"Hi.\"\n    call empty\n    \"Back.\"\nlabel empty:\n    pass\n",
+        );
+        assert_eq!(next_line(&mut vm, &mut h), "Hi.");
+        assert_eq!(next_line(&mut vm, &mut h), "Back.");
+    }
+
+    #[test]
     fn loading_into_an_unstarted_story_binds_defines() {
         let src = "define m = Character(\"Mila\")\nlabel start:\n    m \"Hi.\"\n    m \"Again.\"\n";
         let (mut vm1, mut h1) = vm(src);

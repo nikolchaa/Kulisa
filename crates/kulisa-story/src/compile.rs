@@ -402,6 +402,7 @@ impl Compiler<'_> {
             StmtKind::Return => {
                 Self::emit(code, Op::Return);
             }
+            StmtKind::Pass => {}
             StmtKind::Lua(c) => {
                 let id = self.chunk(ChunkKind::Stmt, &c.code, &c.loc);
                 Self::emit(code, Op::Exec(id));

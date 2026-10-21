@@ -6,7 +6,7 @@ use crate::Loc;
 /// Words that start statements; they cannot be character names.
 pub const KEYWORDS: &[&str] = &[
     "label", "define", "default", "jump", "call", "return", "menu", "if", "elif", "else", "scene", "show",
-    "hide", "with", "play", "stop", "pause", "lua",
+    "hide", "with", "play", "stop", "pause", "lua", "pass",
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +91,8 @@ pub enum StmtKind {
         target_loc: Loc,
     },
     Return,
+    /// Does nothing (a block that must not be empty yet).
+    Pass,
     /// `$ code` or a `lua:` block.
     Lua(Code),
     Scene {

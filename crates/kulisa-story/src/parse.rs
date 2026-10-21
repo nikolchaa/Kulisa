@@ -234,6 +234,10 @@ impl<'a> Parser<'a> {
             ensure_end(&mut c, "`return`")?;
             return Ok(stmt(StmtKind::Return));
         }
+        if c.keyword("pass") {
+            ensure_end(&mut c, "`pass`")?;
+            return Ok(stmt(StmtKind::Pass));
+        }
         if c.keyword("menu") {
             if c.until_block_colon().as_deref() != Some("") {
                 return Err(c.error("expected `menu:` followed by an indented list of choices"));
