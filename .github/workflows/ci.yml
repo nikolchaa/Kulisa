@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The "Run workflow" button on the Actions tab (e.g. when a push did not start a run).
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -144,7 +146,7 @@ jobs:
   pages:
     name: Website
     needs: web
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
