@@ -1,0 +1,137 @@
+---
+title: Choices and flow
+description: Labels, menus, conditions, jumps and calls.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Labels
+
+A label names a place in the story. The story starts at `label start:`, and runs down the
+label line by line.
+
+```kulisa
+label start:
+    "It begins here."
+    jump station
+
+label station:
+    "And continues here."
+```
+
+When a label runs out of lines, the story goes back to whoever [called](#call-and-return)
+it; if nobody did, the story ends. The game then decides what happens (the templates go back
+to the main menu).
+
+Two labels with the same name, in any files, are an error that points at both.
+
+## Menus
+
+`menu:` stops and lets the player choose. Each choice is a line of text in quotes ending
+with `:`, and the lines under it run when the player picks it. Afterwards the story continues
+after the menu.
+
+```kulisa
+menu:
+    mila "Well? Are you coming?"
+    "Yes.":
+        mila "Good."
+    "Not tonight.":
+        mila "Suit yourself."
+        jump home
+mila "Mind the gap."
+```
+
+- The first line may be a line of dialogue or narration (not ending in `:`). It stays on
+  screen while the player chooses.
+- A choice can have a condition. When it is false, the choice is left out:
+
+  ```kulisa
+  menu:
+      "Use the key." if has_key:
+          jump cellar
+      "Knock.":
+          "Nobody answers."
+  ```
+
+- The game remembers which choices the player picked in earlier playthroughs; the classic-vn
+  template dims them.
+
+## Conditions
+
+`if`, `elif` (else if) and `else` run one block out of several. Conditions are Luau
+expressions:
+
+```kulisa
+if trust >= 3:
+    mila "I trust you."
+elif trust > 0:
+    mila "Maybe."
+else:
+    mila "Who are you, again?"
+```
+
+| Write | Means |
+|---|---|
+| `a == b`, `a ~= b` | equal, not equal (note: `~=`, not `!=`) |
+| `<`, `<=`, `>`, `>=` | comparisons |
+| `and`, `or`, `not` | combine conditions |
+| `seen_letter` | true unless the variable is `false` or `nil` |
+
+## Jump
+
+`jump name` goes to a label and doesn't come back.
+
+```kulisa
+jump platform
+```
+
+A jump to a label that doesn't exist is an error, with a suggestion if it looks like a typo.
+
+## Call and return
+
+`call name` goes to a label and, when it is done, comes back to the line after the `call`.
+`return` leaves the current label early. Use it for scenes you reuse:
+
+```kulisa
+label start:
+    call buy_ticket
+    "Ticket in hand, you board."
+
+label buy_ticket:
+    "The machine swallows your coins."
+    if coins < 2:
+        "It wants more."
+        return
+    "A ticket slides out."
+```
+
+`return` in a label that nobody called ends the story.
+
+## Pause
+
+`pause` waits for the player to click. `pause 1.5` waits a second and a half.
+
+```kulisa
+"The lights went out."
+pause 1.0
+"Then they came back on."
+```
+
+## Pass
+
+`pass` does nothing. It holds a place where a block is required but you have nothing to put
+yet:
+
+```kulisa
+menu:
+    "Go left.":
+        jump left
+    "Wait.":
+        pass
+```
+
+<Aside>
+There are no loops in the story language. Repeat a scene by jumping back to its label, or
+write the loop in Luau.
+</Aside>

@@ -1,0 +1,71 @@
+---
+title: Building and shipping
+description: Build your game for Windows, Linux, macOS, the web, Android and iOS.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Run these in your game's folder. Builds go to `dist/<target>/` there; `--out DIR` puts them
+elsewhere, and `--release` makes an optimized build (use it for anything you share).
+
+| Target | Command | You get |
+|---|---|---|
+| Windows | `kulisa build windows --release` | `<Title>.exe` with your icon, and `game.kpak` next to it |
+| Linux | `kulisa build linux --release` | the program and `game.kpak` |
+| macOS | `kulisa build macos --release` | the program and `game.kpak` |
+| Web | `kulisa build web --release` | a folder to put on any static web host |
+| Android | `kulisa build android --release` | an APK (`--abi arm64-v8a,x86_64` to add the emulator) |
+| iOS | `kulisa build ios --release` | an `.app` (`--sim` for the simulator) |
+
+Desktop builds are made on that desktop. See [Installation](../install/#other-platforms) for
+what each target needs.
+
+## Try it on a device
+
+```sh
+kulisa run --web            # build for the web and serve it with live reload
+kulisa run --android        # build, install and start on a phone or emulator (adb)
+```
+
+`kulisa run --web` prints a local address; open it in a browser. Saving a file reloads the
+game there too.
+
+## What goes into a build
+
+`kulisa pack` (and every build) packs the game folder into one `game.kpak`: your scripts,
+stories, images, sounds, fonts and shaders. `dist/` and dot-files stay out. The settings in
+`kulisa.toml` become the app's name, version, ids and orientation:
+
+```toml
+[game]
+id = "cat_tales"          # save folder and app ids
+title = "Cat Tales"       # window title and app name
+version = "1.0.0"         # shown to players
+build = 1                 # raise it for every store upload
+icon = "icon.png"         # a square PNG, 1024x1024 ideally
+
+[android]
+package = "com.example.cattales"
+
+[ios]
+bundle_id = "com.example.cattales"
+```
+
+## Publishing on the web
+
+The web build is plain files: `index.html`, the player (`kulisa.js` and `kulisa_bg.wasm`) and
+`game.kpak`. Any static host works: GitHub Pages, itch.io (zip the folder as an HTML game),
+Netlify, Cloudflare Pages or your own server. The player needs no special server headers.
+Audio starts with the player's first click or key, as browsers require.
+
+## Not done yet
+
+Kulisa is young, and some last steps for stores are still on you:
+
+<Aside type="caution">
+- **Android** APKs are signed with the Android debug key. Re-sign with your own key
+  (`apksigner`) before uploading to a store.
+- **iOS** apps are ad-hoc signed and have no asset catalog, so they are not App Store ready.
+- **macOS** builds are a program, not an `.app` bundle.
+- There are no prebuilt players: building needs the engine source and the toolchains.
+</Aside>

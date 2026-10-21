@@ -1,0 +1,99 @@
+---
+title: Dialogue and text
+description: Narration, characters, text styling and inserting values into lines.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## Narration and speech
+
+A line in quotes is narration. Put a character's name in front and they say it:
+
+```kulisa
+label start:
+    "Rain on the station roof."
+    mila "You came."
+```
+
+Each line is one step: the player reads it and clicks (or taps, or presses Space) to go on.
+
+## Characters
+
+Characters are defined once, at the top level of any file:
+
+```kulisa
+define mila = Character("Mila", { color = "#e8a0bf" })
+define narrator_cat = Character("The Cat")
+```
+
+- The name before `=` is what you write in the story (`mila "..."`). The text in quotes is
+  what players see.
+- The table after it holds options for the game's interface. The templates read `color` for
+  the name; your own interface can read anything else you put there, such as a voice blip or
+  a side image.
+- Speaking as a name that was never defined is an error, with a suggestion if it looks like
+  a typo: ``unknown character `mlia`; did you mean `mila`?``
+
+## Strings
+
+Text goes in double quotes, on one line. Inside it:
+
+| Write | To get |
+|---|---|
+| `\"` | a double quote |
+| `\\` | a backslash |
+| `\n` | a line break |
+| `\t` | a tab |
+
+Curly quotes, apostrophes and any other characters need no escaping:
+`mila "“Don't,” she said."`
+
+## Styling text
+
+Tags in braces style part of a line. Close each one with a slash.
+
+```kulisa
+mila "That is {b}not{/b} what I said. I said {i}maybe{/i}."
+mila "{color=#ff6a3d}Red{/color}, {size=1.4}bigger{/size}, {size=20px}twenty pixels{/size}."
+mila "{wave}Floating{/wave} and {shake}shaking{/shake}."
+mila "{ruby=とうきょう}東京{/ruby} gets its reading above it."
+"It went quiet.{w=0.8} Too quiet."
+```
+
+| Tag | Does |
+|---|---|
+| `{b}…{/b}` | bold |
+| `{i}…{/i}` | italic |
+| `{color=#rrggbb}…{/color}` | color: `#rgb`, `#rrggbb` or `#rrggbbaa` |
+| `{size=1.5}…{/size}` | size relative to the line (`1.5` is half again as big); `{size=20px}` sets pixels |
+| `{font=Name}…{/font}` | another font family the game loaded |
+| `{wave}…{/wave}` | letters bob up and down; `{wave=0.2}` for more |
+| `{shake}…{/shake}` | letters tremble; `{shake=0.1}` for more |
+| `{speed=0.5}…{/speed}` | typing speed for this part (`0.5` is half speed, `2` double) |
+| `{ruby=reading}…{/ruby}` | a reading (furigana) above the text |
+| `{w=0.5}` | the typewriter pauses for half a second here (no closing tag) |
+
+Write `{{` for a literal `{`. A tag that is never closed, or closed in the wrong order, is an
+error.
+
+## Inserting values
+
+Square brackets put a value into the line. Inside them is any Luau expression, usually a
+variable:
+
+```kulisa
+default coins = 3
+
+label shop:
+    "You have [coins] coins."
+    "That leaves [coins - 2] for the way home."
+    mila "Your bag holds [#bag] things. The first is [bag[1]]."
+```
+
+Write `[[` for a literal `[`. The value is worked out when the line is shown, so it is always
+current.
+
+<Aside type="tip">
+Interpolation is for short values. For anything that needs logic, compute it on a `$` line
+first: `$ mood = if trust > 2 then "warm" else "cold"`, then `"She sounded [mood]."`
+</Aside>

@@ -1,0 +1,103 @@
+---
+title: Installation
+description: Install the kulisa tool and the toolchains for the platforms you want to build for.
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+Kulisa is one command-line tool, `kulisa`, that makes, runs and builds games. There are no
+prebuilt downloads yet: you build the tool from the engine's source, and it builds your games
+from that same source.
+
+<Steps>
+
+1. **Install Rust.** Get the stable toolchain from [rustup.rs](https://rustup.rs). On Windows,
+   rustup also asks for the Visual Studio C++ build tools; install them.
+
+2. **Get the engine.**
+
+   ```sh
+   git clone https://github.com/nikolchaa/Kulisa
+   cd Kulisa
+   ```
+
+3. **Install the tool.**
+
+   ```sh
+   cargo install --path crates/kulisa-cli
+   ```
+
+   The first build takes a few minutes. Keep the `Kulisa` folder: `kulisa` remembers where it
+   was built and uses that source for every game. If you move it, set `KULISA_ENGINE` to the
+   new place.
+
+4. **Check it works.**
+
+   ```sh
+   kulisa templates
+   ```
+
+   It lists the templates you can start from: `classic-vn`, `desktop-os` and `text-rpg`.
+
+</Steps>
+
+That is everything you need to make games and play them on this computer. Continue with
+[Your first game](../first-game/), and come back here when you want to build for other
+platforms.
+
+## Other platforms
+
+Desktop builds are made on that desktop: Windows builds on Windows, and so on. The web and
+Android can be built from any of the three; iOS needs a Mac.
+
+<Tabs>
+	<TabItem label="Linux">
+
+The engine needs the ALSA and udev headers for sound and gamepads:
+
+```sh
+sudo apt install libasound2-dev libudev-dev
+```
+
+	</TabItem>
+	<TabItem label="Web">
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129 --locked
+```
+
+You also need **clang 21 or newer** on your `PATH` ([LLVM releases](https://github.com/llvm/llvm-project/releases)),
+because Luau's C++ is compiled to WebAssembly with exception handling. The first web build
+downloads the WASI SDK sysroot it needs into the engine's `.tools` folder.
+
+	</TabItem>
+	<TabItem label="Android">
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+```
+
+Install the Android SDK with **build-tools**, a **platform** and the **NDK** (Android
+Studio's SDK Manager or `sdkmanager`), and a JDK. Kulisa finds the SDK through `ANDROID_HOME`
+(or the default Android Studio location on Windows) and the NDK inside it or through
+`ANDROID_NDK_HOME`. No Gradle is involved.
+
+`x86_64` is for the emulator; phones use `arm64-v8a`.
+
+	</TabItem>
+	<TabItem label="iOS">
+
+On a Mac with Xcode:
+
+```sh
+rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+```
+
+	</TabItem>
+</Tabs>
+
+<Aside type="tip" title="Browsers">
+Web builds run in Chrome or Edge 137+, Firefox 131+ and Safari 18.4+, with WebGPU where the
+browser has it and WebGL2 everywhere else.
+</Aside>

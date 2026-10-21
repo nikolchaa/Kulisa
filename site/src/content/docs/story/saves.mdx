@@ -1,0 +1,62 @@
+---
+title: Saves and updates
+description: What saves keep, how they survive edits to the story, and rollback.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+## What a save keeps
+
+A save holds where the player is in the story (including any `call`s they are inside), every
+story variable, what is on stage and what music is playing. Loading puts all of it back.
+Constants and helpers (`define`, top-level `lua:`) aren't saved; the story files recreate
+them.
+
+## Editing the story after release
+
+You will fix typos and add scenes after people have saved. Kulisa is built for that.
+
+A save remembers each position by its label and by the statement's first line. When the
+game loads a save made with an older version of the story:
+
+1. If the statement there still has the same first line, the player continues there.
+2. If it moved within its label (you added lines above it), the player continues at the same
+   line in its new place.
+3. If it is gone or was rewritten, the player continues from the start of its label.
+
+So:
+
+- **Fixing typos is safe.** A player saved on the fixed line goes back to the start of that
+  label, nothing worse.
+- **Adding lines and scenes is safe.**
+- **Renaming or removing a label** breaks saves made inside it: they fail to load, with an
+  error naming the label. Keep the old label, even if all it holds is a `jump` to where the
+  story went.
+- **New `default` variables** start at their default value in old saves.
+
+<Aside title="Changing what a variable means">
+If a variable changes shape (a number becomes a table, two variables merge), the game's
+programmer adds a migration step with `kulisa.save.migrate` and raises the save version, so
+old saves are converted when they load.
+</Aside>
+
+## Rollback
+
+Players can scroll back through the story (wheel up, Page Up, or Back in the quick menu) and
+forward again. Going back undoes everything the story changed since: story variables, the
+stage and the music. Choosing differently from a rolled-back menu continues the new way.
+
+Some moments shouldn't be undone, such as a timed choice or a game the player lost. The
+game's Luau can call `kulisa.story.block_rollback()` there, and the player can't roll back
+past that line. A writer can do it from the story:
+
+```kulisa
+"You chose. There is no going back now."
+$ kulisa.story.block_rollback()
+```
+
+## Seen lines
+
+The game remembers every line the player has seen, across all playthroughs and saves. The
+templates use it to skip only text you have already read, and to dim choices you picked
+before. Editing a line's text makes it unseen again.

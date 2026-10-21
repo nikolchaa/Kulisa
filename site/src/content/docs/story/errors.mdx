@@ -1,0 +1,74 @@
+---
+title: Errors
+description: How story errors are reported, and the common ones explained.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Kulisa checks the whole story when the game starts, before anyone plays it. Every mistake
+it finds is reported at once, each with the file, the line and the column, the line itself
+and a caret under the spot:
+
+```text
+story/script.kulisa:7:10: error: expected the line in quotes after the character, like `mila "Hello."`
+  |
+7 |     mila I wasn't sure you would.
+  |          ^
+
+story/script.kulisa:12:8: error: expected `if <condition>:`
+   |
+12 |     if trust >= 1
+   |        ^
+```
+
+During development (`kulisa run`) the errors appear over the game. Fix them and save; live
+reload picks the fix up.
+
+## Two passes
+
+The check runs in two passes. The first reads the shape of each line. Only when every line
+reads correctly does the second look across all files for names that don't exist:
+
+```text
+story/script.kulisa:6:5: error: unknown character `mlia`; did you mean `mila`?
+  |
+6 |     mlia "You came."
+  |     ^
+
+story/script.kulisa:11:18: error: unknown label `platfrom`; did you mean `platform`?
+   |
+11 |             jump platfrom
+   |                  ^
+```
+
+So fixing one batch of errors can reveal another. That is normal.
+
+## Common errors
+
+| Message | Usually means |
+|---|---|
+| `expected the line in quotes after the character` | the quotes around a line are missing |
+| ``unknown character `x` `` | a typo in a name, or a character that was never `define`d |
+| ``unknown label `x` `` | a typo in a `jump` or `call`, or a missing label |
+| ``expected `if <condition>:` `` | the `:` at the end of an `if` or `elif` is missing |
+| `expected an indented block after …` | a line ending in `:` with nothing indented under it (use `pass`) |
+| `this line does not line up with the block it belongs to` | mixed indentation inside a block |
+| `tab used for indentation; indent with spaces` | your editor inserted a tab |
+| `story statements go inside a label` | a line of story at the top level, outside any label |
+| ``label `x` is already defined at …`` | two labels with the same name, maybe in different files |
+| `string is never closed with "` | a missing closing quote |
+| ``unknown escape `\x` `` | a backslash in a line; write `\\` for a backslash |
+| `` `[` starts an interpolation that is never closed `` | write `[[` for a literal bracket |
+| ``Luau: …`` | a mistake in a condition, `$` line or `lua:` block |
+
+## Errors while playing
+
+Some problems only show when a line runs: a `$` line that does arithmetic on a variable that
+doesn't exist, or a style tag that is never closed. They name the story file and line too.
+In development they appear over the game; in a released game, the template decides
+(classic-vn shows a "Script error" box the player can close, and the game keeps going).
+
+<Aside type="caution">
+`kulisa build` doesn't check the story yet. Start the game once before you build, so the
+check runs.
+</Aside>

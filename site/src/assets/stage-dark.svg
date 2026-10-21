@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="680 50 620 340" width="620" height="340" role="img" aria-label="Kulisa: a visual novel and narrative game engine">
+<defs><clipPath id="c"><rect width="1280" height="400" rx="28"/></clipPath><radialGradient id="foot" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#FF6A3D" stop-opacity="0.22"/><stop offset="1" stop-color="#FF6A3D" stop-opacity="0"/></radialGradient><linearGradient id="floor"><stop offset="0" stop-color="#F4F1EA" stop-opacity="0"/><stop offset="0.35" stop-color="#F4F1EA" stop-opacity="0.14"/><stop offset="1" stop-color="#F4F1EA" stop-opacity="0.04"/></linearGradient></defs>
+<g>
+<ellipse cx="1000" cy="318" rx="330" ry="120" fill="url(#foot)"/>
+<rect x="700" y="318" width="580" height="1.5" fill="url(#floor)"/>
+<polygon points="1069.5,118.4 1110.9,118.4 1110.9,284.0 1069.5,284.0" fill="#1F1E23"/>
+<polygon points="1124.7,201.2 1184.5,118.4 1230.5,118.4 1170.7,201.2" fill="#1F1E23"/>
+<polygon points="1124.7,201.2 1170.7,201.2 1230.5,284.0 1184.5,284.0" fill="#18181D"/>
+<polygon points="980.6,95.5 1031.7,95.5 1031.7,300.0 980.6,300.0" fill="#2F2E32"/>
+<polygon points="1048.8,197.8 1122.6,95.5 1179.4,95.5 1105.6,197.8" fill="#2F2E32"/>
+<polygon points="1048.8,197.8 1105.6,197.8 1179.4,300.0 1122.6,300.0" fill="#212125"/>
+<rect x="867.5" y="66.0" width="63.0" height="252.0" rx="7.0" fill="#F4F1EA"/>
+<polygon points="951.5,192.0 1042.5,66.0 1112.5,66.0 1021.5,192.0" fill="#FF6A3D"/>
+<polygon points="951.5,192.0 1021.5,192.0 1112.5,318.0 1042.5,318.0" fill="#777675"/>
+</g></svg>

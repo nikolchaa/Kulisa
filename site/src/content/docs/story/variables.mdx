@@ -1,0 +1,128 @@
+---
+title: Variables and Luau
+description: Story variables, constants, $ lines, lua blocks and calling the game's own functions.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Everything after `=` in `define` and `default`, every condition, every `[value]` in text and
+every `$` line is [Luau](https://luau.org), the scripting language Kulisa games are written
+in. Writers only need a little of it; this page covers that little.
+
+## Story variables: `default`
+
+`default` makes a variable the story can change, and that saves keep:
+
+```kulisa
+default trust = 0
+default name = "stranger"
+default met_mila = false
+default bag = { "ticket", "umbrella" }
+```
+
+The value is where a new game starts. A variable added in an update starts at its `default`
+in old saves too.
+
+Story variables can hold `nil`, `true`/`false`, numbers, text and tables of those. Anything
+else (a function, an image) can't be saved, and the game tells you which variable holds it.
+
+## Constants: `define`
+
+`define` makes a value that never changes and isn't saved, because the story file always
+recreates it. Characters are the usual example; any fixed value works:
+
+```kulisa
+define mila = Character("Mila", { color = "#e8a0bf" })
+define TICKET_PRICE = 2
+```
+
+## Changing things: `$`
+
+A line starting with `$` runs one line of Luau:
+
+```kulisa
+$ trust += 1
+$ name = "Ada"
+$ met_mila = true
+$ coins = coins - TICKET_PRICE
+$ table.insert(bag, "key")
+```
+
+Assigning to a story variable changes it for the rest of the story, in saves and in
+rollback: when the player scrolls back past this line, the variable goes back too.
+
+<Aside type="caution" title="Keep story state in story variables">
+Only variables made with `default` (and anything `$` lines assign) are saved and rolled
+back. A plain Luau global set somewhere else is not. If the story depends on it, make it a
+`default`.
+</Aside>
+
+## Longer code: `lua:`
+
+A `lua:` line followed by an indented block runs several lines of Luau. Inside a label it
+runs when the story gets there, like a long `$` line:
+
+```kulisa
+label shop:
+    lua:
+        local price = 3
+        if coins >= price then
+            coins -= price
+            table.insert(bag, "map")
+        end
+    "You count what is left: [coins] coins."
+```
+
+`local` variables live only inside the block.
+
+At the top level of a file, a `lua:` block runs once when the story loads. Use it for
+helper functions; like `define`, what it makes isn't saved. Helpers made there reach story
+variables through `kulisa.story.vars()`:
+
+```kulisa
+default bag = { "ticket" }
+
+lua:
+    function has(item)
+        return table.find(kulisa.story.vars().bag, item) ~= nil
+    end
+
+label gate:
+    if has("key"):
+        "The key turns."
+```
+
+## Calling the game
+
+Story code sees, in this order: story variables, constants, then everything the game's Luau
+made global. So a game can give its writers functions to call, like the text-rpg template's
+`give`, `take`, `has` and `roll`:
+
+```kulisa
+$ give("herb")
+if roll("might", 11):
+    "The bar splits with a crack."
+```
+
+Story code can also use the whole [Luau API](https://github.com/nikolchaa/Kulisa/blob/main/docs/API.md):
+
+```kulisa
+$ kulisa.audio.play("sound", "audio/door.ogg", { volume = 0.6 })
+$ kulisa.haptics.pulse(0.5, 0.2)
+```
+
+## A little Luau
+
+| Luau | Means |
+|---|---|
+| `x = 1`, `x += 1`, `x -= 1` | set, add to, take from |
+| `"a" .. "b"` | join text |
+| `==`, `~=`, `<`, `>=` | compare (not equal is `~=`) |
+| `and`, `or`, `not` | logic |
+| `if a then b else c` | pick a value |
+| `{ "a", "b" }`, `bag[1]`, `#bag` | a list, its first item, its length |
+| `{ hp = 10 }`, `stats.hp` | a table with named fields |
+| `math.random(1, 6)` | a random whole number from 1 to 6 |
+
+Syntax errors in Luau are reported at the story file and line they are in, when the story
+loads.

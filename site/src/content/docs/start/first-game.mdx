@@ -1,0 +1,97 @@
+---
+title: Your first game
+description: Start a game from a template, play it with live reload, and write your first scene.
+---
+
+import { Aside, FileTree, Steps } from '@astrojs/starlight/components';
+import Play from '../../../components/Play.astro';
+
+## Start from a template
+
+```sh
+kulisa new "Cat Tales" --dir cat-tales
+cd cat-tales
+kulisa run
+```
+
+`kulisa new` copies a template into a new folder and gives the game its own title and save
+id. Without `--template` you get **classic-vn**, a Ren'Py-style visual novel; the others are
+`text-rpg` and `desktop-os`. `kulisa run` opens the game with live reload on.
+
+This is what you just made, playing in your browser:
+
+<Play game="classic-vn" />
+
+## What is in the folder
+
+<FileTree>
+- kulisa.toml the title, save id, version, screen shape and icon
+- icon.png
+- main.luau runs once at startup and wires everything up
+- story/
+  - script.kulisa **the story: start here**
+- images/ backgrounds and character sprites, found by name
+  - bg kitchen.png
+  - kitty happy.png
+  - …
+- game/ the template's logic in Luau
+  - config.luau colors, fonts, positions, transitions, preference defaults
+  - …
+- ui/ the screens: say box, choices, menus, save and load
+- gui/ shaders/ fonts/ the interface's art
+</FileTree>
+
+A game is just a folder. Nothing in it is special to the engine except `kulisa.toml` and
+`main.luau`; the rest is the template's own code, and all of it is yours to change.
+
+## Write a scene
+
+<Steps>
+
+1. Open `story/script.kulisa` in any text editor. Keep the game running.
+
+2. Replace the first line of dialogue with your own and save. The game picks the change up
+   and stays on the line you were on.
+
+3. Add a character and a few lines below `label start:`:
+
+   ```kulisa
+   define mila = Character("Mila", { color = "#e8a0bf" })
+
+   label start:
+       scene bg kitchen with fade
+       mila "Is that the last of the tuna?"
+       "Nobody answered. Nobody ever did, around the tuna."
+   ```
+
+4. Make a mistake on purpose: write `mila Hello` without quotes and save. The game shows
+   the error with the file, line and column, and goes back to playing when you fix it.
+
+</Steps>
+
+The [story language](../../story/) pages cover everything a `.kulisa` file can say.
+
+## Add art
+
+Images are found by name, the way Ren'Py does it. With classic-vn, `scene bg station` shows
+`images/bg station.png` (or `.jpg`, `.webp`), and `show mila smile` shows
+`images/mila smile.png`. The first word is the **tag**: showing `mila happy` later replaces
+`mila smile`. Missing images show as labelled gray boxes, so you can write first and draw
+later.
+
+## Make it yours
+
+- **`kulisa.toml`** holds the title, version, save id, screen size and orientation, and the
+  icon. Change `id` before you ship, or your saves mix with other games made from the same
+  template.
+- **`game/config.luau`** holds the look: colors, fonts, text size, character positions,
+  transitions and preference defaults.
+- **`ui/`** holds the screens. They are ordinary Luau using the [public API](https://github.com/nikolchaa/Kulisa/blob/main/docs/API.md);
+  change them, or replace them with your own.
+
+<Aside type="tip" title="Live reload">
+Stories, images, sounds and shaders change in place. Luau changes restart the game and bring
+you back to the same line. Press **Shift+R** to restart by hand.
+</Aside>
+
+When it is ready to leave your computer, see [Building and shipping](../building/).

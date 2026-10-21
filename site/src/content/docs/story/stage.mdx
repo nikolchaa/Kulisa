@@ -1,0 +1,121 @@
+---
+title: Stage and sound
+description: Backgrounds, characters on stage, transitions, music and sound effects.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The stage statements say what should be seen and heard. The engine hands each one to the
+game, and the game decides what it looks like. This page gives the syntax, and what the
+`classic-vn` template does with it; other templates may do something else (in `text-rpg`,
+`scene` sets the illustration).
+
+## Scene
+
+`scene` clears the stage and sets a new background:
+
+```kulisa
+scene bg station
+scene bg station night with fade
+scene black
+```
+
+In classic-vn, the words name an image file: `scene bg station` shows `images/bg station.png`
+(or `.jpg`, `.webp`), and every character on stage leaves. `black` and `white` need no image.
+
+## Show
+
+`show` puts an image on stage, usually a character:
+
+```kulisa
+show mila smile
+show mila smile at left
+show mila surprised
+show mila laughing at right with dissolve
+```
+
+- The first word is the **tag**. Showing an image with a tag that is already on stage
+  replaces it, so `show mila surprised` swaps Mila's expression without moving her.
+- `at` places it. Without `at`, a new image goes to the default position and a replaced one
+  keeps its place.
+- In classic-vn, images are found by name like scenes (`images/mila smile.png`) and stand on
+  the bottom edge. The positions are `left`, `midleft`, `center`, `midright` and `right`;
+  add your own in `game/config.luau`.
+- An image that doesn't exist yet shows as a labelled gray box, so you can write first and
+  draw later.
+
+## Hide
+
+`hide` takes an image off stage by its tag:
+
+```kulisa
+hide mila
+hide mila with dissolve
+```
+
+## Transitions: `with`
+
+`with` makes a change happen through a transition instead of at once. Put it on the
+statement that makes the change, and only that change transitions:
+
+```kulisa
+scene bg station with fade
+show mila smile at left with dissolve
+```
+
+On a line of its own, `with` transitions everything that changed since the player last
+clicked, so several changes arrive together:
+
+```kulisa
+scene bg platform
+show mila smile at left
+show theo at right
+with dissolve
+```
+
+classic-vn has `fade`, `dissolve`, `wipeleft`, `wiperight`, `wipeup`, `wipedown` and
+`swirl`, defined in `game/config.luau`. A transition can also follow any grayscale image as a
+mask, darkest parts first; the config shows how.
+
+## Music and sound: `play` and `stop`
+
+```kulisa
+play music "audio/rain theme.ogg"
+play music "audio/station.ogg" fadein 2
+play sound "audio/door.ogg"
+play sound "audio/clock.ogg" loop
+play voice "voice/mila_012.ogg"
+stop music fadeout 1.5
+stop sound
+```
+
+There are three channels:
+
+| Channel | Plays | Loops by default |
+|---|---|---|
+| `music` | one track at a time; a new one crossfades from the old | yes |
+| `sound` | many at once, overlapping | no |
+| `voice` | one line at a time | no |
+
+- The file is a path from the game's folder, in quotes. WAV, OGG, MP3 and FLAC work.
+- `fadein 2` fades in over two seconds; `fadeout 1.5` on `stop` fades out.
+- `loop` and `noloop` override the channel's default.
+- Saves and rollback remember what music was playing.
+
+These lines are handled by the engine itself, the same in every template.
+
+<Aside type="tip" title="On the web">
+Browsers only allow sound after the player's first click, tap or key. Music started before
+that begins then; the templates' title screens take care of it.
+</Aside>
+
+## Pause
+
+`pause` waits for a click; `pause 2` waits two seconds. Handy for letting a transition or a
+sound land:
+
+```kulisa
+play sound "audio/thunder.ogg"
+pause 1.2
+"The lights flickered."
+```

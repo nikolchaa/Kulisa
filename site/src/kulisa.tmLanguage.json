@@ -1,0 +1,111 @@
+{
+	"name": "kulisa",
+	"displayName": "Kulisa story",
+	"scopeName": "source.kulisa",
+	"fileTypes": ["kulisa"],
+	"embeddedLangs": ["luau"],
+	"patterns": [
+		{ "include": "#comment" },
+		{ "include": "#lua-block" },
+		{ "include": "#label" },
+		{ "include": "#binding" },
+		{ "include": "#dollar" },
+		{ "include": "#condition" },
+		{ "include": "#speaker" },
+		{ "include": "#keyword" },
+		{ "include": "#string" },
+		{ "include": "#number" }
+	],
+	"repository": {
+		"comment": {
+			"match": "^\\s*#.*$",
+			"name": "comment.line.number-sign.kulisa"
+		},
+		"lua-block": {
+			"begin": "^(\\s*)(lua)\\s*(:)\\s*$",
+			"beginCaptures": { "2": { "name": "keyword.control.kulisa" }, "3": { "name": "punctuation.separator.kulisa" } },
+			"end": "^(?!\\1\\s+\\S|\\s*$)",
+			"contentName": "meta.embedded.block.luau",
+			"patterns": [{ "include": "source.luau" }]
+		},
+		"label": {
+			"match": "^\\s*(label)\\s+([\\p{L}_][\\p{L}\\p{N}_.]*)\\s*(:)",
+			"captures": {
+				"1": { "name": "keyword.control.kulisa" },
+				"2": { "name": "entity.name.function.kulisa" },
+				"3": { "name": "punctuation.separator.kulisa" }
+			}
+		},
+		"binding": {
+			"begin": "^\\s*(define|default)\\s+([\\p{L}_][\\p{L}\\p{N}_]*)\\s*(=)",
+			"beginCaptures": {
+				"1": { "name": "storage.type.kulisa" },
+				"2": { "name": "variable.other.constant.kulisa" },
+				"3": { "name": "keyword.operator.assignment.kulisa" }
+			},
+			"end": "$",
+			"contentName": "meta.embedded.line.luau",
+			"patterns": [{ "include": "source.luau" }]
+		},
+		"dollar": {
+			"begin": "^\\s*(\\$)",
+			"beginCaptures": { "1": { "name": "keyword.control.kulisa" } },
+			"end": "$",
+			"contentName": "meta.embedded.line.luau",
+			"patterns": [{ "include": "source.luau" }]
+		},
+		"condition": {
+			"begin": "^\\s*(if|elif)\\b",
+			"beginCaptures": { "1": { "name": "keyword.control.kulisa" } },
+			"end": "(:)\\s*$",
+			"endCaptures": { "1": { "name": "punctuation.separator.kulisa" } },
+			"contentName": "meta.embedded.line.luau",
+			"patterns": [{ "include": "source.luau" }]
+		},
+		"speaker": {
+			"match": "^\\s*(?!(?:label|define|default|jump|call|return|menu|if|elif|else|scene|show|hide|with|play|stop|pause|lua|pass)\\b)([\\p{L}_][\\p{L}\\p{N}_]*)\\s+(?=\")",
+			"captures": { "1": { "name": "entity.name.type.character.kulisa" } }
+		},
+		"keyword": {
+			"patterns": [
+				{
+					"match": "\\b(jump|call)\\s+([\\p{L}_][\\p{L}\\p{N}_.]*)",
+					"captures": {
+						"1": { "name": "keyword.control.kulisa" },
+						"2": { "name": "entity.name.function.kulisa" }
+					}
+				},
+				{
+					"match": "\\b(return|menu|else|scene|show|hide|with|at|play|stop|pause|pass|if)\\b",
+					"name": "keyword.control.kulisa"
+				},
+				{
+					"match": "\\b(fadein|fadeout|loop|noloop)\\b",
+					"name": "keyword.other.kulisa"
+				}
+			]
+		},
+		"string": {
+			"begin": "\"",
+			"end": "\"",
+			"name": "string.quoted.double.kulisa",
+			"patterns": [
+				{ "match": "\\\\[\"\\\\nt]", "name": "constant.character.escape.kulisa" },
+				{ "match": "\\[\\[|\\{\\{", "name": "constant.character.escape.kulisa" },
+				{
+					"begin": "\\[",
+					"end": "\\]",
+					"beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.kulisa" } },
+					"endCaptures": { "0": { "name": "punctuation.section.interpolation.end.kulisa" } },
+					"contentName": "meta.embedded.line.luau",
+					"patterns": [{ "include": "source.luau" }]
+				},
+				{ "match": "\\{/?[a-z]+(=[^}]*)?\\}", "name": "entity.name.tag.markup.kulisa" }
+			]
+		},
+		"number": {
+			"match": "\\b\\d+(\\.\\d+)?\\b",
+			"name": "constant.numeric.kulisa"
+		}
+	}
+}

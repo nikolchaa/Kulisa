@@ -1,0 +1,174 @@
+/* Kulisa brand on Starlight (docs/brand/BRAND.md): Ink, Paper, Haze and one accent, Footlight. */
+
+:root {
+	--sl-font: 'Inter', system-ui, sans-serif;
+	--sl-font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+	/* Dark (Starlight's default): Ink ground, Paper text. */
+	--sl-color-accent-low: #3a1a10;
+	--sl-color-accent: #ff6a3d;
+	--sl-color-accent-high: #ff8a66;
+	--sl-color-white: #f4f1ea;
+	--sl-color-gray-1: #e9e6df;
+	--sl-color-gray-2: #c8c5cd;
+	--sl-color-gray-3: #8a8794;
+	--sl-color-gray-4: #5d5b67;
+	--sl-color-gray-5: #3a3842;
+	--sl-color-gray-6: #24232b;
+	--sl-color-black: #111116;
+
+	--kulisa-ink: #111116;
+	--kulisa-paper: #f4f1ea;
+	--kulisa-footlight: #ff6a3d;
+	--kulisa-haze: #8a8794;
+}
+
+:root[data-theme='light'] {
+	/* Paper ground, Ink text; the accent darkens so links stay readable on Paper. */
+	--sl-color-accent-low: #ffdccf;
+	--sl-color-accent: #d14a1f;
+	--sl-color-accent-high: #7a2a10;
+	--sl-color-white: #111116;
+	--sl-color-gray-1: #24232b;
+	--sl-color-gray-2: #3a3842;
+	--sl-color-gray-3: #5d5b67;
+	--sl-color-gray-4: #8a8794;
+	--sl-color-gray-5: #c9c5bd;
+	--sl-color-gray-6: #e7e3db;
+	--sl-color-gray-7: #efece5;
+	--sl-color-black: #f4f1ea;
+}
+
+/* Headings: Inter SemiBold, tight like the wordmark. */
+.sl-markdown-content :is(h1, h2, h3, h4),
+h1#_top,
+.hero h1 {
+	font-weight: 600;
+	letter-spacing: -0.02em;
+}
+
+.site-title {
+	font-weight: 600;
+	letter-spacing: -0.02em;
+	color: var(--sl-color-white);
+}
+
+/* The one accent, full strength, on primary buttons in both themes. */
+.sl-link-button.primary {
+	background: var(--kulisa-footlight);
+	border-color: var(--kulisa-footlight);
+	color: var(--kulisa-ink);
+}
+
+/* Cards: one accent for every icon, not Starlight's rotating palette. */
+.sl-markdown-content .card-grid > .card:nth-child(n) {
+	--sl-card-border: var(--sl-color-accent);
+	--sl-card-bg: var(--sl-color-accent-low);
+}
+
+/* Landing page ------------------------------------------------------------------------- */
+
+.hero {
+	padding-block: 3rem 2rem;
+}
+
+.hero h1 {
+	font-size: clamp(2.6rem, 6vw, 4.2rem);
+	line-height: 1.05;
+}
+
+.hero .tagline {
+	color: var(--sl-color-gray-2);
+	max-width: 34rem;
+}
+
+.kulisa-platforms {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.4rem 0.9rem;
+	padding: 0;
+	margin: 0;
+	list-style: none;
+	font-size: 0.78rem;
+	font-weight: 500;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--kulisa-haze);
+}
+
+.sl-markdown-content .kulisa-platforms li {
+	margin: 0;
+}
+
+.kulisa-platforms li + li::before {
+	content: '';
+	display: inline-block;
+	width: 5px;
+	height: 5px;
+	margin-right: 0.9rem;
+	border-radius: 50%;
+	background: var(--kulisa-footlight);
+	vertical-align: middle;
+	transform: translateY(-1px);
+}
+
+.kulisa-gallery {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+	gap: 1.25rem;
+}
+
+.sl-markdown-content .kulisa-gallery > * {
+	margin: 0;
+}
+
+.kulisa-tile {
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 10px;
+	overflow: hidden;
+	background: var(--sl-color-gray-6);
+}
+
+.kulisa-tile img {
+	display: block;
+	width: 100%;
+	height: auto;
+	aspect-ratio: 16 / 9;
+	object-fit: cover;
+}
+
+.kulisa-tile a {
+	color: var(--sl-color-text-accent);
+}
+
+.kulisa-tile .body {
+	padding: 0.9rem 1rem 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
+	flex: 1;
+}
+
+.sl-markdown-content .kulisa-tile .body > * {
+	margin: 0;
+}
+
+.kulisa-tile .name {
+	font-weight: 600;
+	color: var(--sl-color-white);
+}
+
+.kulisa-tile .what {
+	font-size: var(--sl-text-sm);
+	color: var(--sl-color-gray-2);
+	flex: 1;
+}
+
+.kulisa-tile .links {
+	display: flex;
+	gap: 1rem;
+	font-size: var(--sl-text-sm);
+	font-weight: 500;
+}

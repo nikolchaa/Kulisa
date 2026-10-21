@@ -1,0 +1,153 @@
+---
+title: Visual novel and narrative game engine
+description: A fast, fully customizable visual novel and narrative game engine, written in Rust. One game folder runs on Windows, Linux, macOS, the web, Android and iOS.
+template: splash
+editUrl: false
+lastUpdated: false
+hero:
+  title: Build the stage. Tell any story.
+  tagline: Kulisa is a fast, open-source engine for visual novels and narrative games, written in Rust. Writers get a clean story language; programmers get Luau and every pixel.
+  image:
+    dark: ../../assets/stage-dark.svg
+    light: ../../assets/stage-light.svg
+    alt: The Kulisa mark standing on a lit stage, with two scenery flats behind it
+  actions:
+    - text: Get started
+      link: start/install/
+      icon: right-arrow
+    - text: Play the demos
+      link: play/
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/nikolchaa/Kulisa
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid, Tabs, TabItem } from '@astrojs/starlight/components';
+import Play from '../../components/Play.astro';
+import Gallery from '../../components/Gallery.astro';
+
+<ul class="kulisa-platforms">
+	<li>Windows</li>
+	<li>Linux</li>
+	<li>macOS</li>
+	<li>Web</li>
+	<li>Android</li>
+	<li>iOS</li>
+</ul>
+
+## See it run
+
+This is the parallax demo, the same build that ships on desktop and phones, running in your
+browser.
+
+<Play game="parallax" />
+
+## Why Kulisa
+
+*Kulisa* is Serbian for stage scenery. The engine builds the stage: rendering, text, input,
+audio, scripting, saves and rollback. What goes on it is up to you.
+
+<CardGrid>
+	<Card title="No built-in look" icon="puzzle">
+		The engine never draws the story; your scripts do. The classic visual novel interface is
+		a template you can restyle or throw away. Templates and demos use only the public API, so
+		anything they do, your game can do.
+	</Card>
+	<Card title="Two scripting layers" icon="pencil">
+		Writers use `.kulisa` story files, close to Ren'Py, with errors that name the file, line
+		and column. Programmers use [Luau](https://luau.org) and can touch everything.
+	</Card>
+	<Card title="Six platforms, one folder" icon="laptop">
+		Windows, Linux, macOS, the web (WebGPU and WebGL2), Android and iOS. Every commit is built
+		and tested on all six.
+	</Card>
+	<Card title="Fast and lean" icon="rocket">
+		A batched GPU renderer on wgpu with WGSL shaders, effect chains, meshes and GPU particles.
+		Instant start, small builds, quality tiers that step down on slow devices.
+	</Card>
+	<Card title="Every kind of input" icon="phone">
+		Mouse, touch gestures, keyboard and gamepad focus navigation, safe areas, phone and tablet
+		layouts, haptics and sensors.
+	</Card>
+	<Card title="Rollback and safe saves" icon="clock">
+		Players scroll back through the story. Saves keep working after you edit the story and
+		ship an update.
+	</Card>
+	<Card title="Live reload" icon="random">
+		Edit a story, image or shader and see it in the running game. Luau changes restart the
+		game on the line you were on.
+	</Card>
+	<Card title="Coming from Ren'Py?" icon="right-arrow">
+		`kulisa import` turns a Ren'Py project's scripts and art into a Kulisa game you can keep
+		writing.
+	</Card>
+</CardGrid>
+
+## Two layers, one story
+
+<Tabs>
+	<TabItem label="For writers">
+
+```kulisa
+define mila = Character("Mila", { color = "#e8a0bf" })
+default trust = 0
+
+label start:
+    scene bg station with fade
+    show mila smile at left
+    mila "You came. I wasn't sure you would."
+    menu:
+        "Of course I did.":
+            $ trust += 1
+            mila "Then let's go before the {b}last{/b} train leaves."
+        "I almost didn't.":
+            mila "Honest. I'll take it."
+```
+
+	</TabItem>
+	<TabItem label="For programmers">
+
+```luau
+-- The engine calls handlers; the game decides what a line looks like.
+kulisa.load_font("fonts/Inter-Regular.ttf")
+local box = kulisa.sprite({ x = 80, y = 800, width = 1760, height = 220, tint = "#111116cc" })
+local line = kulisa.text({ parent = box, x = 40, y = 32, size = 40, wrap = 1680, cps = 45 })
+
+kulisa.on("say", function(say)
+    line.text = if say.who then `{say.who.name}: {say.text}` else say.text
+end)
+kulisa.on("tap", function()
+    if line.complete then kulisa.story.next() else line:skip() end
+end)
+
+kulisa.story.load()
+kulisa.story.start()
+```
+
+	</TabItem>
+</Tabs>
+
+The [story language](story/) is all a writer needs. The templates show the other half at full
+scale: say boxes, choices, history, save screens and preferences, all editable Luau.
+
+## Start from a template
+
+<Gallery kind="template" />
+
+## Or see what else it can do
+
+<Gallery kind="demo" />
+
+## Make something
+
+```sh
+cargo install --path crates/kulisa-cli
+kulisa new "Cat Tales" --dir cat-tales
+cd cat-tales
+kulisa run
+```
+
+[Install Kulisa](start/install/) and have a game running in a few minutes. Kulisa is MIT
+licensed and [developed in the open](https://github.com/nikolchaa/Kulisa).

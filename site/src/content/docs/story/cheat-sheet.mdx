@@ -1,0 +1,83 @@
+---
+title: Cheat sheet
+description: The whole story language on one page.
+tableOfContents: false
+---
+
+```kulisa
+# ── Top level ─────────────────────────────────────────────
+# A character, any other constant, and saved story variables.
+define mila = Character("Mila", { color = "#e8a0bf" })
+define PRICE = 2
+default trust = 0
+default bag = { "ticket" }
+
+# Luau that runs once when the story loads.
+lua:
+    function greet(name) return "Hi, " .. name end
+
+# The story starts at `start`.
+label start:
+    # ── Dialogue ──────────────────────────────────────────
+    "Narration."
+    mila "A line of dialogue."
+    mila "{b}Bold{/b} {i}italic{/i} {color=#f80}color{/color} {size=1.3}size{/size}"
+    mila "{wave}wave{/wave} {shake}shake{/shake} {ruby=よみ}読み{/ruby} pause{w=0.5} here"
+    mila "Trust is [trust]. A [[note] and a {{brace} start doubled."
+
+    # ── Stage ─────────────────────────────────────────────
+    scene bg station with fade
+    show mila smile at left
+    # Same tag: replaces the image and keeps her place.
+    show mila laughing
+    hide mila with dissolve
+    # Transition everything that changed since the last click.
+    with dissolve
+
+    # ── Sound ─────────────────────────────────────────────
+    play music "audio/theme.ogg" fadein 2
+    play sound "audio/door.ogg"
+    play voice "voice/mila_001.ogg"
+    play sound "audio/rain.ogg" loop
+    stop music fadeout 1.5
+    # Wait a second; `pause` alone waits for a click.
+    pause 1.0
+
+    # ── Choices and logic ─────────────────────────────────
+    menu:
+        mila "Coming?"
+        "Yes.":
+            $ trust += 1
+        "Only if you pay." if trust > 2:
+            $ table.insert(bag, "coin")
+        "No.":
+            pass
+    if trust >= 3:
+        jump good_end
+    elif trust ~= 0:
+        call small_talk
+    else:
+        "Silence."
+    lua:
+        local n = #bag
+        trust += n
+    # Back to the caller, or the end of the story.
+    return
+
+label small_talk:
+    mila "[greet('you')]."
+
+label good_end:
+    "The end."
+```
+
+| | |
+|---|---|
+| Indentation | spaces only; a line ending in `:` opens a block |
+| Comments | whole lines starting with `#`; a `#` later in a line is Luau |
+| Names | letters, digits, `_`; labels may use `.` |
+| Strings | `"…"`, one line; escapes `\"` `\\` `\n` `\t` |
+| Choices | `"text":` or `"text" if condition:`; an optional caption line first |
+| Conditions | Luau: `==` `~=` `<` `>=` `and` `or` `not` |
+| Channels | `music` (loops), `sound`, `voice` |
+| Files | every `.kulisa` file in the game; the story starts at `label start` |

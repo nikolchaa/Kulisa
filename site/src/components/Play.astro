@@ -1,0 +1,106 @@
+---
+// A game from /play/ inside the page. It loads only when the reader presses Play, since the
+// player is a 13 MB download.
+import { Image } from 'astro:assets';
+import { games, playUrl } from '../games';
+
+interface Props {
+	game: string;
+}
+
+const { game } = Astro.props;
+const info = games.find((g) => g.name === game);
+if (!info) throw new Error(`<Play>: unknown game ${game}`);
+const url = playUrl(game);
+---
+
+<kulisa-play class="not-content" data-src={url}>
+	<div class="frame">
+		<Image src={info.image} alt="" class="poster" widths={[640, 1280]} sizes="(min-width: 50rem) 50rem, 100vw" />
+		<button type="button" class="start" aria-label={`Play ${game} here`}>
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"></path></svg>
+			<span>Play {game}</span>
+		</button>
+	</div>
+	<p class="caption">
+		Runs in your browser with WebGPU or WebGL2. Click the game before using the keyboard.
+		<a href={url} target="_blank">Open full screen</a>
+	</p>
+</kulisa-play>
+
+<script>
+	class KulisaPlay extends HTMLElement {
+		connectedCallback() {
+			this.querySelector('.start')?.addEventListener('click', () => {
+				const frame = document.createElement('iframe');
+				frame.src = this.dataset.src ?? '';
+				frame.title = 'Kulisa game';
+				frame.allow = 'autoplay; fullscreen; gamepad; accelerometer; gyroscope';
+				this.querySelector('.frame')?.replaceChildren(frame);
+				frame.focus();
+			});
+		}
+	}
+	customElements.define('kulisa-play', KulisaPlay);
+</script>
+
+<style>
+	kulisa-play {
+		display: block;
+		margin-block: 1.5rem;
+	}
+	.frame {
+		position: relative;
+		aspect-ratio: 16 / 9;
+		border-radius: 10px;
+		overflow: hidden;
+		background: var(--kulisa-ink);
+		border: 1px solid var(--sl-color-gray-5);
+	}
+	.frame :global(iframe),
+	.poster {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+		border: 0;
+		object-fit: cover;
+	}
+	.poster {
+		filter: brightness(0.7);
+	}
+	.start {
+		position: absolute;
+		inset: 0;
+		margin: auto;
+		width: fit-content;
+		height: fit-content;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.8rem 1.4rem 0.8rem 1.1rem;
+		border: 0;
+		border-radius: 999px;
+		background: var(--kulisa-footlight);
+		color: var(--kulisa-ink);
+		font: 600 1rem/1 var(--sl-font);
+		cursor: pointer;
+		box-shadow: 0 6px 30px rgb(0 0 0 / 0.35);
+		transition: transform 0.15s ease;
+	}
+	.start:hover {
+		transform: scale(1.04);
+	}
+	.start svg {
+		width: 1.4rem;
+		height: 1.4rem;
+	}
+	.caption {
+		margin-top: 0.6rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.caption a {
+		margin-left: 0.4rem;
+	}
+</style>

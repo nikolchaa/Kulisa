@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Kulisa">
+  <rect width="256" height="256" rx="56" fill="#111116"/>
+  <rect x="64" y="56" width="36" height="144" rx="4" fill="#F4F1EA"/>
+  <polygon points="112,128 164,56 204,56 152,128" fill="#FF6A3D"/>
+  <polygon points="112,128 152,128 204,200 164,200" fill="#F4F1EA" fill-opacity="0.45"/>
+</svg>

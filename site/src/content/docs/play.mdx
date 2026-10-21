@@ -1,0 +1,29 @@
+---
+title: Play the demos
+description: Every Kulisa template and demo, running in your browser.
+---
+
+import Gallery from '../../components/Gallery.astro';
+import { Aside } from '@astrojs/starlight/components';
+
+These are the same games that are in the engine's repository, built for the web from the
+latest commit. Each opens in a new tab. The source of each is one click away: everything in
+them is written against Kulisa's public API.
+
+## Templates
+
+Starting points for your own game: `kulisa new "My Game" --template <name>`.
+
+<Gallery kind="template" />
+
+## Demos
+
+Showcases of what the engine can do.
+
+<Gallery kind="demo" />
+
+<Aside title="Controls and browsers">
+Click a game before using the keyboard. The demos list their keys on screen or in their
+README. They run in Chrome or Edge 137+, Firefox 131+ and Safari 18.4+, with WebGPU where
+available and WebGL2 otherwise; add `?webgl` to a game's address to force WebGL2.
+</Aside>

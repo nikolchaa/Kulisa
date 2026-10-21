@@ -831,6 +831,17 @@ The result keeps Ren'Py's resolution (one design unit is one Ren'Py pixel, so ar
 authored); classic-vn scales its interface with the design height so it looks the same at
 1280x720 as at 1920x1080.
 
+### Website
+
+`site/` is the website: a Starlight (Astro) project with the landing page, getting started
+and the story language reference, deployed to GitHub Pages by CI's web job (job `pages`, on
+pushes to `main`). The docs live next to the code so they change in the same commit.
+`site/scripts/play.mjs` builds every template and demo for the web into `site/public/play/`:
+each game gets its page and `game.kpak`, and all share one player (`play/player/`), so the
+site carries the wasm once. Pages embed a game only when the reader presses Play. The
+`.kulisa` syntax highlighting is a TextMate grammar (`site/src/kulisa.tmLanguage.json`).
+Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
+
 ## 12. Risks
 
 1. **Luau on web — resolved in M0.** Luau is C++, and `mlua` only documents
@@ -946,3 +957,4 @@ authored); classic-vn scales its interface with the design height so it looks th
 | 2026-10-21 | M10: imports keep Ren'Py's resolution as the design size, and templates scale their interface to the design height, so imported art keeps its proportions. |
 | 2026-10-21 | M10: `pass` joins the story language (Ren'Py has it; converted blocks can end up empty). |
 | 2026-10-21 | App icons come from one square PNG in `kulisa.toml`; the Windows icon is embedded by the player's build script through `llvm-rc`/`rc` instead of a resource crate, and Android gets an adaptive icon with the art as its background layer. |
+| 2026-10-21 | Website: Starlight in `site/` on GitHub Pages, in this repository so docs and code change together; Node stays confined to `site/`. Its playable games share one player build instead of one web build per game. |

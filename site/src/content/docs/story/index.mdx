@@ -1,0 +1,109 @@
+---
+title: The story language
+description: How .kulisa story files are laid out, and a map of every statement.
+sidebar:
+  label: Overview
+---
+
+import { Aside, LinkCard, CardGrid } from '@astrojs/starlight/components';
+
+Stories are written in `.kulisa` files: plain text that reads like a script. If you know
+Ren'Py, most of it will look familiar. If you don't, you can learn all of it in an afternoon.
+
+```kulisa
+# The station. Lines starting with # are comments.
+define mila = Character("Mila", { color = "#e8a0bf" })
+default trust = 0
+
+label start:
+    scene bg station with fade
+    "The last train was late, as usual."
+    show mila smile at left
+    mila "You came. I wasn't sure you would."
+    menu:
+        "Of course I did.":
+            $ trust += 1
+            jump platform
+        "I almost didn't.":
+            mila "Honest. I'll take it."
+    mila "Come on, then."
+
+label platform:
+    if trust > 0:
+        mila "I saved you a seat."
+    "The doors close behind you."
+```
+
+## Files
+
+Every `.kulisa` file in your game is loaded, wherever it is (the templates keep them in
+`story/`). Split a long story into as many files as you like: labels and characters from
+one file can be used in all the others. The story begins at the label called `start`.
+
+## Two levels
+
+A file has two levels, marked by indentation.
+
+**At the top** (no indentation) there are only four kinds of lines:
+
+- `label name:` starts a section of story (see [Choices and flow](flow/)).
+- `define name = value` makes a constant, usually a character (see [Dialogue and text](dialogue/)).
+- `default name = value` makes a story variable that saves keep (see [Variables and Luau](variables/)).
+- `lua:` starts a block of Luau that runs once when the story loads.
+
+**Inside a label** (indented) go the statements that make up the story: dialogue, choices,
+conditions, jumps, scenes and sounds.
+
+## Indentation
+
+Blocks are marked by indentation, as in Python and Ren'Py. A line that ends with `:` opens a
+block; the lines under it must be indented further, all by the same amount. The block ends
+at the first line that is indented less.
+
+- Indent with **spaces**. Tabs are an error, so nothing depends on how wide your editor
+  draws them. Four spaces is usual.
+- Blank lines and comments don't matter to indentation.
+
+## Comments
+
+A line whose first character (after indentation) is `#` is a comment. There are no
+end-of-line comments: a `#` later in a line is part of it, because in Luau `#` counts the
+items in a list.
+
+## Names
+
+Labels, characters and variables are named with letters, digits and `_`, not starting with
+a digit: `mila`, `chapter_2`, `trust`. Label names may also contain dots, which help to
+group them: `label station.night:`.
+
+These words start statements and can't be used as names:
+`label` `define` `default` `jump` `call` `return` `menu` `if` `elif` `else` `scene` `show`
+`hide` `with` `play` `stop` `pause` `lua` `pass`.
+
+## Every statement
+
+| Statement | Does | Page |
+|---|---|---|
+| `"text"` | narration | [Dialogue and text](dialogue/) |
+| `who "text"` | a character speaks | [Dialogue and text](dialogue/) |
+| `menu:` | the player chooses | [Choices and flow](flow/) |
+| `if` / `elif` / `else` | branches on a condition | [Choices and flow](flow/) |
+| `jump label` | goes to a label | [Choices and flow](flow/) |
+| `call label` / `return` | goes to a label and comes back | [Choices and flow](flow/) |
+| `pause` / `pause 2` | waits for a click, or for seconds | [Choices and flow](flow/) |
+| `pass` | does nothing | [Choices and flow](flow/) |
+| `$ code` / `lua:` | runs Luau | [Variables and Luau](variables/) |
+| `scene` / `show` / `hide` / `with` | changes what is on stage | [Stage and sound](stage/) |
+| `play` / `stop` | music, sounds and voice | [Stage and sound](stage/) |
+
+<Aside title="The engine does not draw your story">
+A `.kulisa` file says *what* happens. How it looks is up to the game's Luau: the template
+decides how a line of dialogue is drawn, which image `show mila smile` means and what
+`with fade` looks like. These pages describe the language and, where it matters, what the
+`classic-vn` template does with it.
+</Aside>
+
+<CardGrid>
+	<LinkCard title="Cheat sheet" description="All of the syntax on one page." href="cheat-sheet/" />
+	<LinkCard title="Errors" description="What the error messages mean and how to read them." href="errors/" />
+</CardGrid>

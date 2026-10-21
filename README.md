@@ -14,6 +14,8 @@
 </p>
 
 <p align="center">
+  <a href="https://nikolchaa.github.io/Kulisa/">Docs</a> ·
+  <a href="https://nikolchaa.github.io/Kulisa/play/">Play in the browser</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/API.md">Luau API</a> ·
   <a href="docs/DESIGN.md">Design</a> ·
@@ -156,6 +158,7 @@ the architecture and the reasons behind each decision.
 | [`templates/`](templates) | Starting points for games (`kulisa new --template`) |
 | [`demos/`](demos) | Showcases, written only against the public API |
 | [`docs/`](docs) | [Luau API](docs/API.md), [design and decision log](docs/DESIGN.md), [brand](docs/brand/BRAND.md) |
+| [`site/`](site) | The [website](https://nikolchaa.github.io/Kulisa/): guides, the story language, playable demos |
 
 ## License
 

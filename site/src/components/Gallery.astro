@@ -1,0 +1,31 @@
+---
+// Tiles for the games under /play/: a screenshot, what it shows, and links.
+import { Image } from 'astro:assets';
+import { games, playUrl, sourceUrl, type Game } from '../games';
+
+interface Props {
+	kind?: Game['kind'];
+}
+
+const { kind } = Astro.props;
+const list = kind ? games.filter((g) => g.kind === kind) : games;
+---
+
+<div class="kulisa-gallery not-content">
+	{
+		list.map((g) => (
+			<div class="kulisa-tile">
+				<Image src={g.image} alt={`${g.name} screenshot`} widths={[480, 960]} sizes="(min-width: 50rem) 25rem, 100vw" />
+				<div class="body">
+					<p class="name">{g.name}</p>
+					<p class="what">{g.what}</p>
+					<p class="links">
+						<a href={playUrl(g.name)} target="_blank">Play</a>
+						<a href={sourceUrl(g)}>Source</a>
+					</p>
+				</div>
+			</div>
+		))
+	}
+</div>
+
