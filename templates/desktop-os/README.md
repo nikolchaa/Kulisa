@@ -2,13 +2,17 @@
 
 A story told through a fake computer: chats, a browser with a small fake web, notes and
 notifications, on a desktop with draggable, resizable windows. Built only with the public Kulisa
-API ([docs/API.md](../../docs/API.md)). Copy the folder to start a game, then make it yours.
+API ([docs/API.md](../../docs/API.md)). Start a game from it with `kulisa new`, then make it yours.
 
 ```
-cargo run -p kulisa-player -- templates/desktop-os
-cargo xtask web --game templates/desktop-os --serve 8080
-cargo xtask apk --game templates/desktop-os
+kulisa new "My Game" --template desktop-os
+cd "My Game"
+kulisa run              # live reload: save a file and the game picks it up
+kulisa run --web        # the same in the browser
+kulisa build android    # or windows, linux, macos, web, ios
 ```
+
+Title, save id, version and display shape are in `kulisa.toml`.
 
 ## What is in it
 

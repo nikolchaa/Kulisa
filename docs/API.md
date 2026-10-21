@@ -10,7 +10,50 @@ game root and use `/`.
 
 Errors are strict: unknown properties, bad values and typos in event names raise errors that
 name the problem. Uncaught errors in handlers and tasks are logged and passed to
-`kulisa.on("error", fn)`; the game keeps running.
+`kulisa.on("error", fn)`; the game keeps running. Errors no `error` handler takes, and errors at
+startup (`kulisa.toml`, `main.luau`), appear in the engine's error view: plain text over the game
+in a built-in pixel font, hidden by Esc, Enter, Space or a click. In development runs
+(`kulisa run`) every error shows there.
+
+## Game config
+
+`kulisa.toml` at the game's root holds the settings the engine and `kulisa build` need before
+any script runs. It is a TOML subset: `[tables]`, `key = value` with strings, numbers, booleans,
+arrays and inline tables `{ a = 1 }`, and `#` comments. All of it is optional.
+
+```toml
+[game]
+id = "cat_tales"         # save folder and app ids: letters, digits, _ and -
+title = "Cat Tales"      # window and page title, app name
+version = "1.0.0"        # shown to players (versionName, CFBundleShortVersionString)
+build = 1                # raise it for every store upload (versionCode, CFBundleVersion)
+
+[display]                # the same keys as kulisa.display{}, applied before main.luau
+width = 1920
+height = 1080
+scale = "expand"
+aspect = ["4:3", "21:9"]
+orientation = "landscape"  # also locks the Android manifest and the iOS plist
+phone = { width = 1080, height = 1920, orientation = "portrait" }
+
+[window]                 # desktop
+size = [1280, 720]       # logical pixels; default: 1280 wide in the design's shape
+fullscreen = false
+background = "#000000"   # the web page behind the canvas
+
+[quality]
+tier = "auto"            # or "low", "medium", "high" (see Quality)
+
+[android]
+package = "com.example.cattales"   # default dev.kulisa.<id>
+
+[ios]
+bundle_id = "com.example.cattales" # default dev.kulisa.<id>
+```
+
+- `kulisa.config` is the whole file as read-only tables (`kulisa.config.game.title`), so games
+  can keep their own sections too.
+- `kulisa.save.setup()` without an `id` uses `[game] id`.
 
 ## Sandbox
 
@@ -286,6 +329,8 @@ end)
 | `resize` | window `width, height` in pixels |
 | `error` | message |
 | `display` | `{ profile, orientation, mismatch }`, see Display |
+| `quality` | the tier, when it changed (see Quality) |
+| `reload` | a save slot, or nil: the game restarted for live reload (see Development runs) |
 | `say`, `menu`, `pause`, `end`, `stage`, `restore` | see Story |
 
 `kulisa.input.cursor(name?)` sets the mouse cursor (desktop and browsers): `default`, `pointer`,
@@ -619,8 +664,8 @@ like:
 - `kulisa.state.register(name, { save = fn, load = fn })`: script state that rolls back
   and saves with the story. `save()` returns plain data (nil, booleans, numbers, strings,
   tables); `load(data)` restores it (`data` is nil for state a save does not have).
-- `kulisa.save.setup({ id, version })`: the game's storage id (letters, digits, `_`, `-`)
-  and save data version.
+- `kulisa.save.setup({ id?, version? })`: the game's storage id (letters, digits, `_`, `-`;
+  default `[game] id` from `kulisa.toml`) and save data version (default 1).
 - `kulisa.save.write(slot, { title?, data?, thumbnail? })`: saves the story, registered state
   and optional extra `data`. The title defaults to the current line. `thumbnail` is an image
   from `screen:capture`.
@@ -639,3 +684,40 @@ like:
 Saves live in the platform's app data folder (`%APPDATA%\<id>\saves` on Windows,
 `localStorage` on the web, internal storage on Android). On desktop, `KULISA_DATA_DIR` moves
 it (portable installs, tests).
+
+## Quality
+
+The engine picks a tier from the GPU and the device: `low` (software renderers, WebGL2 and GLES),
+`medium` (phones, tablets, browsers with WebGPU, integrated GPUs) or `high` (discrete GPUs, Apple
+silicon). `[quality] tier` in `kulisa.toml`, `KULISA_QUALITY=low` (desktop) or `?quality=low` (web)
+choose one instead. Each tier caps the pixels drawn per frame (about 1600×900 for low, 2560×1440
+for medium, 3840×2160 for high): larger windows are drawn at a lower resolution and stretched,
+with layout and input unchanged. With the tier left on `auto`, three seconds under 40 fps step it
+down once in a while, and `quality` fires.
+
+- `kulisa.quality.tier` (read and write; `"auto"` returns to detection), `detected`, `auto`.
+- `kulisa.quality.render_scale`: the fraction of the window's pixels drawn on each side (0.25
+  to 1); set a number to fix it, `nil` to follow the tier.
+- `kulisa.quality.gpu`, `kulisa.quality.backend` (`"vulkan"`, `"metal"`, `"dx12"`, `"gl"`,
+  `"browserwebgpu"`).
+
+The engine changes nothing else: games choose their own costs from the tier (particle counts,
+effect chains), as `demos/parallax` does with bloom.
+
+## Development runs
+
+`kulisa run` (or `kulisa-player --dev GAME`, `KULISA_DEV=1`; `?dev=1` on a page served by
+`kulisa run --web`) watches the game's files:
+
+- Shaders, images and sounds reload in place (nodes keep their handles; a looping track
+  restarts with the new sound). An image that changed size keeps its nodes' sizes.
+- Stories recompile and continue at the same line, as with saves from an older version; an
+  edited current line shows its new text.
+- Anything else (Luau, `kulisa.toml`, fonts, data files) restarts the game. Before that, the
+  story is saved to the hidden slot `"_reload"` (when saves are set up and a line is showing);
+  after `main.luau` runs again, `reload` fires with that slot (or nil), and the game loads it the
+  way its load menu does: `kulisa.on("reload", function(slot) if slot then load(slot) end end)`.
+- Shift+R restarts now. Errors from a reload show in the error view; the old version keeps
+  running until the file is fixed.
+
+Slots starting with `_` are the engine's: `kulisa.save.list()` leaves them out.

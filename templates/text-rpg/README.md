@@ -3,13 +3,17 @@
 An illustrated text adventure: a picture for each scene, a scrolling log, numbered choices, a hero
 panel with health and stats, an inventory you can use items from, d20 checks, and save slots.
 Stories are `.kulisa` files; the rules are Luau. Built only with the public Kulisa API
-([docs/API.md](../../docs/API.md)). Copy the folder to start a game, then make it yours.
+([docs/API.md](../../docs/API.md)). Start a game from it with `kulisa new`, then make it yours.
 
 ```
-cargo run -p kulisa-player -- templates/text-rpg
-cargo xtask web --game templates/text-rpg --serve 8080
-cargo xtask apk --game templates/text-rpg
+kulisa new "My Game" --template text-rpg
+cd "My Game"
+kulisa run              # live reload: save a file and the game picks it up
+kulisa run --web        # the same in the browser
+kulisa build android    # or windows, linux, macos, web, ios
 ```
+
+Title, save id, version and display shape are in `kulisa.toml`.
 
 ## Layouts
 

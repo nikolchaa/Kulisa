@@ -1,13 +1,17 @@
 # classic-vn
 
 A Ren'Py-style visual novel interface, built only with the public Kulisa API
-([docs/API.md](../../docs/API.md)). Copy the folder to start a game, then make it yours.
+([docs/API.md](../../docs/API.md)). Start a game from it with `kulisa new`, then make it yours.
 
 ```
-cargo run -p kulisa-player -- templates/classic-vn
-cargo xtask web --game templates/classic-vn --serve 8080
-cargo xtask apk --game templates/classic-vn
+kulisa new "My Game" --template classic-vn
+cd "My Game"
+kulisa run              # live reload: save a file and the game picks it up
+kulisa run --web        # the same in the browser
+kulisa build android    # or windows, linux, macos, web, ios
 ```
+
+Title, save id, version and display shape are in `kulisa.toml`.
 
 ## What is in it
 

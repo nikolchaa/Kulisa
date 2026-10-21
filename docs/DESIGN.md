@@ -21,7 +21,7 @@ tests passing and this document updated.
 | M6 | Meshes, input, interaction | Deformable vertex-grid meshes from Luau, alpha hit testing and picking, drag and drop with drop zones, hotspots, multi-touch with pinch/rotate, timers, gamepad (gilrs) with keyboard/gamepad focus navigation of UI screens (classic-vn playable without a pointer), text input (`ui.input`, soft keyboards, IME), haptics, motion sensors; `demos/interact` (§9) | Done |
 | M7 | PC unwrap demo | `demos/pc-unwrap`: unboxing a Blockbench-rendered PC from its box, a plastic sleeve pulled off over the top, films peeled off the side and front glass, tape, an I/O sticker, a squeegee with air bubbles, glossy plastic shading; public API only (§9, M7 section) | Done |
 | M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT, grain); classic-vn reworked as a cat-themed sample (§9, M8 section) | Done |
-| M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`[display]` etc.), quality tiers | Planned |
+| M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`kulisa.toml`), quality tiers with render scale (§11, M9 section) | Done |
 | M10 | Ren'Py importer | Basic `.rpy` import: labels, dialogue, menus, jumps, scene/show | Planned |
 
 Not yet placed: story-language animation (an ATL equivalent over tweens and
@@ -73,9 +73,9 @@ kulisa-story  kulisa-ui  kulisa-audio  kulisa-text --> kulisa-render
 | `kulisa-story` | `.kulisa` lexer, parser, compiler, bytecode, VM with rollback and update-safe saves | `kulisa-core` |
 | `kulisa-lua` | Luau VM, sandbox, the `kulisa.*` API (docs/API.md), the scripted `Game` (scene, assets, story, saves, audio) | `mlua`, engine crates |
 | `kulisa-ui` | Widget elements, reconciliation, layout, hit testing, gestures, signal dependencies (draws nothing; `kulisa-lua` turns widgets into nodes) | `kulisa-core` |
-| `kulisa-runtime` | Window, frame loop, finding the game, forwarding input; later live reload | `kulisa-lua`, `winit` |
+| `kulisa-runtime` | Window, frame loop, finding the game, forwarding input, live reload (folder watcher, web dev polling) | `kulisa-lua`, `winit` |
 | `kulisa-player` | Per-target entry points, `cdylib` for Android/web | `kulisa-runtime` |
-| `kulisa-cli` | `kulisa new/run/build`, packaging (APK, web bundle, .app) | host-only |
+| `kulisa-cli` | `kulisa new/run/build/pack/serve`, packaging (desktop folder, APK, web page, .app) from `kulisa.toml`; `cargo xtask` is a shim over it | `kulisa-platform` (host-only) |
 
 Rules:
 
@@ -93,8 +93,9 @@ One `winit` event loop on the main thread. The runtime finds the game (a folder 
 `.kpak`: the first argument, `KULISA_GAME`, or `game/`/`game.kpak` next to the
 executable; the APK's `assets/game.kpak` on Android; `game.kpak` fetched next to the
 page on the web), creates the renderer, and hands both to `kulisa_lua::Game`, which
-runs the game's `main.luau`. The engine has no built-in scene: if a game fails to
-start, the error is logged (an on-screen error view arrives with live reload, M9).
+reads `kulisa.toml`, applies its `[display]` and runs the game's `main.luau`. The engine has
+no built-in scene: if a game is missing or fails to start, it still gets a window, and the
+error view (a built-in bitmap font drawn as an overlay pass) says what went wrong.
 
 Per frame (implemented as of M4: input events, then `Game::frame`: tweens, Luau
 tasks, `update` handlers, timed story pauses, text animation; then render):
@@ -736,14 +737,59 @@ body:   the VM's save: frames, stage, story variables
 | iOS | `aarch64-apple-ios` (+ `aarch64-apple-ios-sim`) | Metal | `main` in a `.app` bundle (Info.plist + ad-hoc signature, no Xcode project); logs via `os_log` | CI (simulator run) |
 
 - CI (GitHub Actions) builds all six on every push; it is the source of truth.
-- Engine-developer builds go through `cargo xtask` (`web`, `apk`, `ios-app`), so CI and
-  local builds run the same steps. Game-creator builds (`kulisa build <target>`)
-  arrive with `kulisa-cli` in M9 and will reuse this logic.
+- Game-creator builds go through `kulisa build <target>` (`kulisa-cli`); engine-developer
+  builds through `cargo xtask` (`web`, `apk`, `ios-app`, `pack`), a shim over the same code
+  with the smoke demo and `dist/` as defaults, so CI and local builds run the same steps.
 - Games ship scripts and assets inside the build (App Store safe), packed into
   a single archive (`.kpak`: index + blobs). `cargo xtask` bundles a game
   (`--game DIR`, default `demos/smoke`) into web, APK and iOS builds;
   `cargo xtask pack` writes a `.kpak`. Desktop runs a folder directly.
 - Mod loading is desktop only.
+
+### CLI, live reload and quality tiers (M9)
+
+**Game config.** `kulisa.toml` (a TOML subset parsed in `kulisa-platform`, no new
+dependency) holds what is needed before scripts run or without them: `[game]` id, title,
+version, build number; `[display]` (exactly the `kulisa.display{}` table, applied before
+`main.luau`); `[window]` size, fullscreen, background; `[quality]`; `[android]` package and
+`[ios]` bundle id. The runtime titles and sizes the window from it, `kulisa build` writes the
+Android manifest (package, label, version, `screenOrientation`), the iOS plist (id, name,
+versions, orientations) and the web page (title, background) from it, and scripts see it as
+`kulisa.config`.
+
+**CLI.** `kulisa-cli` is a library plus the `kulisa` binary and depends only on
+`kulisa-platform`: it drives cargo in the engine's source tree (found where the tool was
+built, or `KULISA_ENGINE`). `kulisa new NAME --template T` copies `templates/T` and sets
+the id and title; `kulisa run` is `cargo run -p kulisa-player -- --dev GAME` (or `--web`:
+build, then a dev server; `--android`: APK, `adb install`, start); `kulisa build
+windows|linux|macos|web|android|ios` puts results in `GAME/dist/TARGET` (desktop: the
+player renamed after the game with `game.kpak` beside it). Packs, the watcher and the dev
+server skip `dist/`, hidden files and editor leftovers.
+
+**Live reload.** Development runs watch the game. Desktop polls file sizes and times every
+250 ms (no OS watcher dependency) and reports changes once they settle for 150 ms; the web
+page polls the dev server's `__kulisa/version` every second, and the server repacks the
+folder when its stamp changes, so the runtime gets a new pack and diffs it. `Game::reload`
+swaps shaders (renderer `reload_shader`), images (`replace_texture`, same id) and sounds in
+place, and recompiles stories, continuing at the current line through the update-safe save
+path. Anything else restarts: the story is saved to a hidden slot, the game and renderer are
+dropped and recreated (simpler than resetting every engine table), and the new game gets a
+`reload` event with the slot to load. Errors go to the error view and leave the old version
+running.
+
+**Error view.** `kulisa-lua` keeps the last errors and draws them as a separate overlay scene
+in window pixels after the frame (`extract_overlay`), so camera, letterbox and screen effects
+never touch it. The font is a 5x7 ASCII bitmap in the source, scaled by whole pixels, so the
+view works with no game assets. It shows startup failures and errors no `error` handler takes;
+development runs show every error.
+
+**Quality tiers.** The tier (low, medium, high) comes from the adapter (software and GL low,
+discrete and Apple silicon high, phones and browsers medium) unless the config, an env var or
+the URL names one. The engine applies one knob itself, a render scale that caps the pixels
+drawn per frame: window passes draw into a smaller screen texture and present stretches it,
+while geometry, layout, `in.pixel` and `resolution` stay in window units (the projection
+does the mapping), so input and shaders are unaffected. In `auto` mode a 3 s window under
+40 fps steps the tier down. Games read `kulisa.quality` for their own costs.
 
 ## 12. Risks
 
@@ -769,6 +815,8 @@ body:   the VM's save: frames, stage, story variables
      error page. Pinning exact minimum versions is an M9 task.
      Verified: eval, runtime and syntax errors, `pcall`, coroutines in Node and
      Chromium; full engine (Luau + WebGPU) in Chromium.
+     M9 pins the minimums: Chrome/Edge 137, Firefox 131, Safari 18.4. The page validates a
+     tiny module with `try_table` before loading and names them when it fails.
 2. **Luau on iOS — resolved in M0 (simulator).** No JIT needed; C++ is built by
    the Xcode toolchain. CI builds the device target and runs the player in an
    iOS simulator: `cargo xtask ios-app --sim` assembles `dist/ios/Kulisa.app`,
@@ -846,3 +894,11 @@ body:   the VM's save: frames, stage, story variables
 | 2026-10-20 | M8: embedded game nodes (`ui.node`) are all moved out of a dropped screen before its groups are removed, so hiding a screen hides them however deep they sit (text-rpg's illustration was being removed). |
 | 2026-10-20 | M8: `show tag look` without `at` keeps the tag's place in the story's stage state too, as in Ren'Py; before, rollback and loads put it back at the default position. |
 | 2026-10-20 | M7: the demo's PC and box are Blockbench renders made with one fixed, calibrated camera, so live meshes can be laid over them exactly; the room, glass and plastic are WGSL. Art sources (models, painting scripts) are kept outside the repository; the repository holds the finished images. |
+| 2026-10-21 | M9: `kulisa.toml` uses a hand-written TOML subset parser (tables, dotted keys, strings, numbers, booleans, arrays, inline tables) instead of the `toml`/`serde` crates: the player reads it on every target, including wasm, and needs nothing more. |
+| 2026-10-21 | M9: `[display]` in `kulisa.toml` is the `kulisa.display{}` table, applied before `main.luau`, so one description serves the runtime, the manifests and the plists. |
+| 2026-10-21 | M9: `kulisa-cli` builds players from the engine source with cargo (and `cargo xtask` became a shim over it) rather than shipping prebuilt per-platform players; prebuilt "export templates" can come when the engine is distributed. |
+| 2026-10-21 | M9: live reload restarts the whole game (new Lua state and renderer) for Luau changes and hands the game a hidden save to reload, instead of patching Luau modules in place: scripts hold state everywhere, and a restart plus the update-safe save path is predictable. Assets, shaders and stories reload in place. |
+| 2026-10-21 | M9: the desktop watcher polls file times instead of using an OS file-watching crate; the web uses the dev server's version endpoint. |
+| 2026-10-21 | M9: the error view uses a 5x7 bitmap font in the engine source (no bundled font file, works without game assets) and draws as an overlay pass outside the game's scene. |
+| 2026-10-21 | M9: the only engine-side quality knob is a render scale (pixel budget per tier); particle counts, effect chains and the like stay game decisions read from `kulisa.quality`. |
+| 2026-10-21 | M9: `Vm::load` binds defines and runs init blocks when the VM has not started (saves loaded from a main menu lost their characters), and saves record each label's statement count so a line edited in place resumes at its new version. |
