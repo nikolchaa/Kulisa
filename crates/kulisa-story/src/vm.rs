@@ -286,15 +286,10 @@ impl Vm {
 
     /// Binds defines, applies defaults, runs init blocks and enters `label`.
     pub fn start(&mut self, host: &mut dyn Host, label: &str) -> Result<(), RuntimeError> {
-        let program = self.program.clone();
-        for (name, id) in &program.defines {
-            host.define(name, program.chunk(*id)).map_err(|e| self.host_err(*id, e))?;
-        }
+        self.bind_defines(host)?;
         self.apply_defaults(host)?;
-        for id in &program.init {
-            host.exec(program.chunk(*id)).map_err(|e| self.host_err(*id, e))?;
-        }
-        if !program.labels.contains_key(label) {
+        self.run_init(host)?;
+        if !self.program.labels.contains_key(label) {
             return Err(err(format!("there is no label `{label}` to start at")));
         }
         self.frames = vec![Frame { label: label.to_string(), pc: 0 }];
@@ -302,6 +297,20 @@ impl Vm {
         self.history.clear();
         self.redo.clear();
         self.state = State::Running;
+        Ok(())
+    }
+
+    fn bind_defines(&self, host: &mut dyn Host) -> Result<(), RuntimeError> {
+        for (name, id) in &self.program.defines {
+            host.define(name, self.chunk(*id)).map_err(|e| self.host_err(*id, e))?;
+        }
+        Ok(())
+    }
+
+    fn run_init(&self, host: &mut dyn Host) -> Result<(), RuntimeError> {
+        for id in &self.program.init {
+            host.exec(self.chunk(*id)).map_err(|e| self.host_err(*id, e))?;
+        }
         Ok(())
     }
 
@@ -592,6 +601,7 @@ impl Vm {
                     .with("label", f.label.as_str())
                     .with("stmt", stmt)
                     .with("hash", format!("{:016x}", code.stmts[stmt as usize].hash))
+                    .with("count", code.stmts.len() as i64)
                     .with("after", after)
             })
             .collect::<Vec<_>>();
@@ -637,6 +647,14 @@ impl Vm {
                     }
                     code.stmts[s].first_op + after as u32
                 }
+                // The label has as many statements as before: the saved line was edited in
+                // place (a typo fixed, a live reload), so stay on it.
+                None if f.get("count").as_int() == Some(code.stmts.len() as i64)
+                    && stmt < code.stmts.len() =>
+                {
+                    warnings.push(format!("`{label}`: the saved line changed; resuming at its new version"));
+                    code.stmts[stmt].first_op + after as u32
+                }
                 None => {
                     warnings.push(format!(
                         "`{label}`: the saved line was changed or removed; resuming at the start of the label"
@@ -647,9 +665,18 @@ impl Vm {
             frames.push(Frame { label, pc });
         }
 
+        // A save loaded before the story ever started (from a main menu, or into a reloaded
+        // script) needs what `start` would have bound.
+        let fresh = self.state == State::NotStarted;
+        if fresh {
+            self.bind_defines(host)?;
+        }
         host.restore(save.get("vars")).map_err(|e| err(format!("restoring story variables: {e}")))?;
         // Defaults added in a game update fill in for old saves.
         self.apply_defaults(host)?;
+        if fresh {
+            self.run_init(host)?;
+        }
         self.frames = frames;
         self.stage = Stage::from_value(save.get("stage"));
         self.history.clear();
@@ -916,6 +943,20 @@ label leave:
     }
 
     #[test]
+    fn loading_into_an_unstarted_story_binds_defines() {
+        let src = "define m = Character(\"Mila\")\nlabel start:\n    m \"Hi.\"\n    m \"Again.\"\n";
+        let (mut vm1, mut h1) = vm(src);
+        next_line(&mut vm1, &mut h1);
+        let save = vm1.save().unwrap();
+        // A main menu loads the save without starting the story first.
+        let program = compile(&[("t.kulisa", src)]).unwrap();
+        let (mut vm2, mut h2) = (Vm::new(Arc::new(program)), Fake::default());
+        vm2.load(&mut h2, &save).unwrap();
+        let Event::Say(l) = vm2.next(&mut h2).unwrap() else { panic!("expected a line") };
+        assert_eq!(l.who.unwrap().data.get("name").as_str(), Some("Mila"));
+    }
+
+    #[test]
     fn saves_and_loads_mid_call() {
         let (mut vm1, mut h1) = vm(STORY);
         for _ in 0..3 {
@@ -958,6 +999,13 @@ label leave:
         let warnings = vm3.load(&mut h3, &save).unwrap();
         assert!(warnings[0].contains("start of the label"), "{warnings:?}");
         assert_eq!(next_line(&mut vm3, &mut h3), "One.");
+
+        // Rewritten in place (the label kept its statement count): stay on that line.
+        let v5 = "default a = 1\nlabel start:\n    \"One.\"\n    \"Two, fixed.\"\n    \"Three.\"\n";
+        let (mut vm5, mut h5) = vm(v5);
+        let warnings = vm5.load(&mut h5, &save).unwrap();
+        assert!(warnings[0].contains("resuming at its new version"), "{warnings:?}");
+        assert_eq!(next_line(&mut vm5, &mut h5), "Two, fixed.");
 
         let v4 = "label other:\n    \"x\"\nlabel start:\n    \"y\"\n";
         let mut bad = save.clone();
