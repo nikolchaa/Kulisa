@@ -49,7 +49,7 @@ or throw it away and become a chat app, a text RPG or a desktop simulator.
 - **Rollback and update-safe saves.** Scroll back through the story; saves survive story edits.
 - **Live reload.** Edit a story, image or shader and see it in the running game. Luau changes
   restart the game on the line you were on.
-- **Comes from Ren'Py?** `kulisa import` turns a Ren'Py project's scripts and art into a
+- **Coming from Ren'Py?** `kulisa import` turns a Ren'Py project's scripts and art into a
   Kulisa game.
 
 ## Two layers
@@ -122,22 +122,24 @@ needs the Android SDK and NDK, iOS a Mac with Xcode. `kulisa help` lists everyth
     <td width="50%"><img src="docs/media/text-rpg.webp" alt="text-rpg template"></td>
   </tr>
   <tr>
-    <td><b><a href="templates/classic-vn">classic-vn</a></b>: the Ren'Py-style visual novel. Skip, auto, rollback, history, saves, preferences, touch and gamepad.</td>
-    <td><b><a href="templates/text-rpg">text-rpg</a></b>: an illustrated text adventure with stats, inventory and a phone layout.</td>
+    <td><b><a href="templates/classic-vn">templates/classic-vn</a></b>: the Ren'Py-style visual novel. Skip, auto, rollback, history, saves, preferences, touch and gamepad.</td>
+    <td><b><a href="templates/text-rpg">templates/text-rpg</a></b>: an illustrated text adventure with stats, inventory and a phone layout.</td>
   </tr>
   <tr>
     <td><img src="docs/media/desktop-os.webp" alt="desktop-os template"></td>
     <td><img src="docs/media/pc-unwrap.webp" alt="pc-unwrap demo"></td>
   </tr>
   <tr>
-    <td><b><a href="templates/desktop-os">desktop-os</a></b>: a story told through a fake desktop: windows, chat, a browser, notifications.</td>
-    <td><b><a href="demos/pc-unwrap">pc-unwrap</a></b>: unbox a PC and peel its films. Meshes, cloth, custom shaders, sound and haptics.</td>
+    <td><b><a href="templates/desktop-os">templates/desktop-os</a></b>: a story told through a fake desktop: windows, chat, a browser, notifications.</td>
+    <td><b><a href="demos/pc-unwrap">demos/pc-unwrap</a></b>: unbox a PC and peel its films. Meshes, cloth, custom shaders, sound and haptics.</td>
   </tr>
 </table>
 
-Also in [`demos/`](demos): **parallax** (layers, terrain, GPU particles, post effects, a
-display lab for every screen shape), **interact** (drag and drop, gestures, gamepads, text
-input, sensors) and **smoke** (a small tour of the API).
+Also in [`demos/`](demos): **demos/parallax** (layers, terrain, GPU particles, post effects,
+a display lab for every screen shape), **demos/interact** (drag and drop, gestures, gamepads,
+text input, sensors) and **demos/smoke** (a small tour of the API).
+
+Run any of them by its folder:
 
 ```sh
 cargo run -p kulisa-player -- demos/parallax
