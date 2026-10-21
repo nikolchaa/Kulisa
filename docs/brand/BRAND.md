@@ -11,6 +11,13 @@ translucent back flat. The layering is a nod to scenery wings and to parallax de
 Keep clear space of at least one stem width around the mark. Do not add gradients,
 outlines, shadows or rotate it.
 
+## Banner
+
+`banner-dark.svg` and `banner-light.svg` (1280×400, text as outlines) head the README, which
+picks one by color scheme. The mark stands on a lit stage floor with two copies behind it as
+flats further upstage. `social-preview.png` (1280×640) is the repository's social preview
+image (GitHub: Settings → General → Social preview).
+
 ## Color
 
 | Token     | Hex       | Use                                   |
