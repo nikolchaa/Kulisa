@@ -27,6 +27,7 @@ id = "cat_tales"         # save folder and app ids: letters, digits, _ and -
 title = "Cat Tales"      # window and page title, app name
 version = "1.0.0"        # shown to players (versionName, CFBundleShortVersionString)
 build = 1                # raise it for every store upload (versionCode, CFBundleVersion)
+icon = "icon.png"        # the app icon: a square PNG, 1024x1024 ideally (this is the default)
 
 [display]                # the same keys as kulisa.display{}, applied before main.luau
 width = 1920
@@ -51,6 +52,9 @@ package = "com.example.cattales"   # default dev.kulisa.<id>
 bundle_id = "com.example.cattales" # default dev.kulisa.<id>
 ```
 
+- The icon is the window and taskbar icon on desktop, and `kulisa build` makes the Windows
+  program's icon, an adaptive Android launcher icon, iOS home-screen icons and the web page's
+  icons from it. Without one, platforms show their default icon.
 - `kulisa.config` is the whole file as read-only tables (`kulisa.config.game.title`), so games
   can keep their own sections too.
 - `kulisa.save.setup()` without an `id` uses `[game] id`.

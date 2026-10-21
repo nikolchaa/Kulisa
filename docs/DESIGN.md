@@ -22,7 +22,7 @@ tests passing and this document updated.
 | M7 | PC unwrap demo | `demos/pc-unwrap`: unboxing a Blockbench-rendered PC from its box, a plastic sleeve pulled off over the top, films peeled off the side and front glass, tape, an I/O sticker, a squeegee with air bubbles, glossy plastic shading; public API only (§9, M7 section) | Done |
 | M8 | More templates and the parallax demo | `templates/desktop-os`, `templates/text-rpg`; `demos/parallax` (layers, pointer/gyro camera, GPU particles, shader sky, depth-map 2.5D, phone-portrait / desktop-landscape / 21:9 display demo); example post-fx (bloom, blur, grading, CRT, grain); classic-vn reworked as a cat-themed sample (§9, M8 section) | Done |
 | M9 | CLI, live reload, quality tiers | `kulisa-cli` (`new --template`, `run`, `build <target>`), live reload of stories, Luau, shaders and assets, on-screen error view, game config (`kulisa.toml`), quality tiers with render scale (§11, M9 section) | Done |
-| M10 | Ren'Py importer | Basic `.rpy` import: labels, dialogue, menus, jumps, scene/show | Planned |
+| M10 | Ren'Py importer | `kulisa import`: `.rpy` labels, dialogue, menus, conditions, jumps and calls, scene/show/hide/with, audio, simple Python; images and sounds; app icons on every platform (M10 section) | Done |
 
 Not yet placed: story-language animation (an ATL equivalent over tweens and
 timelines), layered sprites, sprite sheets, voice auto-advance. Assign them when
@@ -75,7 +75,8 @@ kulisa-story  kulisa-ui  kulisa-audio  kulisa-text --> kulisa-render
 | `kulisa-ui` | Widget elements, reconciliation, layout, hit testing, gestures, signal dependencies (draws nothing; `kulisa-lua` turns widgets into nodes) | `kulisa-core` |
 | `kulisa-runtime` | Window, frame loop, finding the game, forwarding input, live reload (folder watcher, web dev polling) | `kulisa-lua`, `winit` |
 | `kulisa-player` | Per-target entry points, `cdylib` for Android/web | `kulisa-runtime` |
-| `kulisa-cli` | `kulisa new/run/build/pack/serve`, packaging (desktop folder, APK, web page, .app) from `kulisa.toml`; `cargo xtask` is a shim over it | `kulisa-platform` (host-only) |
+| `kulisa-renpy` | Ren'Py import: `.rpy` to `.kulisa`, Python expressions to Luau, image and audio names, notes on what was left out | std only (host-only) |
+| `kulisa-cli` | `kulisa new/import/run/build/pack/serve`, packaging (desktop folder, APK, web page, .app) from `kulisa.toml`; `cargo xtask` is a shim over it | `kulisa-platform` (host-only) |
 
 Rules:
 
@@ -364,7 +365,7 @@ narration `"text"`), `menu:` (optional caption line, choices with optional
 `if` guards), `if`/`elif`/`else`, `jump`, `call`/`return`, `$ <luau>`, `lua:`
 blocks, `scene [image...] [with t]`, `show image... [at position] [with t]`,
 `hide tag [with t]`, `with t`, `play <channel> "file" [fadein s] [loop|noloop]`,
-`stop <channel> [fadeout s]`, `pause [s]`.
+`stop <channel> [fadeout s]`, `pause [s]`, `pass` (does nothing).
 
 - Text is the text system's markup (`{b}`, `{wave}`, `{ruby=…}`, …) plus
   `[expression]` interpolation; `[[` is a literal bracket. Brackets nest
@@ -783,6 +784,14 @@ never touch it. The font is a 5x7 ASCII bitmap in the source, scaled by whole pi
 view works with no game assets. It shows startup failures and errors no `error` handler takes;
 development runs show every error.
 
+**App icons** (added with M10). `[game] icon` (default `icon.png`) is decoded by the runtime for
+desktop windows; `kulisa build` turns it into a Windows `.ico` (PNG entries 16 to 256 px)
+that the player's build script compiles into a resource with `llvm-rc` or the SDK's `rc`
+(no new crate), an adaptive Android icon (the art as the 432 px background layer, plus a
+192 px legacy icon, compiled with `aapt2`), iOS `AppIcon*` PNGs listed in the plist (no
+asset catalog: enough for devices and the simulator, not for the App Store) and the web
+page's icon links. macOS gets no icon until there is a `.app`.
+
 **Quality tiers.** The tier (low, medium, high) comes from the adapter (software and GL low,
 discrete and Apple silicon high, phones and browsers medium) unless the config, an env var or
 the URL names one. The engine applies one knob itself, a render scale that caps the pixels
@@ -790,6 +799,37 @@ drawn per frame: window passes draw into a smaller screen texture and present st
 while geometry, layout, `in.pixel` and `resolution` stay in window units (the projection
 does the mapping), so input and shaders are unaffected. In `auto` mode a 3 s window under
 40 fps steps the tier down. Games read `kulisa.quality` for their own costs.
+
+### Ren'Py import (M10)
+
+`kulisa import RENPY` makes a new game from the classic-vn template, replaces its story with
+the converted scripts, copies the art and sounds, and writes `IMPORT.md`. The converter
+(`kulisa-renpy`, no engine dependencies) works on logical lines (brackets and triple-quoted
+strings joined, comments stripped) and converts block by block, re-indenting to four spaces:
+
+- **Statements**: labels (parameters dropped), say lines (character, attributes as a `show`
+  of the character's image tag, string speakers as generated characters, `extend`,
+  narration from `narrator`, `centered` and nameless characters), `menu` (caption, guarded
+  choices), `if`/`elif`/`else`, `jump`/`call`/`return`, `scene`/`show`/`hide`/`with`
+  (positions and transitions mapped to the template's), `play`/`queue`/`voice`/`stop`
+  (Ren'Py audio names and the `audio/` folder resolved), `pause`, `$` lines and `python:`
+  blocks of simple assignments, `define`/`default` (hoisted out of labels).
+- **Python to Luau**: literals, `and`/`or`/`not`, `!=`, `**`, string `+`, lists, dicts,
+  calls with keyword arguments as a trailing table (`Character("Eileen", { color = ... })`),
+  a few builtins. Indexing (0- vs 1-based), methods, comprehensions, `in`, formatting and
+  f-strings are reported instead of guessed.
+- **Text**: shared tags stay; `{w}`, `{p}`, `{size}`, `{cps=*n}` map; the rest are dropped
+  with their closing tags. `[name!t]` keeps the expression.
+- **Left out, with a note**: screens, transforms (ATL), styles, translations, `while`,
+  Ren'Py's own APIs. Unconverted lines stay in the story as `# Ren'Py:` comments; blocks
+  that end up empty get `pass` (added to the story language for this).
+- **Assets**: files in `images/` are named the Ren'Py way (folders dropped, lowercase);
+  `image` statements with a file name theirs. `options.rpy` and `gui.rpy` give the title,
+  version, design size (`gui.init`) and icon (`config.window_icon`).
+
+The result keeps Ren'Py's resolution (one design unit is one Ren'Py pixel, so art fits as
+authored); classic-vn scales its interface with the design height so it looks the same at
+1280x720 as at 1920x1080.
 
 ## 12. Risks
 
@@ -902,3 +942,7 @@ does the mapping), so input and shaders are unaffected. In `auto` mode a 3 s win
 | 2026-10-21 | M9: the error view uses a 5x7 bitmap font in the engine source (no bundled font file, works without game assets) and draws as an overlay pass outside the game's scene. |
 | 2026-10-21 | M9: the only engine-side quality knob is a render scale (pixel budget per tier); particle counts, effect chains and the like stay game decisions read from `kulisa.quality`. |
 | 2026-10-21 | M9: `Vm::load` binds defines and runs init blocks when the VM has not started (saves loaded from a main menu lost their characters), and saves record each label's statement count so a line edited in place resumes at its new version. |
+| 2026-10-21 | M10: the Ren'Py importer converts what maps cleanly and leaves the rest as `# Ren'Py:` comments plus a notes file, rather than emulating Ren'Py's Python or ATL: the output is ordinary Kulisa a person can keep editing. |
+| 2026-10-21 | M10: imports keep Ren'Py's resolution as the design size, and templates scale their interface to the design height, so imported art keeps its proportions. |
+| 2026-10-21 | M10: `pass` joins the story language (Ren'Py has it; converted blocks can end up empty). |
+| 2026-10-21 | App icons come from one square PNG in `kulisa.toml`; the Windows icon is embedded by the player's build script through `llvm-rc`/`rc` instead of a resource crate, and Android gets an adaptive icon with the art as its background layer. |

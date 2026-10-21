@@ -11,7 +11,10 @@ kulisa run --web        # the same in the browser
 kulisa build android    # or windows, linux, macos, web, ios
 ```
 
-Title, save id, version and display shape are in `kulisa.toml`.
+Title, save id, version, display shape and app icon (`icon.png`) are in `kulisa.toml`.
+
+Coming from Ren'Py? `kulisa import path/to/project` makes a game on this template from a Ren'Py
+project's scripts, art and sounds, and lists what it could not convert in `IMPORT.md`.
 
 ## What is in it
 
