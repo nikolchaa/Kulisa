@@ -21,6 +21,10 @@ pub(crate) const PARTICLE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
 /// surface cannot be viewed as sRGB (some GLES drivers).
 pub(crate) const PRESENT_ENCODE: &str = "fn fragment(in: VertexOut) -> vec4<f32> {
     let c = textureSample(tex, samp, in.uv);
+    // Windows with an sRGB view encode on their own: a plain (scaled) copy.
+    if (params.p[0].x < 0.5) {
+        return vec4<f32>(c.rgb, 1.0);
+    }
     let lo = c.rgb * 12.92;
     let hi = 1.055 * pow(c.rgb, vec3<f32>(1.0 / 2.4)) - 0.055;
     return vec4<f32>(select(hi, lo, c.rgb <= vec3<f32>(0.0031308)), 1.0);

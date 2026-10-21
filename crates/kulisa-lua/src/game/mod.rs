@@ -14,6 +14,7 @@ mod mesh;
 mod pad;
 mod particles;
 mod pointer;
+mod quality;
 mod reload;
 mod sensors;
 mod typing;
@@ -136,6 +137,7 @@ pub(crate) struct State {
     pub reload_requested: bool,
     /// The first error `kulisa.toml` or `main.luau` raised at startup.
     pub start_error: Option<String>,
+    pub quality: quality::Quality,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -592,7 +594,11 @@ impl Game {
             errors: Default::default(),
             reload_requested: false,
             start_error: None,
+            quality: Default::default(),
         };
+        let gpu = state.renderer.gpu().clone();
+        let tier = state.config.quality.clone();
+        state.quality.setup(&gpu, &device, &tier);
         state.display.device = device;
         state.errors.dev = dev;
         let shared = Rc::new(RefCell::new(state));
@@ -676,6 +682,7 @@ impl Game {
 
     /// Advances time, tweens, script tasks, the story's timed pauses and text animation.
     pub fn frame(&mut self, dt: f32) {
+        quality::update(&self.state, dt);
         let dt = dt.clamp(0.0, 0.25);
         {
             let mut st = self.state.borrow_mut();

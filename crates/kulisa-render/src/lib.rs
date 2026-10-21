@@ -35,6 +35,25 @@ pub struct FrameStats {
     pub vertices: u32,
 }
 
+/// What kind of GPU the renderer runs on, for quality tiers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuKind {
+    Discrete,
+    Integrated,
+    /// A software rasterizer (CI, machines without a GPU driver).
+    Software,
+    /// Unknown: browsers (WebGPU, WebGL) and some mobile drivers.
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct GpuInfo {
+    pub name: String,
+    /// `vulkan`, `metal`, `dx12`, `gl` (also WebGL2) or `browserwebgpu`.
+    pub backend: String,
+    pub kind: GpuKind,
+}
+
 /// Format of all render targets, transients and scratch textures.
 const RT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 /// Images up to this size (each side) are packed into atlas pages.
@@ -126,6 +145,8 @@ struct Uniforms {
     /// Particle uniform blocks, and each particle item's byte offset in them.
     particles: Vec<u8>,
     item_particles: Vec<Vec<u32>>,
+    /// The present pass's params slot.
+    present_param: u32,
 }
 
 /// Where a pass's effect chain reads and writes: indices into `Renderer::scratch`.
@@ -200,6 +221,11 @@ pub struct Renderer {
     frame: Frame,
     stats: FrameStats,
     warned_feedback: bool,
+    /// Fraction of the window's pixels each side is drawn at (quality tiers), 0.25 to 1.
+    render_scale: f32,
+    /// This frame draws window passes into `screen`, which present then copies to the window.
+    via_screen: bool,
+    gpu: GpuInfo,
 }
 
 /// Particle drawing: its pipeline layout and uniform buffer, shader variants and buffers.
@@ -620,6 +646,18 @@ impl Renderer {
             frame: Frame::default(),
             stats: FrameStats::default(),
             warned_feedback: false,
+            render_scale: 1.0,
+            via_screen: false,
+            gpu: GpuInfo {
+                name: info.name.clone(),
+                backend: format!("{:?}", info.backend).to_lowercase(),
+                kind: match info.device_type {
+                    wgpu::DeviceType::DiscreteGpu => GpuKind::Discrete,
+                    wgpu::DeviceType::IntegratedGpu => GpuKind::Integrated,
+                    wgpu::DeviceType::Cpu => GpuKind::Software,
+                    _ => GpuKind::Other,
+                },
+            },
         };
         r.upload(&r.white_tex.texture, 0, 0, &Image::solid(1, 1, [255; 4]));
         let sprite = r.module("sprite", shader::build("sprite", shader::SPRITE)?);
@@ -654,6 +692,21 @@ impl Renderer {
     /// Drawable size in pixels.
     pub fn size(&self) -> UVec2 {
         self.size
+    }
+
+    /// The GPU and graphics API in use.
+    pub fn gpu(&self) -> &GpuInfo {
+        &self.gpu
+    }
+
+    /// Draws the window at `scale` (0.25 to 1) of its pixels on each side and stretches the
+    /// result over it: fewer pixels to fill on weak GPUs. Headless renderers ignore it.
+    pub fn set_render_scale(&mut self, scale: f32) {
+        self.render_scale = scale.clamp(0.25, 1.0);
+    }
+
+    pub fn render_scale(&self) -> f32 {
+        self.render_scale
     }
 
     /// Counters for the last rendered frame.
@@ -709,6 +762,11 @@ impl Renderer {
         self.transients.clear();
         self.screen = None;
         Ok(())
+    }
+
+    /// Draws offscreen (tests, tools) rather than into a window.
+    pub fn is_headless(&self) -> bool {
+        matches!(self.output, Output::Headless(_))
     }
 
     pub fn is_suspended(&self) -> bool {
@@ -999,7 +1057,7 @@ impl Renderer {
     /// Format of the texture a pass writes into. Captures always write `RT_FORMAT`.
     fn target_format(&self, target: PassTarget, capture: bool) -> wgpu::TextureFormat {
         match target {
-            PassTarget::Surface if !self.encode_on_present && !capture => self.out_format,
+            PassTarget::Surface if !self.via_screen && !capture => self.out_format,
             _ => RT_FORMAT,
         }
     }
@@ -1026,7 +1084,9 @@ impl Renderer {
         }
     }
 
-    fn uniforms(&self, frame: &Frame, time: f32) -> Uniforms {
+    /// `layout` is the size the frame was laid out for: window passes keep its coordinates
+    /// (and `in.pixel`, `resolution`) even when a render scale draws them smaller.
+    fn uniforms(&self, frame: &Frame, time: f32, layout: UVec2) -> Uniforms {
         let a = self.align as usize;
         let mut u = Uniforms::default();
         let push_globals = |u: &mut Uniforms, size: UVec2| {
@@ -1037,7 +1097,8 @@ impl Renderer {
             at as u32
         };
         for pass in &frame.passes {
-            push_globals(&mut u, pass.size);
+            let windowed = matches!(pass.target, PassTarget::Surface | PassTarget::Transient(_));
+            push_globals(&mut u, if windowed { layout } else { pass.size });
         }
         // Present pass globals, then one slot per effect.
         push_globals(&mut u, self.size);
@@ -1079,6 +1140,10 @@ impl Renderer {
                 .push(pass.items.iter().map(|i| i.material.map_or(0, |m| push(&m.params))).collect());
             u.effect_params.push(pass.effects.iter().map(|e| push(&e.material.params)).collect());
         }
+        // Present encodes to sRGB itself only where the window has no sRGB view.
+        let mut encode = [0.0; 16];
+        encode[0] = if self.encode_on_present { 1.0 } else { 0.0 };
+        u.present_param = push(&encode);
         u
     }
 
@@ -1251,6 +1316,26 @@ impl Renderer {
         }
         self.remap_uvs(&mut frame);
 
+        // Render scale: window passes draw into a smaller screen texture that present
+        // stretches over the window. Geometry stays in window pixels (the projection maps it).
+        let windowed = !capturing && matches!(self.output, Output::Surface { .. });
+        let scale = if windowed { self.render_scale } else { 1.0 };
+        let draw = (size.as_vec2() * scale).round().as_uvec2().max(UVec2::ONE);
+        self.via_screen = windowed && (self.encode_on_present || draw != size);
+        if draw != size {
+            for pass in &mut frame.passes {
+                if matches!(pass.target, PassTarget::Surface | PassTarget::Transient(_)) {
+                    pass.size = draw;
+                    for item in &mut pass.items {
+                        if let Some([x, y, w, h]) = item.clip {
+                            let s = |v: u32| (v as f32 * scale).round() as u32;
+                            item.clip = Some([s(x), s(y), s(w).max(1), s(h).max(1)]);
+                        }
+                    }
+                }
+            }
+        }
+
         // A full-target quad for every effect (at its output size), plus one for present.
         let effect_quads: Vec<Vec<_>> = frame
             .passes
@@ -1259,19 +1344,19 @@ impl Renderer {
             .map(|p| (0..p.effects.len()).map(|k| ortho_quad(effect_size(p, k), &mut frame)).collect())
             .collect();
         let present_quad = ortho_quad(self.size, &mut frame);
-        let uniforms = self.uniforms(&frame, time);
+        let uniforms = self.uniforms(&frame, time, size);
 
         // Resources: transients, scratch, buffers, pipelines.
         for t in &mut self.transients {
-            if t.size != size {
-                *t = create_gpu_texture(&self.device, &self.texture_layout, &self.sampler, size, true);
+            if t.size != draw {
+                *t = create_gpu_texture(&self.device, &self.texture_layout, &self.sampler, draw, true);
             }
         }
         while self.transients.len() < frame.transients as usize {
-            self.transients.push(self.new_texture(size, true));
+            self.transients.push(self.new_texture(draw, true));
         }
-        if self.encode_on_present && self.screen.is_none() {
-            self.screen = Some(self.new_texture(self.size, true));
+        if self.via_screen && self.screen.as_ref().is_none_or(|s| s.size != draw) {
+            self.screen = Some(self.new_texture(draw, true));
         }
         let mut plans = Vec::with_capacity(frame.passes.len());
         for pass in &frame.passes {
@@ -1320,7 +1405,7 @@ impl Renderer {
                 self.pipeline(self.shader_index(e.material.shader), Blend::Replace, f);
             }
         }
-        if self.encode_on_present && !capturing {
+        if self.via_screen {
             self.pipeline(PRESENT_SHADER, Blend::Replace, self.out_format);
         }
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -1359,7 +1444,8 @@ impl Renderer {
             Some(Tex::Own(t)) => Some(&t.view),
             _ => None,
         });
-        let screen_view = match (capture_view, &self.screen, &surface_view, &self.output) {
+        let screen = self.screen.as_ref().filter(|_| self.via_screen);
+        let screen_view = match (capture_view, screen, &surface_view, &self.output) {
             (Some(v), ..) => v,
             (None, Some(s), _, _) => &s.view,
             (None, None, Some(v), _) => v,
@@ -1433,7 +1519,7 @@ impl Renderer {
                 }
             }
         }
-        if let (Some(screen), Some(view), false) = (&self.screen, &surface_view, capturing) {
+        if let (Some(screen), Some(view)) = (screen, &surface_view) {
             let globals = (frame.passes.len() as u64 * self.align) as u32;
             self.draw_fullscreen(
                 &mut encoder,
@@ -1444,7 +1530,7 @@ impl Renderer {
                     input: &screen.bind_group,
                     mask: &self.white_tex.bind_group,
                     globals,
-                    param: 0,
+                    param: uniforms.present_param,
                 },
                 present_quad,
             );

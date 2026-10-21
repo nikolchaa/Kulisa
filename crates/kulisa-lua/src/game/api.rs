@@ -1769,6 +1769,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     k.set("window", WindowRef)?;
+    k.set("quality", super::quality::QualityRef)?;
     k.set("camera", CameraRef)?;
     k.set("screen", ScreenRef)?;
 

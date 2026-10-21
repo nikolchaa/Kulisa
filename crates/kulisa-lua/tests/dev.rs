@@ -232,3 +232,26 @@ fn error_view_shot() {
     std::fs::create_dir_all(&shots).unwrap();
     std::fs::write(Path::new(&shots).join("error_view.png"), img.encode_png().unwrap()).unwrap();
 }
+
+#[test]
+fn quality_tiers() {
+    let main = b"kulisa.on('quality', function(t) changed = t end)";
+    let dir = folder(&[("main.luau", main), ("kulisa.toml", b"[quality]\ntier = \"high\"")]);
+    let Some(mut g) = dev_game(&dir) else { return };
+    let (tier, auto, detected): (String, bool, String) =
+        g.eval("t", "local q = kulisa.quality; return q.tier, q.auto, q.detected").unwrap();
+    assert_eq!((tier.as_str(), auto), ("high", false), "kulisa.toml chose the tier");
+    assert!(["low", "medium", "high"].contains(&detected.as_str()));
+    g.frame(0.016);
+    assert!(g.eval::<bool>("t", "return changed == nil").unwrap(), "the startup tier is not a change");
+
+    g.eval::<()>("t", "kulisa.quality.tier = 'low'").unwrap();
+    g.frame(0.016);
+    assert_eq!(g.eval::<String>("t", "return changed").unwrap(), "low");
+    g.eval::<()>("t", "kulisa.quality.render_scale = 0.5").unwrap();
+    assert_eq!(g.eval::<f32>("t", "return kulisa.quality.render_scale").unwrap(), 0.5);
+    g.eval::<()>("t", "kulisa.quality.render_scale = nil; kulisa.quality.tier = 'auto'").unwrap();
+    assert!(g.eval::<bool>("t", "return kulisa.quality.auto and kulisa.quality.render_scale == 1").unwrap());
+    let err = g.eval::<()>("t", "kulisa.quality.tier = 'ultra'").unwrap_err();
+    assert!(err.contains("\"auto\", \"low\""), "{err}");
+}

@@ -17,7 +17,7 @@ Fx.grades = {
 }
 Fx.grade = 1
 
-Fx.on = { bloom = true, tiltshift = false, grade = true, crt = false, grain = true }
+Fx.on = { bloom = kulisa.quality.tier ~= "low", tiltshift = false, grade = true, crt = false, grain = true }
 
 -- A wide blur: down to 1/16 and back up, starting from the image the chain is at.
 local function blur_chain(list, start_scale: number)

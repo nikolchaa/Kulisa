@@ -36,6 +36,15 @@ Valley.build(world)
 Diorama.build(world)
 Fx.apply(world)
 
+-- Quality tiers: bloom (eight passes) is the costly look, so the low tier starts without it, and
+-- it goes off when the engine steps down to low on a slow device.
+kulisa.on("quality", function(tier: string)
+    if tier == "low" and Fx.on.bloom then
+        Fx.on.bloom = false
+        Fx.apply(world)
+    end
+end)
+
 local state = {
     scene = ui.signal("valley"),
     cycle = ui.signal(false),
@@ -423,8 +432,9 @@ kulisa.on("update", function(dt)
     elapsed += dt
     if elapsed >= 0.5 then
         local alive = if state.scene:peek() == "valley" then Valley.alive() else Diorama.alive()
-        state.stats_text:set(string.format("%.0f fps  ·  %.2f ms/frame  ·  script %.2f ms  ·  %d particles",
-            frames / elapsed, elapsed / frames * 1000, script / frames * 1000, alive))
+        local q = kulisa.quality
+        state.stats_text:set(string.format("%.0f fps  ·  %.2f ms/frame  ·  script %.2f ms  ·  %d particles  ·  %s quality at %d%%",
+            frames / elapsed, elapsed / frames * 1000, script / frames * 1000, alive, q.tier, q.render_scale * 100))
         frames, elapsed, script = 0, 0, 0
     end
     script += os.clock() - frame_start
