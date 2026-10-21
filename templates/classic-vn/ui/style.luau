@@ -6,9 +6,11 @@ local ui = kulisa.ui
 local c = config.colors
 local style = {}
 
--- Bigger touch targets on phones.
+-- The interface is drawn for a 1920x1080 design; games with another design size (a Ren'Py
+-- import at 1280x720, say) get it scaled to match. Bigger touch targets on phones.
 style.phone = kulisa.screen.profile == "phone"
-style.scale = if style.phone then 1.35 else 1
+style.design = math.min(kulisa.screen.width / 1920, kulisa.screen.height / 1080)
+style.scale = (if style.phone then 1.35 else 1) * style.design
 
 function style.size(n: number): number
     return math.floor(n * style.scale + 0.5)
@@ -85,7 +87,7 @@ function style.option(text: string, selected: boolean, on_click)
                 height = box,
                 background = "gui/round.png",
                 slice = 16,
-                slice_scale = 0.4,
+                slice_scale = 0.4 * style.design,
                 tint = c.disabled,
                 hover_tint = c.haze,
                 selected_tint = c.accent,
@@ -118,6 +120,7 @@ function style.card(on_click, opts, children)
         autofocus = opts.autofocus,
         background = "gui/round.png",
         slice = 16,
+        slice_scale = style.design,
         tint = opts.tint or "#1d1c25e6",
         hover_tint = opts.hover_tint or "#3a2a2af0",
         pressed_tint = "#552f22f0",
@@ -143,7 +146,7 @@ function style.slider(value: number, min: number, max: number, on_change, opts)
         thumb_size = style.size(28),
         background = "gui/round.png",
         slice = 14,
-        slice_scale = 0.5,
+        slice_scale = 0.5 * style.design,
         tint = "#2c2b35",
         bar = { image = "gui/round.png", tint = config.colors.accent },
         thumb = { image = "gui/knob.png", tint = config.colors.paper },

@@ -46,6 +46,7 @@ ui.screen("quick", function()
             margin = style.size(20),
             background = "gui/round.png",
             slice = 16,
+            slice_scale = style.design,
             tint = "#111116cc",
             padding = { style.size(8), style.size(18) },
             style.label(if mode == "skip" then "Skipping" else "Auto", { size = style.size(24), color = config.colors.accent }),
