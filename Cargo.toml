@@ -12,6 +12,7 @@ repository = "https://github.com/nikolchaa/Kulisa"
 
 [workspace.dependencies]
 kulisa-audio = { path = "crates/kulisa-audio" }
+kulisa-cli = { path = "crates/kulisa-cli" }
 kulisa-core = { path = "crates/kulisa-core" }
 kulisa-platform = { path = "crates/kulisa-platform" }
 kulisa-render = { path = "crates/kulisa-render" }

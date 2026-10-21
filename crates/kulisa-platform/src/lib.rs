@@ -13,7 +13,7 @@ mod web_text;
 pub use assets::build_pack;
 #[cfg(target_arch = "wasm32")]
 pub use assets::fetch;
-pub use assets::{Assets, Pack, normalize};
+pub use assets::{Assets, Pack, is_game_file, normalize};
 pub use config::{CONFIG_FILE, Config, ConfigValue, GameConfig, ORIENTATIONS, QUALITY_TIERS, valid_id};
 pub use device::{Motion, dev_override, profile_override, quality_override, safe_area_override};
 #[cfg(target_arch = "wasm32")]

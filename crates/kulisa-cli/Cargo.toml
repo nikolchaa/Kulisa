@@ -1,0 +1,15 @@
+[package]
+name = "kulisa-cli"
+description = "The kulisa command: new games from templates, development runs with live reload, builds for every platform."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "kulisa"
+path = "src/main.rs"
+
+[dependencies]
+kulisa-platform.workspace = true

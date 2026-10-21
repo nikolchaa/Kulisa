@@ -21,26 +21,23 @@ pub struct Watcher {
     last_change: Instant,
 }
 
-/// Editor backups, swap files and version control are not game files.
-fn ignored(name: &str) -> bool {
-    name.starts_with('.') || name.ends_with('~') || name.ends_with(".tmp") || name.ends_with(".swp")
-}
-
 fn scan(root: &Path) -> HashMap<String, Stamp> {
     let mut out = HashMap::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-            if ignored(&entry.file_name().to_string_lossy()) {
+            let path = entry.path();
+            let Ok(rel) = path.strip_prefix(root) else { continue };
+            // Build output, hidden files and editor leftovers are not the game.
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if !kulisa_platform::is_game_file(&rel) {
                 continue;
             }
-            let path = entry.path();
             let Ok(meta) = entry.metadata() else { continue };
             if meta.is_dir() {
                 stack.push(path);
-            } else if let Ok(rel) = path.strip_prefix(root) {
-                let stamp = (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len());
-                out.insert(rel.to_string_lossy().replace('\\', "/"), stamp);
+            } else {
+                out.insert(rel, (meta.modified().unwrap_or(SystemTime::UNIX_EPOCH), meta.len()));
             }
         }
     }

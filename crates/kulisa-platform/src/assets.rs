@@ -100,7 +100,20 @@ impl Pack {
     }
 }
 
-/// Packs every file under `dir` into `.kpak` bytes (build tools; native only).
+/// Whether a path in a game folder is part of the game: build output (`dist/`), hidden
+/// files (`.git`, `.DS_Store`) and editor leftovers (`~`, `.swp`, `.tmp`) are not.
+pub fn is_game_file(path: &str) -> bool {
+    let path = path.replace('\\', "/");
+    let mut parts = path.split('/').filter(|p| !p.is_empty());
+    let first = parts.clone().next();
+    if first == Some("dist") {
+        return false;
+    }
+    !parts.any(|p| p.starts_with('.') || p.ends_with('~') || p.ends_with(".swp") || p.ends_with(".tmp"))
+}
+
+/// Packs every game file under `dir` ([`is_game_file`]) into `.kpak` bytes (build tools;
+/// native only).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn build_pack(dir: &Path) -> Result<Vec<u8>, String> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
@@ -111,7 +124,9 @@ pub fn build_pack(dir: &Path) -> Result<Vec<u8>, String> {
                 walk(base, &path, out)?;
             } else {
                 let rel = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
-                out.push((rel, path));
+                if is_game_file(&rel) {
+                    out.push((rel, path));
+                }
             }
         }
         Ok(())
@@ -248,6 +263,25 @@ mod tests {
         std::fs::write(dir.join("story/extra/b.kulisa"), "").unwrap();
         std::fs::write(dir.join("logo.bin"), [0u8, 159, 255]).unwrap();
         dir
+    }
+
+    #[test]
+    fn packs_leave_out_build_output_and_hidden_files() {
+        let dir = game();
+        std::fs::create_dir_all(dir.join("dist/web")).unwrap();
+        std::fs::write(dir.join("dist/web/game.kpak"), "x").unwrap();
+        std::fs::write(dir.join(".DS_Store"), "x").unwrap();
+        std::fs::write(dir.join("story/a.kulisa~"), "x").unwrap();
+        let pack = Assets::pack(build_pack(&dir).unwrap()).unwrap();
+        assert_eq!(pack.list(""), ["logo.bin", "main.luau", "story/a.kulisa", "story/extra/b.kulisa"]);
+        assert!(is_game_file("story/dist/x.png"), "only the top-level dist folder is build output");
+        assert!(!is_game_file("images/.thumbs/x.png"));
+
+        // Live reload on the web compares packs.
+        std::fs::write(dir.join("main.luau"), "print('bye')").unwrap();
+        std::fs::write(dir.join("new.txt"), "n").unwrap();
+        let newer = Assets::pack(build_pack(&dir).unwrap()).unwrap();
+        assert_eq!(newer.changed_since(&pack), ["main.luau", "new.txt"]);
     }
 
     #[test]

@@ -4,3 +4,10 @@
 id = "kulisa_smoke"
 title = "Kulisa smoke test"
 version = "0.1.0"
+
+# CI and the engine docs launch the smoke test under the player's ids.
+[android]
+package = "dev.kulisa.player"
+
+[ios]
+bundle_id = "dev.kulisa.player"

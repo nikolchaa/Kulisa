@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-description = "Engine development tasks: web, Android and iOS builds."
+description = "Engine development tasks: the kulisa builds with the engine defaults (CI)."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,4 +8,4 @@ license.workspace = true
 publish = false
 
 [dependencies]
-kulisa-platform = { path = "../crates/kulisa-platform" }
+kulisa-cli = { path = "../crates/kulisa-cli" }
