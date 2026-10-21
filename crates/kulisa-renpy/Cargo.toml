@@ -1,0 +1,11 @@
+[package]
+name = "kulisa-renpy"
+description = "Imports Ren'Py scripts and assets into Kulisa games."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dev-dependencies]
+kulisa-story.workspace = true

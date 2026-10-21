@@ -1288,6 +1288,8 @@ name = "kulisa-cli"
 version = "0.1.0"
 dependencies = [
  "kulisa-platform",
+ "kulisa-renpy",
+ "kulisa-story",
 ]
 
 [[package]]
@@ -1349,6 +1351,13 @@ dependencies = [
  "log",
  "pollster",
  "wgpu",
+]
+
+[[package]]
+name = "kulisa-renpy"
+version = "0.1.0"
+dependencies = [
+ "kulisa-story",
 ]
 
 [[package]]

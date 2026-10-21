@@ -16,6 +16,7 @@ kulisa-cli = { path = "crates/kulisa-cli" }
 kulisa-core = { path = "crates/kulisa-core" }
 kulisa-platform = { path = "crates/kulisa-platform" }
 kulisa-render = { path = "crates/kulisa-render" }
+kulisa-renpy = { path = "crates/kulisa-renpy" }
 kulisa-lua = { path = "crates/kulisa-lua" }
 kulisa-runtime = { path = "crates/kulisa-runtime" }
 kulisa-story = { path = "crates/kulisa-story" }

@@ -13,3 +13,5 @@ path = "src/main.rs"
 
 [dependencies]
 kulisa-platform.workspace = true
+kulisa-renpy.workspace = true
+kulisa-story.workspace = true

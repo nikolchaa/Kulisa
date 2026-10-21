@@ -12,6 +12,8 @@ const HELP: &str = "kulisa: make and build Kulisa games
 
   kulisa new NAME [--template T] [--dir DIR]    start a game from a template (default classic-vn)
   kulisa templates                              list the templates
+  kulisa import RENPY [--template T] [--dir DIR]
+                                                a new game from a Ren'Py project's scripts and art
   kulisa run [GAME] [--release] [--profile P]   play it on this computer with live reload
              [--web] [--port N]                   in the browser, with live reload
              [--android] [--abi LIST]             on a connected Android device or emulator
@@ -97,6 +99,7 @@ fn main() {
     };
     let result = Args::parse(rest).and_then(|a| match command {
         "new" => new(&a),
+        "import" => import(&a),
         "templates" => templates().map(|list| println!("{}", list.join("\n"))),
         "run" => play(&a),
         "build" => build(&a),
@@ -147,45 +150,55 @@ fn id_from(name: &str) -> String {
     if id.is_empty() { "my_game".into() } else { id }
 }
 
+/// A TOML string.
+fn toml_str(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// Sets `[game] id` and `title` in a template's `kulisa.toml` source.
 fn set_identity(toml: &str, id: &str, title: &str) -> String {
-    let title = title.replace('\\', "\\\\").replace('"', "\\\"");
-    let wanted = [format!("id = \"{id}\""), format!("title = \"{title}\"")];
-    let mut done = [false; 2];
+    set_values(toml, "game", &[("id", toml_str(id)), ("title", toml_str(title))])
+}
+
+/// Sets keys of `[section]` (values already in TOML form) in `kulisa.toml` source, keeping
+/// everything else; missing keys go at the end of the section, a missing section at the end.
+fn set_values(toml: &str, section: &str, values: &[(&str, String)]) -> String {
+    let header = format!("[{section}]");
+    let mut done = vec![false; values.len()];
     let mut out: Vec<String> = Vec::new();
-    let flush = |out: &mut Vec<String>, done: &mut [bool; 2]| {
-        for (line, done) in wanted.iter().zip(done.iter_mut()) {
+    let flush = |out: &mut Vec<String>, done: &mut [bool]| {
+        for ((key, value), done) in values.iter().zip(done.iter_mut()) {
             if !*done {
-                out.push(line.clone());
+                out.push(format!("{key} = {value}"));
                 *done = true;
             }
         }
     };
-    let (mut in_game, mut seen_game) = (false, false);
+    let (mut inside, mut seen) = (false, false);
     for line in toml.lines() {
         let t = line.trim_start();
         if t.starts_with('[') {
-            if in_game {
+            if inside {
                 flush(&mut out, &mut done);
             }
-            in_game = t.starts_with("[game]");
-            seen_game |= in_game;
+            inside = t.starts_with(&header);
+            seen |= inside;
             out.push(line.to_string());
             continue;
         }
         let key = t.split('=').next().unwrap_or("").trim();
-        match ["id", "title"].iter().position(|k| *k == key).filter(|_| in_game && t.contains('=')) {
+        match values.iter().position(|(k, _)| *k == key).filter(|_| inside && t.contains('=')) {
             Some(i) => {
-                out.push(wanted[i].clone());
+                out.push(format!("{key} = {}", values[i].1));
                 done[i] = true;
             }
             None => out.push(line.to_string()),
         }
     }
-    if !seen_game {
-        out.extend([String::new(), "[game]".into()]);
+    if !seen {
+        out.extend([String::new(), header]);
     }
-    if in_game || !seen_game {
+    if inside || !seen {
         flush(&mut out, &mut done);
     }
     out.join("\n") + "\n"
@@ -208,24 +221,168 @@ fn copy_dir(from: &Path, to: &Path) -> Result {
     Ok(())
 }
 
-fn new(a: &Args) -> Result {
-    let name = a.positional.first().ok_or("kulisa new NAME [--template T]")?;
-    let template = a.get("--template").unwrap_or("classic-vn");
+/// Copies `template` to `dest` (which must be new or empty) and names the game `title`.
+fn create_game(template: &str, dest: &Path, title: &str) -> Result {
     let available = templates()?;
     if !available.iter().any(|t| t == template) {
         return Err(format!("no template `{template}`; templates: {}", available.join(", ")));
     }
-    let dest = a.get("--dir").map_or_else(|| PathBuf::from(name), PathBuf::from);
-    if dest.exists() && fs::read_dir(&dest).map(|mut d| d.next().is_some()).unwrap_or(true) {
+    if dest.exists() && fs::read_dir(dest).map(|mut d| d.next().is_some()).unwrap_or(true) {
         return Err(format!("{} already exists and is not empty", dest.display()));
     }
-    copy_dir(&engine_root()?.join("templates").join(template), &dest)?;
-    let toml_path = dest.join(kulisa_platform::CONFIG_FILE);
-    let toml = fs::read_to_string(&toml_path).unwrap_or_default();
-    fs::write(&toml_path, set_identity(&toml, &id_from(name), name)).map_err(|e| e.to_string())?;
+    copy_dir(&engine_root()?.join("templates").join(template), dest)?;
+    edit_config(dest, |toml| set_identity(toml, &id_from(title), title))
+}
+
+fn edit_config(game: &Path, f: impl FnOnce(&str) -> String) -> Result {
+    let path = game.join(kulisa_platform::CONFIG_FILE);
+    let toml = fs::read_to_string(&path).unwrap_or_default();
+    fs::write(&path, f(&toml)).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn new(a: &Args) -> Result {
+    let name = a.positional.first().ok_or("kulisa new NAME [--template T]")?;
+    let template = a.get("--template").unwrap_or("classic-vn");
+    let dest = a.get("--dir").map_or_else(|| PathBuf::from(name), PathBuf::from);
+    create_game(template, &dest, name)?;
     println!("Created {} from the {template} template.", dest.display());
     println!("Play it with live reload:\n  cd {}\n  kulisa run", dest.display());
     Ok(())
+}
+
+/// `.kulisa` files under `dir`, as (path relative to the game, source).
+fn stories(game: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut stack = vec![game.join("story")];
+    while let Some(dir) = stack.pop() {
+        for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == "kulisa")
+                && let (Ok(src), Ok(rel)) = (fs::read_to_string(&p), p.strip_prefix(game))
+            {
+                out.push((rel.to_string_lossy().replace('\\', "/"), src));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn import(a: &Args) -> Result {
+    let src = a.positional.first().ok_or("kulisa import RENPY_PROJECT [--template T] [--dir DIR]")?;
+    let src = strip_verbatim(fs::canonicalize(src).map_err(|e| format!("{src}: {e}"))?);
+    let imported = kulisa_renpy::import(&src)?;
+    let project =
+        if src.file_name().is_some_and(|n| n == "game") { src.parent().unwrap_or(&src) } else { &src };
+    let folder = project.file_name().map_or("renpy-game".into(), |n| n.to_string_lossy().into_owned());
+    let title = imported.info.title.clone().unwrap_or_else(|| folder.clone());
+    let template = a.get("--template").unwrap_or("classic-vn");
+    let dest = a.get("--dir").map_or_else(|| PathBuf::from(format!("{folder}-kulisa")), PathBuf::from);
+    create_game(template, &dest, &title)?;
+
+    // The template's sample story goes; the Ren'Py one takes its place.
+    for (path, _) in stories(&dest) {
+        fs::remove_file(dest.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+    }
+    for (path, source) in &imported.stories {
+        let p = dest.join(path);
+        fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+        fs::write(&p, source).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    let mut copied = 0;
+    let mut missing = Vec::new();
+    for (from, to) in &imported.copies {
+        let p = dest.join(to);
+        fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+        match fs::copy(from, &p) {
+            Ok(_) => copied += 1,
+            Err(e) => missing.push(format!("{}: {e}", from.display())),
+        }
+    }
+    let info = &imported.info;
+    edit_config(&dest, |toml| {
+        let mut toml = toml.to_string();
+        if let Some(v) = &info.version {
+            toml = set_values(&toml, "game", &[("version", toml_str(v))]);
+        }
+        if let Some((w, h)) = info.size {
+            toml = set_values(&toml, "display", &[("width", w.to_string()), ("height", h.to_string())]);
+        }
+        toml
+    })?;
+
+    let sources = stories(&dest);
+    let refs: Vec<(&str, &str)> = sources.iter().map(|(p, s)| (p.as_str(), s.as_str())).collect();
+    let compiled = kulisa_story::compile(&refs).map(|_| ()).map_err(|e| e.to_string());
+    let report = import_report(&src, &imported, copied, &missing, &compiled);
+    fs::write(dest.join("IMPORT.md"), report).map_err(|e| e.to_string())?;
+
+    println!(
+        "Imported {} into {}: {} story files, {copied} files copied, {} notes (see IMPORT.md).",
+        src.display(),
+        dest.display(),
+        imported.stories.len(),
+        imported.notes.len()
+    );
+    match compiled {
+        Ok(()) => println!("The story compiles. Play it with:\n  cd {}\n  kulisa run", dest.display()),
+        Err(e) => println!("The story does not compile yet (also in IMPORT.md):\n{e}"),
+    }
+    Ok(())
+}
+
+fn import_report(
+    src: &Path,
+    imported: &kulisa_renpy::Import,
+    copied: usize,
+    missing: &[String],
+    compiled: &std::result::Result<(), String>,
+) -> String {
+    let mut r = format!(
+        "# Imported from Ren'Py\n\nFrom `{}`: {} story files in `story/`, {copied} images and sounds copied.\n\n",
+        src.display(),
+        imported.stories.len()
+    );
+    r.push_str(match compiled {
+        Ok(()) => "The story compiles.\n\n",
+        Err(_) => "**The story does not compile yet:**\n\n",
+    });
+    if let Err(e) = compiled {
+        r.push_str(&format!("```\n{e}\n```\n\n"));
+    }
+    r.push_str(
+        "## What to check\n\n\
+         - Lines the import could not convert are in the story as `# Ren'Py:` comments.\n\
+         - Screens, transforms, styles and Python code are Ren'Py's own; Kulisa games do them in Luau \
+         (see `ui/` and `game/` in this template, and docs/API.md).\n\
+         - Sprites stand at the template's positions (`left`, `center`, `right`); transitions are the \
+         template's (`fade`, `dissolve`, wipes).\n\
+         - The template's sample images are still in `images/`; delete the ones the game does not use.\n\n",
+    );
+    if !missing.is_empty() {
+        r.push_str("## Files that could not be copied\n\n");
+        for m in missing {
+            r.push_str(&format!("- {m}\n"));
+        }
+        r.push('\n');
+    }
+    if !imported.notes.is_empty() {
+        r.push_str("## Notes\n");
+        let mut file = None;
+        for n in &imported.notes {
+            if file != Some(&n.file) {
+                r.push_str(&format!("\n### {}\n\n", n.file));
+                file = Some(&n.file);
+            }
+            match n.line {
+                0 => r.push_str(&format!("- {}\n", n.message)),
+                l => r.push_str(&format!("- line {l}: {}\n", n.message)),
+            }
+        }
+    }
+    r
 }
 
 fn play(a: &Args) -> Result {
@@ -320,6 +477,19 @@ mod tests {
         assert!(out.ends_with("[game]\nid = \"cats\"\ntitle = \"Cats\"\n"), "{out}");
         let out = set_identity("[game]\nversion = \"2\"\n[display]\n", "cats", "Cats");
         assert_eq!(out, "[game]\nversion = \"2\"\nid = \"cats\"\ntitle = \"Cats\"\n[display]\n");
+    }
+
+    #[test]
+    fn sets_values_in_sections() {
+        let toml =
+            "[game]\nid = \"a\"\n\n[display]\nwidth = 1920\nheight = 1080\n\n[display.phone]\nwidth = 1080\n";
+        let out = set_values(toml, "display", &[("width", "1280".into()), ("height", "720".into())]);
+        assert_eq!(
+            out,
+            "[game]\nid = \"a\"\n\n[display]\nwidth = 1280\nheight = 720\n\n[display.phone]\nwidth = 1080\n"
+        );
+        let out = set_values("[game]\nid = \"a\"\n", "display", &[("width", "1280".into())]);
+        assert_eq!(out, "[game]\nid = \"a\"\n\n[display]\nwidth = 1280\n");
     }
 
     #[test]
