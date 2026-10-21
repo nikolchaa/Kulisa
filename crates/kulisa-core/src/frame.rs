@@ -180,6 +180,32 @@ pub fn extract(scene: &Scene, layout: &ViewLayout, window: UVec2, frame: &mut Fr
     });
 }
 
+/// Adds `scene` to `frame` as a last pass drawn over everything, in window pixels: no camera,
+/// letterbox or screen effects (engine overlays such as the error view).
+pub fn extract_overlay(scene: &Scene, window: UVec2, frame: &mut Frame) {
+    let window = window.max(UVec2::ONE);
+    let ctx = Ctx {
+        model: Affine2::IDENTITY,
+        base: Affine2::IDENTITY,
+        camera: false,
+        parallax: 0.0,
+        opacity: 1.0,
+        tint: Color::WHITE,
+        clip: None,
+        bounds: Rect { min: Vec2::ZERO, max: window.as_vec2() },
+    };
+    let mut items = Vec::new();
+    let mut w = Walker { scene, frame, window };
+    w.children(scene.root(), ctx, &mut items);
+    w.frame.passes.push(Pass {
+        target: PassTarget::Surface,
+        size: window,
+        clear: None,
+        items,
+        effects: Vec::new(),
+    });
+}
+
 /// The quads a sprite draws, in local units with their UVs: one, or up to nine for a
 /// nine-slice. Borders larger than the sprite shrink proportionally.
 fn sprite_parts(s: &Sprite) -> Vec<(Rect, Rect)> {

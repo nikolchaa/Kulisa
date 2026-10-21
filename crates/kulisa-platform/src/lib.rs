@@ -1,6 +1,7 @@
 //! Platform services. This crate is a leaf: it must not depend on other engine crates.
 
 mod assets;
+mod config;
 mod device;
 mod storage;
 #[cfg(target_arch = "wasm32")]
@@ -13,7 +14,8 @@ pub use assets::build_pack;
 #[cfg(target_arch = "wasm32")]
 pub use assets::fetch;
 pub use assets::{Assets, Pack, normalize};
-pub use device::{Motion, profile_override, safe_area_override};
+pub use config::{CONFIG_FILE, Config, ConfigValue, GameConfig, ORIENTATIONS, QUALITY_TIERS, valid_id};
+pub use device::{Motion, dev_override, profile_override, quality_override, safe_area_override};
 #[cfg(target_arch = "wasm32")]
 pub use device::{web_safe_area, web_touch};
 pub use storage::Storage;

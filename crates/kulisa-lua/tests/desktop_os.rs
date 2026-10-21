@@ -257,7 +257,7 @@ fn desktop_os_plays() {
     assert!(!truth(&g, "kulisa.story.ended()"));
     frames(&mut g, 20);
     assert!(errors(&g).is_empty(), "{:?}", errors(&g));
-    let id: String = g.eval("t", "return require('os/config').id").unwrap();
+    let id: String = g.eval("t", "return kulisa.config.game.id").unwrap();
     drop(g);
     let _ = std::fs::remove_dir_all(kulisa_platform::data_dir(&id).unwrap());
 }

@@ -1,0 +1,6 @@
+# Game settings, read by the engine at startup and by `kulisa build`.
+
+[game]
+id = "kulisa_parallax"
+title = "Kulisa parallax demo"
+version = "0.1.0"

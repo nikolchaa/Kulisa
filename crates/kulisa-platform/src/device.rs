@@ -19,6 +19,16 @@ pub fn profile_override() -> Option<String> {
     option("KULISA_PROFILE", "profile")
 }
 
+/// A development run (live reload, every error on screen) from `KULISA_DEV=1` (or `?dev=1`).
+pub fn dev_override() -> bool {
+    option("KULISA_DEV", "dev").is_some_and(|v| v != "0")
+}
+
+/// A forced quality tier (`low`, `medium`, `high`) from `KULISA_QUALITY` (or `?quality=`).
+pub fn quality_override() -> Option<String> {
+    option("KULISA_QUALITY", "quality")
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn option(env: &str, _query: &str) -> Option<String> {
     std::env::var(env).ok().filter(|s| !s.is_empty())

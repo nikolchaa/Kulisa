@@ -2,19 +2,9 @@
 
 local config = {}
 
-config.title = "The Lantern Road"
-config.id = "kulisa_text_rpg"
+-- Title, save id and display shapes (phones play in portrait) live in kulisa.toml.
+config.title = kulisa.config.game.title
 config.save_version = 1
-
--- Landscape on desktops and tablets; phones play in portrait with their own layout (ui/main).
-config.display = {
-    width = 1920,
-    height = 1080,
-    scale = "expand",
-    aspect = { "4:3", "21:9" },
-    orientation = "landscape",
-    phone = { width = 1080, height = 1920, orientation = "portrait", aspect = { "9:22", "3:4" } },
-}
 
 config.fonts = { "fonts/Inter-Regular.ttf", "fonts/Inter-Bold.ttf" }
 config.font = "Inter"

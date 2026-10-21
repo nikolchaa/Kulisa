@@ -15,7 +15,9 @@ mod viewport;
 
 pub use camera::Camera;
 pub use color::Color;
-pub use frame::{DrawItem, Frame, ParticleDraw, Pass, PassTarget, TexRef, Vertex, extract, f16_bits};
+pub use frame::{
+    DrawItem, Frame, ParticleDraw, Pass, PassTarget, TexRef, Vertex, extract, extract_overlay, f16_bits,
+};
 pub use glam::{Affine2, UVec2, Vec2, Vec4};
 pub use mesh::{MAX_VERTICES, Mesh};
 pub use particles::{

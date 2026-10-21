@@ -3,21 +3,12 @@
 
 local config = {}
 
-config.title = "Whiskers & Sunbeams"
-config.version = "1.0"
--- Save folder name. Change it for your game, or its saves mix with other games' saves.
-config.id = "kulisa_classic_vn"
+-- Title, version, save id and display shape live in kulisa.toml.
+config.title = kulisa.config.game.title
+config.version = kulisa.config.game.version
+config.display = kulisa.config.display
 -- Bump when story variables change shape, and add a kulisa.save.migrate step (main.luau).
 config.save_version = 1
-
-config.display = {
-    width = 1920,
-    height = 1080,
-    scale = "expand",
-    -- Wider than 21:9 or narrower than 4:3 gets bars instead of unpainted space.
-    aspect = { "4:3", "21:9" },
-    orientation = "landscape",
-}
 
 config.fonts = { "fonts/Inter-Regular.ttf", "fonts/Inter-Bold.ttf" }
 config.font = "Inter"

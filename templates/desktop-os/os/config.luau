@@ -3,18 +3,9 @@
 
 local config = {}
 
-config.title = "Gull Point"
--- Save folder name: change it for your game.
-config.id = "kulisa_desktop_os"
+-- Title, save id and display shape live in kulisa.toml.
+config.title = kulisa.config.game.title
 config.save_version = 1
-
-config.display = {
-    width = 1920,
-    height = 1080,
-    scale = "expand",
-    aspect = { "4:3", "21:9" },
-    orientation = "landscape",
-}
 
 config.fonts = { "fonts/Inter-Regular.ttf", "fonts/Inter-Bold.ttf" }
 config.font = "Inter"

@@ -1,0 +1,16 @@
+# Game settings, read by the engine at startup and by `kulisa build` (app ids, titles,
+# orientation). Scripts see them as `kulisa.config`.
+
+[game]
+# Save folder and app id: change it for your game.
+id = "kulisa_desktop_os"
+title = "Gull Point"
+version = "1.0.0"
+
+# The same keys as kulisa.display{}; the engine applies them before main.luau runs.
+[display]
+width = 1920
+height = 1080
+scale = "expand"
+aspect = ["4:3", "21:9"]
+orientation = "landscape"

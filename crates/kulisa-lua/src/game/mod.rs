@@ -6,6 +6,7 @@
 
 mod api;
 mod display;
+mod errors;
 mod hit;
 mod interact;
 mod media;
@@ -13,6 +14,7 @@ mod mesh;
 mod pad;
 mod particles;
 mod pointer;
+mod reload;
 mod sensors;
 mod typing;
 mod ui;
@@ -24,7 +26,7 @@ use std::sync::Arc;
 
 use kulisa_audio::{Audio, PlayOptions, Sound};
 use kulisa_core::{NodeId, NodeKind, ScaleMode, Scene, ShaderId, TextureId, Tween, UVec2, Vec2, Viewport};
-use kulisa_platform::{Assets, Storage};
+use kulisa_platform::{Assets, ConfigValue, GameConfig, Storage};
 use kulisa_render::{Image, Renderer, SurfaceTarget};
 use kulisa_story::{Event, Program, Stage, Vm};
 use kulisa_text::{TextBox, TextStyle, TextSystem};
@@ -63,6 +65,8 @@ pub(crate) enum Waiting {
 pub(crate) struct StoryState {
     pub vm: Vm,
     pub host: StoryHost,
+    /// What `kulisa.story.load` was given (`None`: every `.kulisa` file).
+    pub files: Option<Vec<String>>,
     pub loaded: bool,
     pub waiting: Waiting,
     /// Seconds left on a timed `pause`.
@@ -126,6 +130,12 @@ pub(crate) struct State {
     pub pads: pad::Gamepads,
     pub typing: typing::Typing,
     pub sensors: sensors::Sensors,
+    pub config: GameConfig,
+    pub errors: errors::ErrorView,
+    /// A development reload was asked for (Shift+R); the runtime picks it up.
+    pub reload_requested: bool,
+    /// The first error `kulisa.toml` or `main.luau` raised at startup.
+    pub start_error: Option<String>,
 }
 
 /// The seen-set key of choice `index` at the menu `line`.
@@ -219,16 +229,25 @@ pub(crate) fn emit(shared: &Shared, event: &str, args: impl IntoLuaMulti + Clone
     }
 }
 
-/// Logs a script error and passes it to `error` handlers (never recursively).
+/// Logs a script error and passes it to `error` handlers (never recursively). The error view
+/// shows it when no handler takes it, and always in development runs.
 pub(crate) fn report(shared: &Shared, message: &str) {
     log::error!("{message}");
     if shared.borrow().reporting {
         return;
     }
-    shared.borrow_mut().reporting = true;
-    for f in handlers(shared, "error") {
+    let list = handlers(shared, "error");
+    {
+        let mut st = shared.borrow_mut();
+        if st.errors.dev || list.is_empty() {
+            st.errors.push(message);
+        }
+        st.reporting = true;
+    }
+    for f in list {
         if let Err(e) = f.call::<()>(message.to_string()) {
             log::error!("in `error` handler: {e}");
+            shared.borrow_mut().errors.push(&format!("in `error` handler: {e}"));
         }
     }
     shared.borrow_mut().reporting = false;
@@ -454,6 +473,33 @@ pub(crate) fn story_restored(lua: &Lua, shared: &Shared) -> Result<(), String> {
     story_advance(lua, shared)
 }
 
+/// `kulisa.toml` values as read-only Luau values.
+fn config_value(lua: &Lua, v: &ConfigValue) -> mlua::Result<LuaValue> {
+    use mlua::IntoLua;
+    match v {
+        ConfigValue::String(s) => s.as_str().into_lua(lua),
+        ConfigValue::Integer(i) => Ok(LuaValue::Number(*i as f64)),
+        ConfigValue::Float(f) => Ok(LuaValue::Number(*f)),
+        ConfigValue::Bool(b) => Ok(LuaValue::Boolean(*b)),
+        ConfigValue::Array(items) => {
+            let t = lua.create_table()?;
+            for item in items {
+                t.push(config_value(lua, item)?)?;
+            }
+            t.set_readonly(true);
+            Ok(LuaValue::Table(t))
+        }
+        ConfigValue::Table(map) => {
+            let t = lua.create_table()?;
+            for (k, item) in map {
+                t.set(k.as_str(), config_value(lua, item)?)?;
+            }
+            t.set_readonly(true);
+            Ok(LuaValue::Table(t))
+        }
+    }
+}
+
 /// A running game.
 pub struct Game {
     lua: Lua,
@@ -466,10 +512,33 @@ impl Game {
         Self::with_device(assets, renderer, Device { can_quit: true, ..Default::default() })
     }
 
-    /// Starts the game for `device` (its form factor picks the display profile).
-    pub fn with_device(assets: Assets, mut renderer: Renderer, device: Device) -> Result<Game, String> {
+    /// Starts the game for `device` (its form factor picks the display profile). Fails when
+    /// `kulisa.toml` or `main.luau` does.
+    pub fn with_device(assets: Assets, renderer: Renderer, device: Device) -> Result<Game, String> {
+        let game = Self::start(assets, renderer, device, false);
+        let error = game.state.borrow_mut().start_error.take();
+        match error {
+            Some(e) => Err(e),
+            None => Ok(game),
+        }
+    }
+
+    /// Starts the game and keeps it when `kulisa.toml` or `main.luau` fail: the error view
+    /// shows what went wrong. `dev` (development runs) shows every later error there too.
+    pub fn start(assets: Assets, mut renderer: Renderer, device: Device, dev: bool) -> Game {
         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         crate::web::init();
+
+        let config = match assets.exists(kulisa_platform::CONFIG_FILE) {
+            true => {
+                assets.read_string(kulisa_platform::CONFIG_FILE).and_then(|s| GameConfig::parse(Some(&s)))
+            }
+            false => GameConfig::parse(None),
+        };
+        let (config, config_error) = match config {
+            Ok(c) => (c, None),
+            Err(e) => (GameConfig::parse(None).expect("defaults are valid"), Some(e)),
+        };
 
         let white =
             ImageInfo { id: renderer.create_texture(&Image::solid(4, 4, [255; 4])), size: UVec2::splat(4) };
@@ -519,8 +588,13 @@ impl Game {
             pads: Default::default(),
             typing: Default::default(),
             sensors: Default::default(),
+            config,
+            errors: Default::default(),
+            reload_requested: false,
+            start_error: None,
         };
         state.display.device = device;
+        state.errors.dev = dev;
         let shared = Rc::new(RefCell::new(state));
         let lua = Lua::new();
         // Luau resolves global paths like `kulisa.screen.mode` once, when a function loads, if
@@ -528,15 +602,18 @@ impl Game {
         // live values (the camera, the screen, the window), so its paths are read every time.
         lua.set_compiler(mlua::chunk::Compiler::new().set_mutable_globals(["kulisa"]));
         lua.set_app_data(shared.clone());
-        let err = |e: mlua::Error| e.to_string();
-        api::install(&lua).map_err(err)?;
-        lua.load(PRELUDE).set_name("@kulisa/prelude.luau").exec().map_err(err)?;
-        lua.sandbox(true).map_err(err)?;
+        api::install(&lua).expect("installing the kulisa API");
+        let config = config_value(&lua, &ConfigValue::Table(shared.borrow().config.raw.root.clone()));
+        let k: Table = lua.globals().get("kulisa").expect("the kulisa table");
+        k.set("config", config.expect("converting the config")).expect("setting kulisa.config");
+        lua.load(PRELUDE).set_name("@kulisa/prelude.luau").exec().expect("running the prelude");
+        lua.sandbox(true).expect("enabling the sandbox");
         // After the sandbox, so stories see the game's globals.
-        let host = StoryHost::new(&lua).map_err(err)?;
+        let host = StoryHost::new(&lua).expect("creating the story host");
         shared.borrow_mut().story = Some(StoryState {
             vm: Vm::new(Arc::new(Program::default())),
             host,
+            files: None,
             loaded: false,
             waiting: Waiting::Nothing,
             timer: None,
@@ -547,14 +624,45 @@ impl Game {
         if !cfg!(target_arch = "wasm32") {
             game.start_audio();
         }
-        let main = game.state.borrow().assets.read_string("main.luau")?;
-        let main = game.lua.load(&main).set_name("@main.luau").into_function().map_err(err)?;
-        let spawn: Function = game.kulisa().and_then(|k| k.get("spawn")).map_err(err)?;
+        if let Some(e) = config_error {
+            game.start_failed(e);
+        }
+        if let Err(e) = game.run_main() {
+            game.start_failed(e);
+        }
+        game
+    }
+
+    /// Applies `[display]` from `kulisa.toml`, then runs `main.luau`.
+    fn run_main(&mut self) -> Result<(), String> {
+        let err = |e: mlua::Error| e.to_string();
+        let display = self.state.borrow().config.raw.get("display").cloned();
+        if let Some(d) = display {
+            let LuaValue::Table(t) = config_value(&self.lua, &d).map_err(err)? else {
+                return Err("kulisa.toml: `display` must be a table".into());
+            };
+            display::configure(&mut self.state.borrow_mut(), &t, api::MODES)
+                .map_err(|e| format!("kulisa.toml [display]: {e}"))?;
+        }
+        let main = self.state.borrow().assets.read_string("main.luau")?;
+        let main = self.lua.load(&main).set_name("@main.luau").into_function().map_err(err)?;
+        let spawn: Function = self.kulisa().and_then(|k| k.get("spawn")).map_err(err)?;
         let (ok, error): (bool, Option<String>) = spawn.call(main).map_err(err)?;
         if !ok {
             return Err(error.unwrap_or_else(|| "main.luau failed".into()));
         }
-        Ok(game)
+        Ok(())
+    }
+
+    /// Shows a startup error (whatever the game's handlers would do with it).
+    fn start_failed(&mut self, message: String) {
+        log::error!("{message}");
+        let mut st = self.state.borrow_mut();
+        // Errors raised inside main.luau's task were reported (and shown) already.
+        if st.errors.messages().last().map(String::as_str) != Some(message.trim_end()) {
+            st.errors.push(&message);
+        }
+        st.start_error.get_or_insert(message);
     }
 
     fn kulisa(&self) -> mlua::Result<Table> {
@@ -646,7 +754,42 @@ impl Game {
     pub fn render(&mut self) {
         let mut st = self.state.borrow_mut();
         let st = &mut *st;
-        st.renderer.render(&st.scene, &st.viewport, st.time as f32);
+        st.errors.update(&mut st.renderer, st.ui.safe_px, st.white.id);
+        match &st.errors.scene {
+            Some(overlay) => {
+                st.renderer.render_with_overlay(&st.scene, &st.viewport, overlay, st.time as f32)
+            }
+            None => st.renderer.render(&st.scene, &st.viewport, st.time as f32),
+        }
+    }
+
+    /// Shows `message` in the error view (and logs it), like an uncaught script error.
+    pub fn show_error(&mut self, message: &str) {
+        log::error!("{message}");
+        self.state.borrow_mut().errors.push(message);
+    }
+
+    /// The errors the error view shows (newest last); empty when it is hidden.
+    pub fn shown_errors(&self) -> Vec<String> {
+        self.state.borrow().errors.messages().to_vec()
+    }
+
+    /// Whether the player asked for a development reload (Shift+R) since the last call.
+    pub fn take_reload_request(&mut self) -> bool {
+        std::mem::take(&mut self.state.borrow_mut().reload_requested)
+    }
+
+    /// The game's `kulisa.toml` settings (defaults when it has none or it is broken).
+    pub fn config(&self) -> GameConfig {
+        self.state.borrow().config.clone()
+    }
+
+    /// Hides the error view when it shows. Returns whether it did (the input is used up).
+    fn dismiss_errors(&mut self) -> bool {
+        let mut st = self.state.borrow_mut();
+        let shown = st.errors.visible;
+        st.errors.hide();
+        shown
     }
 
     /// The renderer (stats, screenshots, tests).
@@ -802,6 +945,10 @@ impl Game {
     /// touches first, then draggables and hotspots; what they take does not reach `press`.
     pub fn pressed_id(&mut self, id: u32, button: &str) {
         let left = matches!(button, "left" | "touch");
+        if left && self.dismiss_errors() {
+            self.state.borrow_mut().errors.swallow_release = Some(id);
+            return;
+        }
         if left {
             self.pointer_took_over();
         }
@@ -864,6 +1011,14 @@ impl Game {
 
     pub fn released_id(&mut self, id: u32, button: &str) {
         let left = matches!(button, "left" | "touch");
+        // The release of the press that hid the error view.
+        if left && self.state.borrow().errors.swallow_release == Some(id) {
+            self.state.borrow_mut().errors.swallow_release = None;
+            if id != 0 {
+                self.state.borrow_mut().pointers.remove(&id);
+            }
+            return;
+        }
         let (p, primary) = {
             let st = self.state.borrow();
             (st.pointers.get(&id).and_then(|p| p.pos).unwrap_or_default(), is_primary(&st, id))
@@ -944,6 +1099,13 @@ impl Game {
             } else {
                 st.keys.remove(name);
             }
+            if pressed && name == "r" && st.errors.dev && st.keys.contains("shift") {
+                st.reload_requested = true;
+                return;
+            }
+        }
+        if pressed && matches!(name, "escape" | "enter" | "space") && self.dismiss_errors() {
+            return;
         }
         // A text field wants characters as `text`, not as keys.
         if self.wants_text() && typing::is_character_key(name) {

@@ -9,6 +9,10 @@ mod gamepad;
 #[cfg(target_os = "ios")]
 mod ios;
 mod sensors;
+#[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+mod watch;
+#[cfg(target_arch = "wasm32")]
+mod web_dev;
 
 use std::sync::Arc;
 
@@ -16,7 +20,7 @@ use kulisa_core::Vec2;
 #[cfg(target_os = "ios")]
 use kulisa_lua::Orientation;
 use kulisa_lua::{Device, FormFactor, Game};
-use kulisa_platform::Assets;
+use kulisa_platform::{Assets, GameConfig};
 use kulisa_render::Renderer;
 use web_time::Instant;
 use winit::application::ApplicationHandler;
@@ -31,6 +35,9 @@ pub use winit::platform::android::activity::AndroidApp;
 pub enum UserEvent {
     RendererReady(Result<Box<Renderer>, String>),
     GameLoaded(Result<Assets, String>),
+    /// Web development runs: the dev server's game version, with the new pack when it changed.
+    #[cfg(target_arch = "wasm32")]
+    DevVersion(String, Option<Result<Assets, String>>),
 }
 
 struct App {
@@ -47,8 +54,28 @@ struct App {
     /// The on-screen keyboard's height in window pixels, as last read.
     keyboard: f32,
     last_frame: Instant,
+    /// The game's files, kept for restarts (live reload).
+    files: Option<Assets>,
+    /// The game's `kulisa.toml` settings, once its files are known.
+    config: Option<GameConfig>,
+    /// Development run (`--dev`, `kulisa run`): live reload and every error on screen.
+    dev: bool,
+    /// Set while restarting for a reload: whether the story was saved for the new game.
+    restart_saved: Option<bool>,
+    /// The window took the design's shape (once: restarts keep the size the player chose).
+    shaped: bool,
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+    watcher: Option<watch::Watcher>,
+    #[cfg(target_arch = "wasm32")]
+    web_dev: web_dev::Poll,
     #[cfg(target_os = "android")]
     android: AndroidApp,
+}
+
+/// The game's settings for the window; errors are reported by the game itself.
+fn read_config(assets: &Assets) -> Option<GameConfig> {
+    let source = assets.read_string(kulisa_platform::CONFIG_FILE).ok();
+    GameConfig::parse(source.as_deref()).ok()
 }
 
 /// The drawable size. On iOS winit's inner size is the safe area, but we draw everywhere.
@@ -129,10 +156,12 @@ impl App {
     fn new(
         proxy: EventLoopProxy<UserEvent>,
         assets: Option<Result<Assets, String>>,
+        dev: bool,
         #[cfg(target_os = "android")] android: AndroidApp,
     ) -> Self {
         #[cfg(target_os = "ios")]
         ios::observe_keyboard();
+        let config = assets.as_ref().and_then(|a| a.as_ref().ok()).and_then(read_config);
         Self {
             proxy,
             window: None,
@@ -144,6 +173,15 @@ impl App {
             sensors: sensors::Sensors::new(),
             keyboard: 0.0,
             last_frame: Instant::now(),
+            files: None,
+            config,
+            dev,
+            restart_saved: None,
+            shaped: false,
+            #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+            watcher: None,
+            #[cfg(target_arch = "wasm32")]
+            web_dev: Default::default(),
             #[cfg(target_os = "android")]
             android,
         }
@@ -231,6 +269,8 @@ impl App {
         #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
         if let Some(aspect) = r.window_aspect
             && window.fullscreen().is_none()
+            && !std::mem::replace(&mut self.shaped, true)
+            && self.config.as_ref().is_none_or(|c| c.window.is_none())
         {
             let aspect = aspect as f64;
             let (w, h) = if aspect >= 1.0 { (1280.0, 1280.0 / aspect) } else { (900.0 * aspect, 900.0) };
@@ -300,20 +340,59 @@ impl App {
         }
         let renderer = self.renderer.take().unwrap();
         let device = self.window.as_deref().map(device).unwrap_or_default();
-        let started =
-            self.assets.take().unwrap().and_then(|assets| Game::with_device(assets, renderer, device));
-        match started {
-            Ok(mut game) => {
-                game.set_safe_area(self.safe_area());
-                if let Some(w) = &self.window {
-                    let size = drawable_size(w);
-                    game.resize(size.width, size.height);
-                    w.request_redraw();
-                }
-                self.last_frame = Instant::now();
-                self.game = Some(game);
-            }
-            Err(e) => log::error!("the game failed to start:\n{e}"),
+        // A game that cannot be found still gets a window that says so.
+        let (assets, missing) = match self.assets.take().unwrap() {
+            Ok(a) => (a, None),
+            Err(e) => (Assets::empty(), Some(e)),
+        };
+        self.files = Some(assets.clone());
+        #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+        if self.dev
+            && self.watcher.is_none()
+            && let Assets::Dir(dir) = &assets
+        {
+            log::info!("live reload: watching {}", dir.display());
+            self.watcher = Some(watch::Watcher::new(dir.clone()));
+        }
+        let mut game = Game::start(assets, renderer, device, self.dev);
+        if let Some(e) = missing {
+            game.clear_errors();
+            game.show_error(&e);
+        }
+        let config = game.config();
+        game.set_safe_area(self.safe_area());
+        if let Some(w) = &self.window {
+            w.set_title(&config.title);
+            let size = drawable_size(w);
+            game.resize(size.width, size.height);
+            w.request_redraw();
+        }
+        self.config = Some(config);
+        if let Some(saved) = self.restart_saved.take() {
+            game.restarted(saved);
+        }
+        self.last_frame = Instant::now();
+        self.game = Some(game);
+    }
+
+    /// Development runs: applies changed files, or restarts the game when they need it
+    /// (or the player pressed Shift+R).
+    fn live_reload(&mut self, changed: Vec<String>) {
+        let Some(game) = &mut self.game else { return };
+        let forced = game.take_reload_request();
+        if !forced && changed.is_empty() {
+            return;
+        }
+        if !forced && !game.reload(&changed) {
+            return;
+        }
+        log::info!("live reload: restarting the game");
+        let mut game = self.game.take().unwrap();
+        self.restart_saved = Some(game.save_for_restart());
+        drop(game);
+        self.assets = self.files.take().map(Ok);
+        if let Some(w) = self.window.clone() {
+            self.create_renderer(w);
         }
     }
 
@@ -332,10 +411,17 @@ impl ApplicationHandler<UserEvent> for App {
         let window = match &self.window {
             Some(w) => w.clone(),
             None => {
-                let attrs = Window::default_attributes().with_title("Kulisa");
+                let config = self.config.clone().unwrap_or_else(|| GameConfig::parse(None).unwrap());
+                let attrs = Window::default_attributes().with_title(&config.title);
                 // On the web the page's CSS sizes the canvas.
                 #[cfg(not(target_arch = "wasm32"))]
-                let attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+                let attrs = {
+                    let (w, h) = config.window.unwrap_or((1280.0, 720.0));
+                    let full = config.fullscreen && !cfg!(any(target_os = "android", target_os = "ios"));
+                    attrs
+                        .with_inner_size(winit::dpi::LogicalSize::new(w, h))
+                        .with_fullscreen(full.then_some(winit::window::Fullscreen::Borderless(None)))
+                };
                 #[cfg(target_arch = "wasm32")]
                 let attrs = {
                     use winit::platform::web::WindowAttributesExtWebSys;
@@ -390,6 +476,17 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::GameLoaded(assets) => {
                 self.assets = Some(assets);
                 self.start_game();
+            }
+            #[cfg(target_arch = "wasm32")]
+            UserEvent::DevVersion(version, pack) => {
+                let changed = self.web_dev.arrived(version, pack, self.files.as_ref());
+                if let Some((assets, changed)) = changed {
+                    if let Some(game) = &mut self.game {
+                        game.set_assets(assets.clone());
+                    }
+                    self.files = Some(assets);
+                    self.live_reload(changed);
+                }
             }
         }
     }
@@ -491,6 +588,15 @@ impl App {
                 }
             }
             WindowEvent::RedrawRequested => {
+                #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
+                let changed = self.watcher.as_mut().map(|w| w.poll()).unwrap_or_default();
+                #[cfg(any(target_os = "android", target_os = "ios", target_arch = "wasm32"))]
+                let changed = Vec::new();
+                #[cfg(target_arch = "wasm32")]
+                if self.dev {
+                    self.web_dev.tick(&self.proxy);
+                }
+                self.live_reload(changed);
                 let Some(game) = &mut self.game else { return };
                 self.pads.poll(game);
                 // The keyboard's height, read only while it can be up (a JNI call on Android).
@@ -542,6 +648,7 @@ impl App {
 fn run_with(
     event_loop: EventLoop<UserEvent>,
     assets: Option<Result<Assets, String>>,
+    dev: bool,
     #[cfg(target_os = "android")] android: AndroidApp,
 ) {
     let proxy = event_loop.create_proxy();
@@ -554,9 +661,9 @@ fn run_with(
         });
     }
     #[cfg(target_os = "android")]
-    let app = App::new(proxy, assets, android);
+    let app = App::new(proxy, assets, dev, android);
     #[cfg(not(target_os = "android"))]
-    let app = App::new(proxy, assets);
+    let app = App::new(proxy, assets, dev);
     #[cfg(target_arch = "wasm32")]
     {
         use winit::platform::web::EventLoopExtWebSys;
@@ -571,8 +678,9 @@ fn run_with(
     }
 }
 
-/// The game folder or `.kpak`: the first argument, `KULISA_GAME`, or `game/` or `game.kpak`
-/// next to the executable (an iOS app bundle) or in the working directory.
+/// The game folder or `.kpak`: the first argument that is not an option, `KULISA_GAME`, or
+/// `game/` or `game.kpak` next to the executable (an iOS app bundle) or in the working
+/// directory.
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 fn find_game() -> Result<Assets, String> {
     use std::path::PathBuf;
@@ -583,7 +691,8 @@ fn find_game() -> Result<Assets, String> {
             Assets::pack(std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?)
         }
     };
-    if let Some(p) = std::env::args_os().nth(1).or_else(|| std::env::var_os("KULISA_GAME")) {
+    let arg = std::env::args_os().skip(1).find(|a| !a.to_string_lossy().starts_with("--"));
+    if let Some(p) = arg.or_else(|| std::env::var_os("KULISA_GAME")) {
         return open(p.into());
     }
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
@@ -607,7 +716,9 @@ pub fn run() {
     let assets = None;
     #[cfg(not(target_arch = "wasm32"))]
     let assets = Some(find_game());
-    run_with(event_loop, assets);
+    // `--dev` (what `kulisa run` passes) or KULISA_DEV=1; `?dev=1` on the web.
+    let dev = kulisa_platform::dev_override() || std::env::args().skip(1).any(|a| a == "--dev");
+    run_with(event_loop, assets, dev);
 }
 
 /// Runs the engine inside an Android `NativeActivity`, with the game in the APK's
@@ -633,5 +744,5 @@ pub fn run_android(app: AndroidApp) {
         .with_android_app(app.clone())
         .build()
         .expect("failed to create event loop");
-    run_with(event_loop, Some(assets), app);
+    run_with(event_loop, Some(assets), false, app);
 }

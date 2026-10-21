@@ -163,6 +163,22 @@ impl Assets {
         Ok(Assets::Pack(Arc::new(Pack::parse(bytes)?)))
     }
 
+    /// No files (a game that could not be found still gets an error view).
+    pub fn empty() -> Assets {
+        Assets::Pack(Arc::new(Pack { index: BTreeMap::new(), data: Vec::new() }))
+    }
+
+    /// The paths whose contents differ between two packs, including added and removed files
+    /// (live reload on the web). Folders compare as unchanged.
+    pub fn changed_since(&self, older: &Assets) -> Vec<String> {
+        let (Assets::Pack(new), Assets::Pack(old)) = (self, older) else { return Vec::new() };
+        let mut paths: Vec<String> = new.index.keys().chain(old.index.keys()).cloned().collect();
+        paths.sort();
+        paths.dedup();
+        paths.retain(|p| new.get(p) != old.get(p));
+        paths
+    }
+
     pub fn read(&self, path: &str) -> Result<Vec<u8>, String> {
         let p = normalize(path)?;
         match self {

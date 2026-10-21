@@ -57,6 +57,8 @@ const EVENTS: &[&str] = &[
     "text",
     "preedit",
     "display",
+    "reload",
+    "quality",
 ];
 
 pub(crate) fn shared(lua: &Lua) -> Shared {
@@ -120,7 +122,7 @@ const ALIGNS: &[(&str, Align)] = &[
     ("justified", Align::Justified),
 ];
 
-const MODES: &[(&str, ScaleMode)] =
+pub(crate) const MODES: &[(&str, ScaleMode)] =
     &[("fit", ScaleMode::Fit), ("fill", ScaleMode::Fill), ("expand", ScaleMode::Expand)];
 
 fn named<T: Copy + PartialEq>(table: &[(&str, T)], v: &LuaValue, what: &str) -> mlua::Result<T> {
@@ -326,10 +328,15 @@ impl UserData for WindowRef {
 
 impl UserData for ImageRef {
     fn add_methods<M: UserDataMethods<Self>>(m: &mut M) {
-        m.add_meta_method(MetaMethod::Index, |_, this, key: String| match key.as_str() {
-            "width" => Ok(this.0.size.x),
-            "height" => Ok(this.0.size.y),
-            _ => Err(mlua::Error::runtime(format!("images have no property `{key}`"))),
+        // The size is read live: a live reload can change it.
+        m.add_meta_method(MetaMethod::Index, |lua, this, key: String| {
+            let size = with(lua, |st| Ok(st.renderer.texture_size(this.0.id))).ok().flatten();
+            let size = size.unwrap_or(this.0.size);
+            match key.as_str() {
+                "width" => Ok(size.x),
+                "height" => Ok(size.y),
+                _ => Err(mlua::Error::runtime(format!("images have no property `{key}`"))),
+            }
         });
         m.add_meta_method(MetaMethod::ToString, |_, this, ()| {
             Ok(format!("image {}x{}", this.0.size.x, this.0.size.y))
@@ -1231,17 +1238,23 @@ fn story_files(st: &State, files: Option<Vec<String>>) -> Result<Vec<(String, St
     files.into_iter().map(|f| st.assets.read_string(&f).map(|src| (f, src))).collect()
 }
 
+/// Compiles the story `files` (every `.kulisa` file when `None`).
+pub(crate) fn compile_story(st: &State, files: Option<Vec<String>>) -> Result<kulisa_story::Program, String> {
+    let sources = story_files(st, files)?;
+    let refs: Vec<(&str, &str)> = sources.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
+    compile(&refs).map_err(|e| e.to_string())
+}
+
 fn story_api(lua: &Lua) -> mlua::Result<Table> {
     let s = lua.create_table()?;
     s.set(
         "load",
         lua.create_function(|lua, files: Option<Vec<String>>| {
-            let sources = rt(with(lua, |st| Ok(story_files(st, files)))?)?;
-            let refs: Vec<(&str, &str)> = sources.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
-            let program = compile(&refs).map_err(|e| mlua::Error::runtime(e.to_string()))?;
+            let program = rt(with(lua, |st| Ok(compile_story(st, files.clone())))?)?;
             rt(with_story(&shared(lua), false, |s| {
                 s.host.prepare(&program).map_err(|e| e.to_string())?;
                 s.vm = Vm::new(Arc::new(program));
+                s.files = files;
                 s.loaded = true;
                 s.waiting = Waiting::Nothing;
                 Ok(())
@@ -1386,13 +1399,38 @@ fn storage(st: &State) -> mlua::Result<&Storage> {
         .ok_or_else(|| mlua::Error::runtime("call kulisa.save.setup{ id = \"my_game\" } first"))
 }
 
+/// Writes a save file (`body` is `{ story, data }`) into `slot`.
+pub(crate) fn write_save(
+    st: &State,
+    slot: &str,
+    title: String,
+    body: Value,
+    thumbnail: Option<Vec<u8>>,
+) -> Result<(), String> {
+    let storage = st.storage.as_ref().ok_or("saves are not set up")?;
+    let header = SaveHeader {
+        game_id: st.game_id.clone(),
+        game_version: st.config.version.clone(),
+        save_version: st.save_version,
+        timestamp: now_secs(),
+        slot: slot.to_string(),
+        playtime: st.playtime,
+        title,
+        thumbnail,
+    };
+    storage.write(slot, &SaveFile { header, body }.to_bytes())
+}
+
 fn save_api(lua: &Lua) -> mlua::Result<Table> {
     let t = lua.create_table()?;
     t.set(
         "setup",
-        lua.create_function(|lua, opts: Table| {
-            let id: String = opts.get("id")?;
-            let version = opts.get::<Option<u32>>("version")?.unwrap_or(1);
+        lua.create_function(|lua, opts: Option<Table>| {
+            let id = match opts.as_ref().map(|o| o.get::<Option<String>>("id")).transpose()?.flatten() {
+                Some(id) => id,
+                None => with(lua, |st| Ok(st.config.id.clone()))?,
+            };
+            let version = opts.map(|o| o.get::<Option<u32>>("version")).transpose()?.flatten().unwrap_or(1);
             let storage = rt(Storage::new(&id, "saves"))?;
             let persist = rt(Storage::new(&id, "persistent"))?;
             with(lua, |st| {
@@ -1447,18 +1485,14 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
                 if let (Some(id), None) = (thumb, &thumbnail) {
                     st.media.pending_saves.push((slot.clone(), id));
                 }
-                let header = SaveHeader {
-                    game_id: st.game_id.clone(),
-                    game_version: String::new(),
-                    save_version: st.save_version,
-                    timestamp: now_secs(),
-                    slot: slot.clone(),
-                    playtime: st.playtime,
-                    title: title.unwrap_or_else(|| last_line.chars().take(80).collect()),
+                let title = title.unwrap_or_else(|| last_line.chars().take(80).collect());
+                rt(write_save(
+                    st,
+                    &slot,
+                    title,
+                    Value::map().with("story", story).with("data", data),
                     thumbnail,
-                };
-                let body = Value::map().with("story", story).with("data", data);
-                rt(storage(st)?.write(&slot, &SaveFile { header, body }.to_bytes()))
+                ))
             })
         })?,
     )?;
@@ -1504,6 +1538,8 @@ fn save_api(lua: &Lua) -> mlua::Result<Table> {
                 Ok(storage
                     .list()
                     .into_iter()
+                    // Slots starting with `_` are the engine's (the live reload snapshot).
+                    .filter(|slot| !slot.starts_with('_'))
                     .filter_map(|slot| {
                         let bytes = storage.read(&slot).ok().flatten()?;
                         SaveFile::read_header(&bytes).ok()

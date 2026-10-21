@@ -23,6 +23,13 @@ pub(crate) struct AlphaMask {
 #[derive(Default)]
 pub(crate) struct Masks(RefCell<HashMap<TextureId, Option<AlphaMask>>>);
 
+impl Masks {
+    /// Drops the cached alpha of a texture whose image changed (live reload).
+    pub fn forget(&self, id: TextureId) {
+        self.0.borrow_mut().remove(&id);
+    }
+}
+
 /// Reads alpha for the scene's hit tests.
 pub(crate) struct Alpha<'a> {
     assets: &'a Assets,

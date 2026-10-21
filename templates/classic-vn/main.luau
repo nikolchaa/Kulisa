@@ -1,5 +1,5 @@
 -- Classic VN template: a Ren'Py-style visual novel interface built only with the public
--- Kulisa API. Edit game/config.luau first; the screens are in ui/, the story in story/.
+-- Kulisa API. Edit kulisa.toml and game/config.luau first; the screens are in ui/, the story in story/.
 --
 -- Controls
 --   Advance: click, tap, Space, Enter. Back: wheel up, Page Up (wheel down, Page Down roll
@@ -13,8 +13,7 @@
 
 local config = require("game/config")
 
-kulisa.display(config.display)
-kulisa.save.setup({ id = config.id, version = config.save_version })
+kulisa.save.setup({ version = config.save_version })
 for _, f in config.fonts do
     kulisa.load_font(f)
 end
@@ -100,6 +99,13 @@ kulisa.on("wheel", function(lines)
         flow.rollback()
     else
         flow.roll_forward()
+    end
+end)
+
+-- Live reload (`kulisa run`): a script change restarts the game; go back to the same line.
+kulisa.on("reload", function(slot)
+    if slot then
+        actions.load(slot)
     end
 end)
 

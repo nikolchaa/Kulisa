@@ -93,7 +93,7 @@ fn advance(g: &mut Game) {
 #[test]
 fn classic_vn_plays() {
     let Some(mut g) = game() else { return };
-    let id: String = eval(&g, "require('game/config').id");
+    let id: String = eval(&g, "kulisa.config.game.id");
     g.eval::<()>("t", "errors = {}; kulisa.on('error', function(m) table.insert(errors, m) end)").unwrap();
     frames(&mut g, 2);
     assert!(eval::<bool>(&g, "kulisa.ui.shown('main_menu')"));

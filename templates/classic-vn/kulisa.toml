@@ -1,0 +1,17 @@
+# Game settings, read by the engine at startup and by `kulisa build` (app ids, titles,
+# orientation). Scripts see them as `kulisa.config`.
+
+[game]
+# Save folder and app id: change it for your game, or its saves mix with other games' saves.
+id = "kulisa_classic_vn"
+title = "Whiskers & Sunbeams"
+version = "1.0.0"
+
+# The same keys as kulisa.display{}; the engine applies them before main.luau runs.
+[display]
+width = 1920
+height = 1080
+scale = "expand"
+# Wider than 21:9 or narrower than 4:3 gets bars instead of unpainted space.
+aspect = ["4:3", "21:9"]
+orientation = "landscape"

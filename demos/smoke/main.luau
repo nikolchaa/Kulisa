@@ -293,5 +293,12 @@ kulisa.on("update", function(dt)
     end
 end)
 
+-- Live reload (`kulisa run`): a script change restarts the game; go back to the same line.
+kulisa.on("reload", function(slot)
+    if slot then
+        kulisa.save.load(slot)
+    end
+end)
+
 kulisa.story.load()
 kulisa.story.start()

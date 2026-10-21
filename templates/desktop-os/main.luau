@@ -10,8 +10,7 @@
 
 local config = require("os/config")
 
-kulisa.display(config.display)
-kulisa.save.setup({ id = config.id, version = config.save_version })
+kulisa.save.setup({ version = config.save_version })
 for _, f in config.fonts do
     kulisa.load_font(f)
 end
@@ -105,6 +104,13 @@ local function load_slot(slot: string)
     bridge.started = true
     kulisa.save.load(slot)
 end
+
+-- Live reload (`kulisa run`): a script change restarts the game; go back to the same line.
+kulisa.on("reload", function(slot)
+    if slot then
+        load_slot(slot)
+    end
+end)
 
 settings.load_slot = function(slot: string)
     shell.dialog({

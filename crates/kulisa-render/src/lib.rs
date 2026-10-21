@@ -744,6 +744,30 @@ impl Renderer {
         TextureId(self.textures.len() as u32 - 1)
     }
 
+    /// Replaces an image's pixels, keeping its id (live reload). An atlas image of the same
+    /// size is overwritten in place; otherwise the image moves (old atlas space is not reused).
+    pub fn replace_texture(&mut self, id: TextureId, image: &Image) {
+        let size = UVec2::new(image.width, image.height);
+        let i = id.0 as usize;
+        if i >= self.textures.len() {
+            return;
+        }
+        self.own_copies.remove(&id);
+        if let Tex::Atlas { page, uv, size: old } = &self.textures[i]
+            && *old == size
+        {
+            let (page, uv) = (*page, *uv);
+            let ps = self.page_size as f32;
+            // Packed images sit inside a 1px extruded border.
+            let (x, y) = ((uv.min.x * ps).round() as u32 - 1, (uv.min.y * ps).round() as u32 - 1);
+            self.upload(&self.pages[page].tex.texture, x, y, &image.extruded(1));
+            return;
+        }
+        let new = self.create_texture(image);
+        self.textures.swap(i, new.0 as usize);
+        self.textures.pop();
+    }
+
     /// Releases a texture. Unpacked textures and render targets free their memory; atlas
     /// space is not reclaimed. Sprites still showing it draw white.
     pub fn free_texture(&mut self, id: TextureId) {
@@ -1184,7 +1208,13 @@ impl Renderer {
 
     /// Renders `scene` laid out by `viewport` and presents it. `time` is in seconds.
     pub fn render(&mut self, scene: &Scene, viewport: &Viewport, time: f32) {
-        self.draw_scene(scene, viewport, time, None);
+        self.draw_scene(scene, viewport, time, None, None);
+    }
+
+    /// Like [`Renderer::render`], then draws `overlay` on top in window pixels (no camera,
+    /// letterbox or screen effects): engine views such as the error view.
+    pub fn render_with_overlay(&mut self, scene: &Scene, viewport: &Viewport, overlay: &Scene, time: f32) {
+        self.draw_scene(scene, viewport, time, None, Some(overlay));
     }
 
     /// Renders `scene` into the render target `target` as if the target were the window
@@ -1200,7 +1230,7 @@ impl Renderer {
             Some(Tex::Own(t)) if t.texture.usage().contains(wgpu::TextureUsages::RENDER_ATTACHMENT) => t.size,
             _ => return Err(format!("texture {} is not a render target", target.0)),
         };
-        self.draw_scene(scene, viewport, time, Some((target, size)));
+        self.draw_scene(scene, viewport, time, Some((target, size)), None);
         Ok(())
     }
 
@@ -1210,11 +1240,15 @@ impl Renderer {
         viewport: &Viewport,
         time: f32,
         capture: Option<(TextureId, UVec2)>,
+        overlay: Option<&Scene>,
     ) {
         let size = capture.map_or(self.size, |(_, s)| s);
         let capturing = capture.is_some();
         let mut frame = std::mem::take(&mut self.frame);
         kulisa_core::extract(scene, &viewport.layout(size), size, &mut frame);
+        if let Some(overlay) = overlay {
+            kulisa_core::extract_overlay(overlay, size, &mut frame);
+        }
         self.remap_uvs(&mut frame);
 
         // A full-target quad for every effect (at its output size), plus one for present.
