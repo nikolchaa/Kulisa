@@ -56,6 +56,21 @@ pub fn web_fullscreen() -> bool {
     web_sys::window().and_then(|w| w.document()).is_some_and(|d| d.fullscreen_element().is_some())
 }
 
+/// Locks the screen to `"landscape"` or `"portrait"`. Browsers allow it only while the page is
+/// fullscreen (Chrome on Android; Safari never), so callers try again when it becomes
+/// fullscreen; refusals are expected and ignored.
+#[cfg(target_arch = "wasm32")]
+pub fn web_lock_orientation(orientation: &str) {
+    use web_sys::OrientationLockType as Lock;
+    let Some(screen) = web_sys::window().and_then(|w| w.screen().ok()) else { return };
+    let lock = if orientation == "portrait" { Lock::Portrait } else { Lock::Landscape };
+    if let Ok(promise) = screen.orientation().lock(lock) {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+        });
+    }
+}
+
 /// The page's safe-area insets (CSS `env(safe-area-inset-*)`) in device pixels.
 #[cfg(target_arch = "wasm32")]
 pub fn web_safe_area() -> [f32; 4] {

@@ -80,8 +80,9 @@ Scripts run in Luau's sandbox: no `io`, `os.execute` or `loadfile`; library tabl
   the window's aspect ratio (bars beyond it; the scale mode applies inside), so 32:9 monitors
   do not show areas the art never painted. `orientation`: `"auto"` (default: follows the
   design's shape), `"landscape"`, `"portrait"` or `"any"`. Android and iOS lock to it; on the
-  web the game should ask the player to rotate when `screen.mismatch` is set; desktop windows
-  open in that shape. `phone`, `tablet` and `desktop` override any of these for that kind of
+  web it locks once the page is fullscreen (browsers allow no earlier, and Safari never), and
+  until then the game should ask the player to rotate when `screen.mismatch` is set; desktop
+  windows open in that shape. `phone`, `tablet` and `desktop` override any of these for that kind of
   device (a touch screen under 600 logical pixels on its short side is a phone). Call it
   before building the scene; the profile is chosen once, at startup.
 - `kulisa.screen`: `width`, `height`, `mode`, `scale` (window pixels per design unit),

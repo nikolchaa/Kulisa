@@ -17,7 +17,7 @@ mod web_dev;
 use std::sync::Arc;
 
 use kulisa_core::Vec2;
-#[cfg(target_os = "ios")]
+#[cfg(any(target_os = "ios", target_arch = "wasm32"))]
 use kulisa_lua::Orientation;
 use kulisa_lua::{Device, FormFactor, Game};
 use kulisa_platform::{Assets, GameConfig};
@@ -68,6 +68,10 @@ struct App {
     watcher: Option<watch::Watcher>,
     #[cfg(target_arch = "wasm32")]
     web_dev: web_dev::Poll,
+    /// The orientation the game wants locked (`landscape`/`portrait`); browsers allow it only
+    /// in fullscreen, so it is applied again whenever the page gets there.
+    #[cfg(target_arch = "wasm32")]
+    web_lock: Option<&'static str>,
     #[cfg(target_os = "android")]
     android: AndroidApp,
 }
@@ -199,6 +203,8 @@ impl App {
             watcher: None,
             #[cfg(target_arch = "wasm32")]
             web_dev: Default::default(),
+            #[cfg(target_arch = "wasm32")]
+            web_lock: None,
             #[cfg(target_os = "android")]
             android,
         }
@@ -281,6 +287,17 @@ impl App {
                     Orientation::Portrait => ValidOrientations::Portrait,
                     _ => ValidOrientations::LandscapeAndPortrait,
                 });
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(o) = r.orientation {
+            self.web_lock = match o {
+                Orientation::Landscape => Some("landscape"),
+                Orientation::Portrait => Some("portrait"),
+                _ => None,
+            };
+            if let Some(lock) = self.web_lock {
+                kulisa_platform::web_lock_orientation(lock);
             }
         }
         #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
@@ -531,6 +548,12 @@ impl App {
             WindowEvent::Resized(_) => {
                 let size = self.window.as_deref().map(drawable_size).unwrap_or_default();
                 let safe = self.safe_area();
+                // The page just went fullscreen (or rotated in it): lock the orientation, which
+                // browsers only allow now. A lock that holds already changes nothing.
+                #[cfg(target_arch = "wasm32")]
+                if let Some(lock) = self.web_lock.filter(|_| kulisa_platform::web_fullscreen()) {
+                    kulisa_platform::web_lock_orientation(lock);
+                }
                 if let Some(game) = &mut self.game {
                     game.set_safe_area(safe);
                     // The page enters fullscreen on a phone's first tap, and players leave it
