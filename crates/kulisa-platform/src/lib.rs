@@ -17,7 +17,7 @@ pub use assets::{Assets, Pack, is_game_file, normalize};
 pub use config::{CONFIG_FILE, Config, ConfigValue, GameConfig, ORIENTATIONS, QUALITY_TIERS, valid_id};
 pub use device::{Motion, dev_override, profile_override, quality_override, safe_area_override};
 #[cfg(target_arch = "wasm32")]
-pub use device::{web_safe_area, web_touch};
+pub use device::{web_fullscreen, web_safe_area, web_touch};
 pub use storage::Storage;
 #[cfg(not(target_arch = "wasm32"))]
 pub use storage::data_dir;

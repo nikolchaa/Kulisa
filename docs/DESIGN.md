@@ -745,6 +745,10 @@ body:   the VM's save: frames, stage, story variables
   a single archive (`.kpak`: index + blobs). `cargo xtask` bundles a game
   (`--game DIR`, default `demos/smoke`) into web, APK and iOS builds;
   `cargo xtask pack` writes a `.kpak`. Desktop runs a folder directly.
+- The web page sizes the canvas to the visible viewport (`100dvh`; `100vh` is the height
+  without a phone browser's address bar, which cut the bottom off) and, on touch devices,
+  makes the whole page fullscreen at the first tap where the browser allows it (not iPhone
+  Safari). `kulisa.window.fullscreen` follows the page's state.
 - Mod loading is desktop only.
 
 ### CLI, live reload and quality tiers (M9)
@@ -958,3 +962,4 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
 | 2026-10-21 | M10: `pass` joins the story language (Ren'Py has it; converted blocks can end up empty). |
 | 2026-10-21 | App icons come from one square PNG in `kulisa.toml`; the Windows icon is embedded by the player's build script through `llvm-rc`/`rc` instead of a resource crate, and Android gets an adaptive icon with the art as its background layer. |
 | 2026-10-21 | Website: Starlight in `site/` on GitHub Pages, in this repository so docs and code change together; Node stays confined to `site/`. Its playable games share one player build instead of one web build per game. |
+| 2026-10-23 | Web pages go fullscreen on the first tap on touch devices (the whole page, not the canvas, so the soft keyboard's hidden input stays inside), by default and without a setting: a game on a phone wants the whole screen. |

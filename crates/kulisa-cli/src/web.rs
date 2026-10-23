@@ -91,10 +91,13 @@ const INDEX_HTML: &str = r#"<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>{title}</title>
 {icons}<style>
   html, body { margin: 0; height: 100%; background: {background}; color: #f4f1ea; overflow: hidden; font: 16px system-ui, sans-serif; }
-  canvas { display: block; width: 100vw !important; height: 100vh !important; touch-action: none; outline: none; }
+  /* dvh: the visible height, which follows a phone browser's address bar (vh does not). */
+  canvas { display: block; width: 100vw !important; height: 100dvh !important; touch-action: none; outline: none; }
   #error { max-width: 36em; margin: 20vh auto; padding: 0 16px; line-height: 1.5; }
 </style>
 </head>
@@ -112,6 +115,17 @@ const INDEX_HTML: &str = r#"<!doctype html>
   if (typeof WebAssembly !== "object" || !WebAssembly.validate(exnref)) {
     fail("This game needs a newer browser: Chrome or Edge 137, Firefox 131, Safari 18.4 or later.");
   } else {
+    // Phones and tablets: the first tap makes the page fullscreen, without the browser's bars
+    // (where the browser allows it; iPhone Safari does not, and the canvas follows the
+    // visible area there). The whole page, so the soft keyboard's input stays inside it.
+    const root = document.documentElement;
+    if (matchMedia("(pointer: coarse)").matches && root.requestFullscreen) {
+      const tap = () => {
+        removeEventListener("pointerup", tap, true);
+        if (!document.fullscreenElement) root.requestFullscreen({ navigationUI: "hide" }).catch(() => {});
+      };
+      addEventListener("pointerup", tap, true);
+    }
     // ?webgl hides WebGPU to exercise the WebGL2 fallback.
     if (new URLSearchParams(location.search).has("webgl")) {
       Object.defineProperty(navigator, "gpu", { value: undefined });
@@ -138,5 +152,8 @@ mod tests {
         assert!(html.contains("<title>Cats &lt;3</title>"));
         assert!(html.contains("background: #102030;"));
         assert!(html.contains("<link rel=\"icon\" type=\"image/png\" href=\"icon.png\">"));
+        // Phone browsers: the canvas fits the visible area, and a tap asks for fullscreen.
+        assert!(html.contains("height: 100dvh"));
+        assert!(html.contains("requestFullscreen"));
     }
 }

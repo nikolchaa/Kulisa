@@ -533,6 +533,10 @@ impl App {
                 let safe = self.safe_area();
                 if let Some(game) = &mut self.game {
                     game.set_safe_area(safe);
+                    // The page enters fullscreen on a phone's first tap, and players leave it
+                    // with the back gesture or Esc, without the game asking.
+                    #[cfg(target_arch = "wasm32")]
+                    game.set_fullscreen(kulisa_platform::web_fullscreen());
                     game.resize(size.width, size.height);
                 } else if let Some(r) = &mut self.renderer {
                     r.resize(size.width, size.height);

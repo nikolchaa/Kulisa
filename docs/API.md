@@ -91,7 +91,9 @@ Scripts run in Luau's sandbox: no `io`, `os.execute` or `loadfile`; library tabl
   `profile` (`"desktop"`, `"tablet"`, `"phone"`), `orientation` (`"landscape"` or
   `"portrait"`, the window's shape now), `mismatch` (the device should be rotated), `touch`.
   The `display` event (`{ profile, orientation, mismatch }`) fires when these change.
-- `kulisa.window`: `fullscreen` (read and write; desktop and web), `can_quit`, `window:quit()`
+- `kulisa.window`: `fullscreen` (read and write; desktop and web; on the web it also follows
+  the page, which phones and tablets make fullscreen at the first tap, and the player leaving
+  it), `can_quit`, `window:quit()`
   (desktop only; mobile apps and pages are closed by the player), `can_resize` and
   `window:resize(width, height)` (logical pixels; desktop windows that are not fullscreen).
 - `kulisa.display` may be called again while the game runs, e.g. to switch the scale mode or the

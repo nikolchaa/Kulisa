@@ -49,6 +49,13 @@ pub fn web_touch() -> bool {
     web_sys::window().is_some_and(|w| w.navigator().max_touch_points() > 0)
 }
 
+/// Whether something on the page is fullscreen: the game's canvas, or the whole page (the
+/// player's first tap on a phone asks for that).
+#[cfg(target_arch = "wasm32")]
+pub fn web_fullscreen() -> bool {
+    web_sys::window().and_then(|w| w.document()).is_some_and(|d| d.fullscreen_element().is_some())
+}
+
 /// The page's safe-area insets (CSS `env(safe-area-inset-*)`) in device pixels.
 #[cfg(target_arch = "wasm32")]
 pub fn web_safe_area() -> [f32; 4] {
