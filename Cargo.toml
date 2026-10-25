@@ -38,5 +38,6 @@ web-time = "1"
 wgpu = { version = "30", features = ["webgl"] }
 winit = "0.30"
 
+# Upstream main until the wasm32-unknown-unknown heap-dump fix is released (then drop this).
 [patch.crates-io]
-mlua = { path = "third_party/mlua" }
+mlua = { git = "https://github.com/mlua-rs/mlua", rev = "ff96ed786295cae96f43ef1372bd22be0fbf7866" }

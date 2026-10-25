@@ -865,8 +865,9 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
    - C++ static constructors run once via an explicit `__wasm_call_ctors`
      call; referencing it also stops wasm-ld from re-running them on every
      export, which otherwise loops forever in Luau's flag registration.
-   - `mlua` needed one small patch (a heap-dump helper uses libc stdio); it is
-     vendored in `third_party/mlua` until fixed upstream.
+   - `mlua` needed one small patch (a heap-dump helper uses libc stdio). It was
+     vendored until upstream fixed it; Kulisa now pins an upstream `main` commit
+     (`[patch.crates-io]` in `Cargo.toml`) until a release includes the fix.
    - **Cost:** browsers need wasm exception handling with exnref (Chrome/Edge
      and Firefox current releases, Safari 18.4+). Older browsers get a clear
      error page. Pinning exact minimum versions is an M9 task.
@@ -966,3 +967,4 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
 | 2026-10-21 | Website: Starlight in `site/` on GitHub Pages, in this repository so docs and code change together; Node stays confined to `site/`. Its playable games share one player build instead of one web build per game. |
 | 2026-10-23 | Web pages go fullscreen on the first tap on touch devices (the whole page, not the canvas, so the soft keyboard's hidden input stays inside), by default and without a setting: a game on a phone wants the whole screen. |
 | 2026-10-23 | The web locks to the same resolved orientation as Android and iOS (the profile's, or the design's shape), retried whenever the page enters fullscreen, rather than a separate web setting; the rotate hint (`mismatch`) stays for browsers that refuse. |
+| 2026-10-25 | Drop the vendored `mlua` for a pinned upstream `main` commit, which carries the wasm32-unknown-unknown heap-dump fix; switch to the crates.io release once one includes it. |
