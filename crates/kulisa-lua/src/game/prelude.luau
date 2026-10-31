@@ -85,7 +85,8 @@ local function run_timers()
             else
                 t.handle.done = true
             end
-            local ok, err = xpcall(t.f, debug.traceback)
+            -- tostring: errors from engine calls are not strings, which debug.traceback refuses.
+            local ok, err = xpcall(t.f, function(e) return debug.traceback(tostring(e)) end)
             if not ok then
                 kulisa._report(tostring(err))
             end

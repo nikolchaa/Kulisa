@@ -141,6 +141,11 @@ pub struct GameConfig {
     /// `xcrun notarytool store-credentials`).
     pub macos_identity: Option<String>,
     pub macos_notary_profile: Option<String>,
+    /// `[steam] app_id`: connect to Steam as this app on desktop.
+    pub steam_app_id: Option<u32>,
+    /// `[steam] sdk`: the Steamworks SDK folder builds copy the Steam library from, relative to
+    /// the game.
+    pub steam_sdk: Option<String>,
     pub raw: Config,
 }
 
@@ -179,6 +184,11 @@ impl GameConfig {
         if build < 1.0 || build.fract() != 0.0 {
             return Err(format!("{CONFIG_FILE}: `game.build` must be a whole number from 1"));
         }
+        let steam_app_id = match raw.number("steam.app_id")? {
+            Some(n) if n >= 1.0 && n.fract() == 0.0 && n <= u32::MAX as f64 => Some(n as u32),
+            Some(_) => return Err(format!("{CONFIG_FILE}: `steam.app_id` must be a whole number from 1")),
+            None => None,
+        };
         let ios_bundle_id = raw
             .str("ios.bundle_id")?
             .map_or_else(|| format!("dev.kulisa.{}", id.replace('_', "-")), str::to_string);
@@ -207,6 +217,8 @@ impl GameConfig {
             macos_bundle_id: raw.str("macos.bundle_id")?.map_or(ios_bundle_id, str::to_string),
             macos_identity: raw.str("macos.identity")?.map(str::to_string),
             macos_notary_profile: raw.str("macos.notary_profile")?.map(str::to_string),
+            steam_app_id,
+            steam_sdk: raw.str("steam.sdk")?.map(str::to_string),
             id,
             raw,
         })
@@ -566,6 +578,8 @@ fullscreen = false
         assert_eq!(g.locked_orientation(), "portrait");
         assert!(GameConfig::parse(Some("[game]\nid = \"a b\"")).is_err());
         assert!(GameConfig::parse(Some("[quality]\ntier = \"ultra\"")).is_err());
+        assert_eq!(GameConfig::parse(Some("[steam]\napp_id = 480")).unwrap().steam_app_id, Some(480));
+        assert!(GameConfig::parse(Some("[steam]\napp_id = 1.5")).is_err());
         let e = GameConfig::parse(Some("[game]\ntitle = 5")).unwrap_err();
         assert_eq!(e, "kulisa.toml: `game.title` must be a string, not a number");
     }

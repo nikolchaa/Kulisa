@@ -1327,6 +1327,7 @@ dependencies = [
  "console_log",
  "env_logger",
  "js-sys",
+ "libloading",
  "log",
  "oslog",
  "wasm-bindgen",

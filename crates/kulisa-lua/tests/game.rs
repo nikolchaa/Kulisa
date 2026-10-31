@@ -1129,6 +1129,114 @@ fn sensors_and_haptics_go_through_the_runtime() {
 }
 
 #[test]
+fn timers_report_what_engine_calls_got_wrong() {
+    let mut g = game!("main.luau" => r#"
+        kulisa.display(64, 64, "fit")
+        errors = {}
+        kulisa.on("error", function(e) table.insert(errors, e) end)
+        kulisa.after(0, function() kulisa.steam.unlock() end)
+        kulisa.after(0, function() error("from the script") end)
+    "#);
+    g.frame(0.016);
+    let errors: Vec<String> = g.eval("t", "return errors").unwrap();
+    assert_eq!(errors.len(), 2, "{errors:?}");
+    assert!(errors[0].contains("expected string"), "{}", errors[0]);
+    assert!(errors[1].contains("from the script"), "{}", errors[1]);
+    assert!(errors.iter().all(|e| !e.contains("error in error handling")), "{errors:?}");
+}
+
+/// Steam without a Steam client: records calls and knows one achievement and one stat.
+#[derive(Default)]
+struct FakeSteam {
+    log: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    won: bool,
+    stat: f64,
+}
+
+impl kulisa_platform::SteamApi for FakeSteam {
+    fn run_callbacks(&mut self) {
+        self.log.borrow_mut().push("callbacks".into());
+    }
+    fn unlock(&mut self, id: &str) -> bool {
+        self.won |= id == "WIN";
+        self.log.borrow_mut().push(format!("unlock {id}"));
+        id == "WIN"
+    }
+    fn clear(&mut self, id: &str) -> bool {
+        self.won &= id != "WIN";
+        id == "WIN"
+    }
+    fn unlocked(&self, id: &str) -> Option<bool> {
+        (id == "WIN").then_some(self.won)
+    }
+    fn progress(&mut self, id: &str, current: u32, max: u32) -> bool {
+        self.log.borrow_mut().push(format!("progress {id} {current}/{max}"));
+        true
+    }
+    fn stat(&self, name: &str) -> Option<f64> {
+        (name == "wins").then_some(self.stat)
+    }
+    fn set_stat(&mut self, name: &str, value: f64) -> bool {
+        if name == "wins" {
+            self.stat = value;
+        }
+        name == "wins"
+    }
+    fn store(&mut self) -> bool {
+        self.log.borrow_mut().push("store".into());
+        true
+    }
+    fn language(&self) -> Option<String> {
+        Some("japanese".into())
+    }
+}
+
+#[test]
+fn steam_calls_are_safe_without_steam_and_reach_it_with_it() {
+    let mut g = game!("main.luau" => "kulisa.display(64, 64, 'fit')");
+
+    // Without Steam: one script serves every store.
+    let off: (bool, bool, Option<bool>, Option<f64>, bool, Option<String>) = g
+        .eval(
+            "t",
+            "local s = kulisa.steam
+             return s.available(), s.unlock('WIN'), s.unlocked('WIN'), s.stat('wins'), s.store(), s.language()",
+        )
+        .unwrap();
+    assert_eq!(off, (false, false, None, None, false, None));
+
+    let fake = FakeSteam::default();
+    let log = fake.log.clone();
+    g.set_steam(Some(Box::new(fake)));
+    assert!(g.eval::<bool>("t", "return kulisa.steam.available()").unwrap());
+    g.frame(0.016);
+    assert_eq!(log.borrow().as_slice(), ["callbacks"], "Steam runs with the game's frames");
+    log.borrow_mut().clear();
+
+    // Unlocking stores at once, so the toast shows; an unknown name reports failure and does not.
+    assert!(g.eval::<bool>("t", "return kulisa.steam.unlock('WIN')").unwrap());
+    assert_eq!(g.eval::<Option<bool>>("t", "return kulisa.steam.unlocked('WIN')").unwrap(), Some(true));
+    assert!(!g.eval::<bool>("t", "return kulisa.steam.unlock('NOPE')").unwrap());
+    assert_eq!(g.eval::<Option<bool>>("t", "return kulisa.steam.unlocked('NOPE')").unwrap(), None);
+    assert_eq!(log.borrow().as_slice(), ["unlock WIN", "store", "unlock NOPE"]);
+    assert!(g.eval::<bool>("t", "return kulisa.steam.clear('WIN')").unwrap());
+    assert_eq!(g.eval::<Option<bool>>("t", "return kulisa.steam.unlocked('WIN')").unwrap(), Some(false));
+    log.borrow_mut().clear();
+
+    // Stats wait for store().
+    assert!(g.eval::<bool>("t", "return kulisa.steam.set_stat('wins', 3)").unwrap());
+    assert_eq!(g.eval::<Option<f64>>("t", "return kulisa.steam.stat('wins')").unwrap(), Some(3.0));
+    assert!(log.borrow().is_empty());
+    assert!(g.eval::<bool>("t", "return kulisa.steam.store()").unwrap());
+    g.eval::<bool>("t", "return kulisa.steam.progress('WIN', 2, 5)").unwrap();
+    assert_eq!(log.borrow().as_slice(), ["store", "progress WIN 2/5"]);
+    assert_eq!(
+        g.eval::<Option<String>>("t", "return kulisa.steam.language()").unwrap().as_deref(),
+        Some("japanese")
+    );
+}
+
+#[test]
 fn the_view_lifts_a_field_above_the_on_screen_keyboard() {
     let mut g = game!("main.luau" => r##"
         kulisa.display(64, 64, "fit")

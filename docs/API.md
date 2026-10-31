@@ -47,14 +47,30 @@ tier = "auto"            # or "low", "medium", "high" (see Quality)
 
 [android]
 package = "com.example.cattales"   # default dev.kulisa.<id>
+keystore = "../keys/upload.jks"    # the release key, relative to the game
+key_alias = "upload"               # passwords: KULISA_KEYSTORE_PASSWORD, KULISA_KEY_PASSWORD
 
 [ios]
 bundle_id = "com.example.cattales" # default dev.kulisa.<id>
+identity = "Apple Distribution: Your Name (TEAMID)"     # App Store signing, with the profile
+provisioning_profile = "../keys/cats.mobileprovision"
+
+[macos]
+bundle_id = "com.example.cattales" # default: the iOS one
+identity = "Developer ID Application: Your Name (TEAMID)"
+notary_profile = "cats"            # from `xcrun notarytool store-credentials`
+
+[steam]
+app_id = 480                       # connect to Steam as this app on desktop (see Steam)
+sdk = "../steamworks"              # the Steamworks SDK folder, to copy Steam's library from
 ```
 
 - The icon is the window and taskbar icon on desktop, and `kulisa build` makes the Windows
-  program's icon, an adaptive Android launcher icon, iOS home-screen icons and the web page's
-  icons from it. Without one, platforms show their default icon.
+  program's icon, a macOS `.icns`, an adaptive Android launcher icon, the iOS asset catalog's
+  icon and the web page's icons from it. Without one, platforms show their default icon.
+- `kulisa.toml` ships inside the game, so keep passwords out of it. Signing keys and profiles
+  (`.jks`, `.keystore`, `.p12`, `.pfx`, `.p8`, `.pem`, `.key`, `.mobileprovision`) in the game
+  folder are never packed.
 - `kulisa.config` is the whole file as read-only tables (`kulisa.config.game.title`), so games
   can keep their own sections too.
 - `kulisa.save.setup()` without an `id` uses `[game] id`.
@@ -419,6 +435,23 @@ Text fields are made in Luau on top of a few engine pieces, so games can build t
   of that strength) or a rumble on gamepads that have one. `strength` is 0 to 1 (default 0.5),
   `seconds` up to 2 (default 0.05). Calls on platforms without haptics do nothing; a script
   cannot queue more than a few pulses per frame.
+
+## Steam
+
+With `[steam] app_id` in `kulisa.toml` and Steam's library next to the program (`kulisa build`
+copies it from `[steam] sdk`), desktop games connect to Steam when they start. Every call is
+safe without it, returning `false` or `nil`, so one script serves every platform and store.
+
+- `kulisa.steam.available()` → whether the game is connected to Steam.
+- `kulisa.steam.unlock(id)` → whether Steam took it. Sends it to Steam at once, which shows the
+  toast. `id` is the achievement's API name from Steamworks. `kulisa.steam.clear(id)` locks it
+  again (for testing). `kulisa.steam.unlocked(id)` → `true`, `false`, or `nil` without Steam or
+  for an unknown achievement. `kulisa.steam.progress(id, current, max)` shows a progress toast.
+- `kulisa.steam.stat(name)` → number, or `nil`. `kulisa.steam.set_stat(name, value)` → whether
+  Steam took it. `kulisa.steam.store()` sends changed stats: call it at meaningful moments, like
+  the end of a chapter, not every frame.
+- `kulisa.steam.language()` → the language Steam runs the game in (`english`, `japanese`), or
+  `nil`.
 
 ## Timers
 

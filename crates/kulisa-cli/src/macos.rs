@@ -77,6 +77,7 @@ pub fn build(game: &Game, opts: &Options, package: Package, out: &Path) -> Resul
     if package.notarize && (identity.is_none() || notary.is_none()) {
         return Err("--notarize needs `identity` and `notary_profile` under [macos] in kulisa.toml".into());
     }
+    let steam = crate::desktop::steam_library(game)?;
     let built = player(opts, package.universal)?;
 
     let name = game.file_name();
@@ -93,19 +94,26 @@ pub fn build(game: &Game, opts: &Options, package: Package, out: &Path) -> Resul
     // The player also looks for game.kpak in Contents/Resources.
     write(&contents.join("Resources/game.kpak"), game.pack()?)?;
 
-    let mut sign = Command::new("codesign");
-    sign.arg("--force");
-    match identity {
-        // The hardened runtime and a timestamp are what notarization asks for.
-        Some(id) => sign.args(["--options", "runtime", "--timestamp", "--sign", id]),
-        None => {
-            if opts.release {
-                eprintln!("warning: ad-hoc signed; other Macs warn about it (see `[macos] identity`)");
-            }
-            sign.args(["--timestamp=none", "--sign", "-"])
-        }
+    if opts.release && identity.is_none() {
+        eprintln!("warning: ad-hoc signed; other Macs warn about it (see `[macos] identity`)");
+    }
+    let sign = |path: &Path| {
+        let mut sign = Command::new("codesign");
+        sign.arg("--force");
+        match identity {
+            // The hardened runtime and a timestamp are what notarization asks for.
+            Some(id) => sign.args(["--options", "runtime", "--timestamp", "--sign", id]),
+            None => sign.args(["--timestamp=none", "--sign", "-"]),
+        };
+        run(sign.arg(path))
     };
-    run(sign.arg(&app))?;
+    // Inside out. The hardened runtime only loads libraries signed by the same team.
+    if let Some(lib) = &steam {
+        let copy = contents.join("MacOS").join(lib.file_name().ok_or("the Steam library has no name")?);
+        fs::copy(lib, &copy).map_err(|e| format!("{}: {e}", lib.display()))?;
+        sign(&copy)?;
+    }
+    sign(&app)?;
 
     if let (true, Some(profile)) = (package.notarize, notary) {
         let zip = out.join(format!("{name}.zip"));

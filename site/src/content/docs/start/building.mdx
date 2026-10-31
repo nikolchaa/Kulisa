@@ -12,10 +12,10 @@ elsewhere, and `--release` makes an optimized build (use it for anything you sha
 |---|---|---|
 | Windows | `kulisa build windows --release` | `<Title>.exe` with your icon, and `game.kpak` next to it |
 | Linux | `kulisa build linux --release` | the program and `game.kpak` |
-| macOS | `kulisa build macos --release` | the program and `game.kpak` |
+| macOS | `kulisa build macos --release` | `<Title>.app` with your icon (`--universal` adds Intel Macs) |
 | Web | `kulisa build web --release` | a folder to put on any static web host |
-| Android | `kulisa build android --release` | an APK (`--abi arm64-v8a,x86_64` to add the emulator) |
-| iOS | `kulisa build ios --release` | an `.app` (`--sim` for the simulator) |
+| Android | `kulisa build android --release` | an APK (`--abi arm64-v8a,x86_64` to add the emulator), or with `--aab` an App Bundle for Google Play |
+| iOS | `kulisa build ios --release` | an `.app` (`--sim` for the simulator), and an `.ipa` when it has App Store signing |
 
 Desktop builds are made on that desktop. See [Installation](../install/#other-platforms) for
 what each target needs.
@@ -65,14 +65,124 @@ Safari allows neither; there the game fits around the address bar (classic-vn as
 player to turn the phone, using `kulisa.screen.mismatch`), or players can add it to the home
 screen to play without the bar.
 
+## Signing for stores
+
+Without these settings builds still run on your own devices, but stores refuse them and other
+people's computers warn about them.
+
+<Aside type="caution" title="Keep your keys out of your game's repository">
+`kulisa pack` never puts `.jks`, `.keystore`, `.p12`, `.pfx`, `.p8`, `.pem`, `.key` or
+`.mobileprovision` files in a game, but a public repository would still expose them. Paths in
+`kulisa.toml` are relative to the game, so keep keys in a folder outside it. `kulisa.toml`
+itself ships in the game, so never put a password there.
+</Aside>
+
+### Google Play
+
+Make an upload key once, and keep it safe:
+
+```sh
+keytool -genkeypair -keystore ../keys/upload.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000
+```
+
+Name it in `kulisa.toml`:
+
+```toml
+[android]
+package = "com.example.cattales"
+keystore = "../keys/upload.jks"
+key_alias = "upload"
+```
+
+Then set `KULISA_KEYSTORE_PASSWORD` in your environment (and `KULISA_KEY_PASSWORD` if the key has
+its own password), and build:
+
+```sh
+kulisa build android --release --aab
+```
+
+Upload `dist/android/<id>.aab`, and raise `build` for every upload. A base module can be at most
+200 MB compressed; larger games are not supported on Google Play yet.
+
+### macOS, outside the Mac App Store
+
+You need an Apple Developer account and a **Developer ID Application** certificate. Save your
+notary credentials once:
+
+```sh
+xcrun notarytool store-credentials cat-tales
+```
+
+Then name both in `kulisa.toml` and build:
+
+```toml
+[macos]
+bundle_id = "com.example.cattales"
+identity = "Developer ID Application: Your Name (TEAMID)"
+notary_profile = "cat-tales"
+```
+
+```sh
+kulisa build macos --release --universal --notarize
+```
+
+Share `dist/macos/<Title>.zip`, which holds the notarized app. This is for distributing outside
+the Mac App Store, which needs sandboxing that Kulisa does not set up yet.
+
+### App Store
+
+You need an Apple Developer account, an **Apple Distribution** certificate, an App Store
+provisioning profile for your bundle id, and Xcode 26 or newer. Your game also needs an icon.
+
+```toml
+[ios]
+bundle_id = "com.example.cattales"
+identity = "Apple Distribution: Your Name (TEAMID)"
+provisioning_profile = "../keys/cat-tales.mobileprovision"
+```
+
+```sh
+kulisa build ios --release
+```
+
+Upload `dist/ios/<Title>.ipa` with Apple's Transporter app.
+
+### Steam
+
+You need a Steamworks account and its SDK (Kulisa ships none of Valve's files). Name them in
+`kulisa.toml`, and `kulisa build` and `kulisa run` find the Steam library in the SDK folder:
+
+```toml
+[steam]
+app_id = 480            # your app id; 480 is Valve's test app
+sdk = "../steamworks"   # the folder with public/ and redistributable_bin/
+```
+
+Achievements and stats go through [`kulisa.steam`](https://github.com/nikolchaa/Kulisa/blob/main/docs/API.md#steam):
+
+```luau
+kulisa.steam.unlock("FINISHED_CHAPTER_1")
+```
+
+The same script runs everywhere: without Steam those calls do nothing.
+
+**Cloud saves** need no code. In Steamworks, under *Steam Cloud*, turn on Auto-Cloud and add one
+root, then an override for each other system so saves follow players between them:
+
+| System | Root | Subdirectory |
+|---|---|---|
+| Windows | `WinAppDataRoaming` | `<id>` |
+| macOS (override) | `MacAppSupport` | `<id>` |
+| Linux (override) | `LinuxXdgDataHome` | `<id>` |
+
+`<id>` is your game's `[game] id`, and the pattern `*` with *Recursive* on covers saves and
+settings alike.
+
 ## Not done yet
 
-Kulisa is young, and some last steps for stores are still on you:
-
 <Aside type="caution">
-- **Android** APKs are signed with the Android debug key. Re-sign with your own key
-  (`apksigner`) before uploading to a store.
-- **iOS** apps are ad-hoc signed and have no asset catalog, so they are not App Store ready.
-- **macOS** builds are a program, not an `.app` bundle.
+- **Google Play** bundles have no asset packs, which limits their size.
+- **Mac App Store** builds are not supported.
+- **Windows** programs are not code-signed, so SmartScreen can warn about them.
 - There are no prebuilt players: building needs the engine source and the toolchains.
 </Aside>

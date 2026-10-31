@@ -413,6 +413,9 @@ fn play(a: &Args) -> Result {
     if let Some(p) = a.get("--profile") {
         cargo.env("KULISA_PROFILE", p);
     }
+    if let Some(lib) = desktop::steam_library(&game)? {
+        cargo.env("KULISA_STEAM_API", lib);
+    }
     run(&mut cargo)
 }
 

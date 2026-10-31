@@ -17,6 +17,7 @@ mod pointer;
 mod quality;
 mod reload;
 mod sensors;
+mod steam;
 mod typing;
 mod ui;
 
@@ -131,6 +132,7 @@ pub(crate) struct State {
     pub pads: pad::Gamepads,
     pub typing: typing::Typing,
     pub sensors: sensors::Sensors,
+    pub steam: Option<Box<dyn kulisa_platform::SteamApi>>,
     pub config: GameConfig,
     pub errors: errors::ErrorView,
     /// A development reload was asked for (Shift+R); the runtime picks it up.
@@ -590,6 +592,7 @@ impl Game {
             pads: Default::default(),
             typing: Default::default(),
             sensors: Default::default(),
+            steam: None,
             config,
             errors: Default::default(),
             reload_requested: false,
@@ -601,6 +604,7 @@ impl Game {
         state.quality.setup(&gpu, &device, &tier);
         state.display.device = device;
         state.errors.dev = dev;
+        steam::connect(&mut state);
         let shared = Rc::new(RefCell::new(state));
         let lua = Lua::new();
         // Luau resolves global paths like `kulisa.screen.mode` once, when a function loads, if
@@ -692,6 +696,9 @@ impl Game {
             let scene = &mut st.scene;
             st.tweens.retain_mut(|(_, t)| !t.step(scene, dt));
             media::step(st, dt);
+            if let Some(steam) = &mut st.steam {
+                steam.run_callbacks();
+            }
             if st.seen_dirty && st.time - st.seen_flushed > 5.0 {
                 st.flush_seen();
             }
