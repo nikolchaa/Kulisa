@@ -101,8 +101,9 @@ its own password), and build:
 kulisa build android --release --aab
 ```
 
-Upload `dist/android/<id>.aab`, and raise `build` for every upload. A base module can be at most
-200 MB compressed; larger games are not supported on Google Play yet.
+Upload `dist/android/<id>.aab`, and raise `build` for every upload. Your whole game goes in the
+bundle's base module, which Google Play limits to 500 MB compressed. Above 200 MB, players on
+mobile data see a warning before installing.
 
 ### macOS, outside the Mac App Store
 
@@ -181,7 +182,7 @@ settings alike.
 ## Not done yet
 
 <Aside type="caution">
-- **Google Play** bundles have no asset packs, which limits their size.
+- **Google Play** bundles have no asset packs, so games must fit in 500 MB compressed.
 - **Mac App Store** builds are not supported.
 - **Windows** programs are not code-signed, so SmartScreen can warn about them.
 - There are no prebuilt players: building needs the engine source and the toolchains.
