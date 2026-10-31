@@ -30,7 +30,8 @@ use symphonia::core::units::Time;
 use crate::yuv::{Planes, to_rgba};
 use crate::{Info, Source};
 
-const EAGAIN: c_int = 11;
+/// The decoder's "not now", which is this system's errno value.
+const EAGAIN: c_int = if cfg!(target_os = "macos") { 35 } else { 11 };
 
 /// One compressed picture's place in the file.
 struct Entry {

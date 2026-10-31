@@ -4,7 +4,7 @@
 use std::ffi::c_void;
 
 use kulisa_platform::MediaLocation;
-use objc2::encode::{Encode, Encoding};
+use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::rc::{Retained, autoreleasepool};
 use objc2::runtime::{AnyObject, Bool};
 use objc2::{class, msg_send, msg_send_id};
@@ -69,6 +69,15 @@ struct CGSize {
 // SAFETY: this is how the Objective-C runtime describes CGSize on 64-bit systems.
 unsafe impl Encode for CGSize {
     const ENCODING: Encoding = Encoding::Struct("CGSize", &[Encoding::Double, Encoding::Double]);
+}
+
+/// What a CMSampleBufferRef points at, named as the Objective-C runtime expects.
+#[repr(C)]
+struct SampleBuffer([u8; 0]);
+
+// SAFETY: this is how the Objective-C runtime describes CMSampleBufferRef.
+unsafe impl RefEncode for SampleBuffer {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("opaqueCMSampleBuffer", &[]));
 }
 
 const TIME_VALID: u32 = 1;
@@ -217,8 +226,8 @@ pub(crate) fn open(location: &MediaLocation) -> Result<Box<dyn Source>, String> 
 /// The next sample buffer, owned by the caller; `None` at the end.
 fn next_sample(output: &AnyObject) -> Option<*mut c_void> {
     // SAFETY: the "copy" method returns a +1 reference, or null at the end.
-    let sample: *mut c_void = unsafe { msg_send![output, copyNextSampleBuffer] };
-    (!sample.is_null()).then_some(sample)
+    let sample: *mut SampleBuffer = unsafe { msg_send![output, copyNextSampleBuffer] };
+    (!sample.is_null()).then_some(sample.cast())
 }
 
 impl Source for AvFoundation {

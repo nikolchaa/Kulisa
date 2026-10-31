@@ -67,23 +67,6 @@ jobs:
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log
 
-  linux-size:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev nasm
-      - run: cargo build --release -p kulisa-player
-      - run: git worktree add ../base 13cfe73 && cd ../base && cargo build --release -p kulisa-player
-      - name: Report sizes
-        run: |
-          cp target/release/kulisa-player new && cp ../base/target/release/kulisa-player old
-          strip new old
-          gzip -k new old
-          echo "::notice title=Linux player size::before $(stat -c %s old) after $(stat -c %s new) stripped; gzip before $(stat -c %s old.gz) after $(stat -c %s new.gz)"
-
   ios:
     name: iOS
     runs-on: macos-latest
