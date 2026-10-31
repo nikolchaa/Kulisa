@@ -20,7 +20,7 @@ pub(crate) struct Playing {
 #[derive(Clone, Copy)]
 struct VideoRef(u64);
 
-fn playing<'a>(st: &'a mut State, id: u64) -> Option<&'a mut Playing> {
+fn playing(st: &mut State, id: u64) -> Option<&mut Playing> {
     st.videos.iter_mut().find(|p| p.id == id)
 }
 
