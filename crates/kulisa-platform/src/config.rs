@@ -131,6 +131,16 @@ pub struct GameConfig {
     pub android_keystore: Option<String>,
     pub android_key_alias: Option<String>,
     pub ios_bundle_id: String,
+    /// `[ios] identity` (a signing identity's name) and `provisioning_profile` (a file, relative
+    /// to the game): what App Store builds are signed with.
+    pub ios_identity: Option<String>,
+    pub ios_provisioning_profile: Option<String>,
+    /// `[macos] bundle_id`, by default the iOS one.
+    pub macos_bundle_id: String,
+    /// `[macos] identity` (a Developer ID's name) and `notary_profile` (credentials saved with
+    /// `xcrun notarytool store-credentials`).
+    pub macos_identity: Option<String>,
+    pub macos_notary_profile: Option<String>,
     pub raw: Config,
 }
 
@@ -169,6 +179,9 @@ impl GameConfig {
         if build < 1.0 || build.fract() != 0.0 {
             return Err(format!("{CONFIG_FILE}: `game.build` must be a whole number from 1"));
         }
+        let ios_bundle_id = raw
+            .str("ios.bundle_id")?
+            .map_or_else(|| format!("dev.kulisa.{}", id.replace('_', "-")), str::to_string);
         Ok(GameConfig {
             title: raw.str("game.title")?.unwrap_or("Kulisa").to_string(),
             version: raw.str("game.version")?.unwrap_or("1.0.0").to_string(),
@@ -188,9 +201,12 @@ impl GameConfig {
                 .map_or_else(|| format!("dev.kulisa.{package_part}"), str::to_string),
             android_keystore: raw.str("android.keystore")?.map(str::to_string),
             android_key_alias: raw.str("android.key_alias")?.map(str::to_string),
-            ios_bundle_id: raw
-                .str("ios.bundle_id")?
-                .map_or_else(|| format!("dev.kulisa.{}", id.replace('_', "-")), str::to_string),
+            ios_bundle_id: ios_bundle_id.clone(),
+            ios_identity: raw.str("ios.identity")?.map(str::to_string),
+            ios_provisioning_profile: raw.str("ios.provisioning_profile")?.map(str::to_string),
+            macos_bundle_id: raw.str("macos.bundle_id")?.map_or(ios_bundle_id, str::to_string),
+            macos_identity: raw.str("macos.identity")?.map(str::to_string),
+            macos_notary_profile: raw.str("macos.notary_profile")?.map(str::to_string),
             id,
             raw,
         })
@@ -544,6 +560,7 @@ fullscreen = false
         assert_eq!((g.id.as_str(), g.version.as_str(), g.build), ("cat_tales", "1.2.0", 3));
         assert_eq!(g.window, Some((1280.0, 720.0)));
         assert_eq!(g.ios_bundle_id, "dev.kulisa.cat-tales");
+        assert_eq!(g.macos_bundle_id, "dev.kulisa.cat-tales");
 
         let g = GameConfig::parse(Some("[display]\nwidth = 1080\nheight = 1920")).unwrap();
         assert_eq!(g.locked_orientation(), "portrait");

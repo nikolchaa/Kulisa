@@ -14,6 +14,7 @@ pub mod android;
 pub mod desktop;
 pub mod icon;
 pub mod ios;
+pub mod macos;
 pub mod serve;
 pub mod web;
 

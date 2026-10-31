@@ -729,8 +729,8 @@ fn run_with(
 }
 
 /// The game folder or `.kpak`: the first argument that is not an option, `KULISA_GAME`, or
-/// `game/` or `game.kpak` next to the executable (an iOS app bundle) or in the working
-/// directory.
+/// `game/` or `game.kpak` next to the executable (an iOS app bundle), in `../Resources` (a
+/// macOS app bundle) or in the working directory.
 #[cfg(not(any(target_os = "android", target_arch = "wasm32")))]
 fn find_game() -> Result<Assets, String> {
     use std::path::PathBuf;
@@ -741,12 +741,14 @@ fn find_game() -> Result<Assets, String> {
             Assets::pack(std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?)
         }
     };
-    let arg = std::env::args_os().skip(1).find(|a| !a.to_string_lossy().starts_with("--"));
+    // One dash too: macOS can pass `-psn_...` to apps it starts.
+    let arg = std::env::args_os().skip(1).find(|a| !a.to_string_lossy().starts_with('-'));
     if let Some(p) = arg.or_else(|| std::env::var_os("KULISA_GAME")) {
         return open(p.into());
     }
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from));
-    for dir in exe_dir.into_iter().chain([PathBuf::from(".")]) {
+    let resources = exe_dir.as_ref().map(|d| d.join("../Resources"));
+    for dir in exe_dir.into_iter().chain(resources).chain([PathBuf::from(".")]) {
         for name in ["game", "game.kpak"] {
             if dir.join(name).exists() {
                 return open(dir.join(name));

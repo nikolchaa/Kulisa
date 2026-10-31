@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kulisa_cli::{Game, Options, Result, android, desktop, engine_root, ios, run, serve, web};
+use kulisa_cli::{Game, Options, Result, android, desktop, engine_root, ios, macos, run, serve, web};
 
 const HELP: &str = "kulisa: make and build Kulisa games
 
@@ -18,9 +18,12 @@ const HELP: &str = "kulisa: make and build Kulisa games
              [--web] [--port N]                   in the browser, with live reload
              [--android] [--abi LIST]             on a connected Android device or emulator
   kulisa build TARGET [GAME] [--release] [--out DIR] [--abi LIST] [--sim] [--aab]
+                                                [--universal] [--notarize]
                                                 TARGET: windows, linux, macos (this computer's),
                                                 web, android, ios (on a Mac)
                                                 --aab: an App Bundle for Google Play (android)
+                                                --universal: Apple silicon and Intel (macos)
+                                                --notarize: send to Apple's notary service (macos)
   kulisa pack [GAME] [--out FILE]               pack the game into a .kpak
   kulisa serve [DIR] [--port N]                 serve a web build
 
@@ -29,7 +32,7 @@ The engine source is found where this tool was built, or at KULISA_ENGINE.";
 
 /// Options that take a value.
 const VALUED: &[&str] = &["--template", "--dir", "--port", "--abi", "--out", "--profile"];
-const SWITCHES: &[&str] = &["--release", "--web", "--android", "--sim", "--aab"];
+const SWITCHES: &[&str] = &["--release", "--web", "--android", "--sim", "--aab", "--universal", "--notarize"];
 
 struct Args {
     positional: Vec<String>,
@@ -419,6 +422,10 @@ fn build(a: &Args) -> Result {
     let opts = a.options()?;
     let out = a.get("--out").map_or_else(|| game.dir.join("dist").join(target), PathBuf::from);
     match target {
+        "macos" if target == desktop::host() => {
+            let package = macos::Package { universal: a.has("--universal"), notarize: a.has("--notarize") };
+            macos::build(&game, &opts, package, &out).map(|_| ())
+        }
         "windows" | "linux" | "macos" if target == desktop::host() => {
             desktop::build(&game, &opts, &out).map(|_| ())
         }

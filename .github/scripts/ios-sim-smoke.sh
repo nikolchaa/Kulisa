@@ -18,6 +18,15 @@ for runtime in reversed(ios):
 sys.exit("no iPhone simulator available")
 ')
 echo "simulator: $(xcrun simctl list devices | grep "$udid")"
+
+# What the App Store expects of the bundle.
+plutil -lint "$app/Info.plist" "$app/PrivacyInfo.xcprivacy"
+test -f "$app/Assets.car" || { echo "error: no compiled asset catalog"; exit 1; }
+plutil -extract CFBundleIcons.CFBundlePrimaryIcon.CFBundleIconName raw "$app/Info.plist"
+# Required-reason APIs the program links; each kind must be declared in PrivacyInfo.xcprivacy.
+reasons=$(nm -u "$app/kulisa-player" | grep -E '_(stat|lstat|fstat|fstatat|getattrlist|fgetattrlist|getattrlistat|getattrlistbulk|statfs|fstatfs|statvfs|fstatvfs|mach_absolute_time)(\$.*)?$|NSUserDefaults|systemUptime' | tr -s ' ' | tr '\n' ' ' || true)
+echo "::notice title=iOS required-reason APIs::$reasons"
+
 xcrun simctl bootstatus "$udid" -b
 xcrun simctl install "$udid" "$app"
 
@@ -59,7 +68,7 @@ fi
 if [ "$status" = 0 ]; then
     # As an annotation so the result is readable without signing in to GitHub.
     line=$(grep -m1 "hello from Luau" "$out/app.log" | cut -c1-240)
-    errors=$(grep -E "renderer:|panicked""$out/app.log" | sort -u | head -n 5 | cut -c1-240 || true)
+    errors=$(grep -E "renderer:|panicked" "$out/app.log" | sort -u | head -n 5 | cut -c1-240 || true)
     msg=$line
     [ -n "$errors" ] && msg+=$'\n'$errors
     msg=${msg//%/%25}

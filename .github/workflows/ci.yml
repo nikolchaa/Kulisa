@@ -59,6 +59,11 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers libasound2-dev libudev-dev
       - run: cargo test --workspace 2>&1 | tee -a ci.log
       - run: cargo build -p kulisa-player 2>&1 | tee -a ci.log
+      - if: runner.os == 'macOS'
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo run -p kulisa-cli -- build macos demos/smoke --universal --out dist/macos 2>&1 | tee -a ci.log
+          .github/scripts/macos-app-smoke.sh dist/macos/*.app 2>&1 | tee -a ci.log
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log
 
