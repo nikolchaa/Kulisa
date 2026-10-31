@@ -2,6 +2,7 @@
 -- Pages are Luau tables of blocks (headings, text, images, links, forum posts, a search box),
 -- or functions that build them from story state. Visits are reported to the story.
 
+local mark = kulisa.lang.mark
 local bridge = require("os/story")
 local config = require("os/config")
 local data = require("os/data")
@@ -150,7 +151,7 @@ local function block(b, t, width: number)
             ui.input({
                 id = "search",
                 value = query,
-                placeholder = "Search the web",
+                placeholder = kulisa.t("Search the web"),
                 width = "fill",
                 padding = { S(14), S(22) },
                 background = "gui/pill.png",
@@ -165,7 +166,7 @@ local function block(b, t, width: number)
                     browser.go("searchly.com/search?q=" .. q)
                 end,
             }),
-            theme.button("Search", function()
+            theme.button(mark("Search"), function()
                 browser.go("searchly.com/search?q=" .. query:peek())
             end, { primary = true }),
         })

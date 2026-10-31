@@ -436,6 +436,23 @@ Text fields are made in Luau on top of a few engine pieces, so games can build t
   `seconds` up to 2 (default 0.05). Calls on platforms without haptics do nothing; a script
   cannot queue more than a few pulses per frame.
 
+## Translations
+
+Each `lang/<code>.txt` in the game is a language (`ja`, `pt-BR`). `kulisa translate <code>` writes
+it from the game's text, and the story's lines, menus and character names need nothing else.
+
+- `kulisa.t(text, vars?)` → `text` in the current language, or as it is. `{name}` takes
+  `vars.name`, in the original and the translation: `t("Page {n}", { n = 2 })`. `kulisa translate`
+  finds literal strings passed to `t(...)` or `kulisa.t(...)`.
+- `kulisa.lang.mark(text)` → `text`. Marks a string for `kulisa translate` where `t` would come too
+  early, like an item's name in a table built at startup. Pass it through `kulisa.t` when drawing.
+- `kulisa.lang.list()` → `{ { code, name }, ... }`, the game's own language first (`[game] language`
+  and `language_name`, default `en`, `English`).
+- `kulisa.lang.current()` → the code. `kulisa.lang.set(code)` switches now, including the line on
+  screen and every shown screen, remembers the choice and fires the `language` event.
+- The first start follows Steam's language, then the system's. `KULISA_LANG` (web: `?lang=`)
+  forces one for testing.
+
 ## Steam
 
 With `[steam] app_id` in `kulisa.toml` and Steam's library next to the program (`kulisa build`

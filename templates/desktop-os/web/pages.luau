@@ -6,6 +6,7 @@
 -- Text takes Kulisa markup. A page may be a function(url, data) returning that table, so it can
 -- change with the story (data.flags). Add sites to `sites`; `search` maps queries to results.
 
+local mark = kulisa.lang.mark
 local data = require("os/data")
 local theme = require("os/theme")
 
@@ -31,134 +32,134 @@ local FORUM = {
 local sites = {}
 
 sites["searchly.com"] = {
-    title = "Searchly",
+    title = mark("Searchly"),
     theme = LIGHT,
     blocks = {
         { "space", 60 },
         { "h1", "{size=2.2}{color=#4a5ee8}S{/color}{color=#e8574a}e{/color}{color=#f2b13a}a{/color}{color=#4a5ee8}r{/color}{color=#3aa76d}c{/color}{color=#e8574a}h{/color}{color=#4a5ee8}ly{/color}{/size}" },
-        { "meta", "Find anything. Probably." },
+        { "meta", mark("Find anything. Probably.") },
         { "space", 10 },
         { "search" },
         { "space", 20 },
-        { "meta", "Trending tonight" },
-        { "links", { { "Gull Point lighthouse", "searchly.com/search?q=gull point lighthouse" },
-            { "coast weather", "searchly.com/search?q=coast weather" } } },
+        { "meta", mark("Trending tonight") },
+        { "links", { { mark("Gull Point lighthouse"), "searchly.com/search?q=gull point lighthouse" },
+            { mark("coast weather"), "searchly.com/search?q=coast weather" } } },
     },
 }
 
 sites["lighthousecam.net"] = function()
     local lit = data.flags.cam_lit
     return {
-        title = "Gull Point Light — Live",
+        title = mark("Gull Point Light — Live"),
         theme = NIGHT,
         blocks = {
             { "meta", "{color=#ff5f6d}●{/color} LIVE   CAM 2 — Gull Point, north headland   " .. theme.time_text() },
             { "img", if lit then "web/img/cam_on.png" else "web/img/cam_off.png" },
-            { "h1", "Gull Point Light" },
+            { "h1", mark("Gull Point Light") },
             { "p", if lit
                 then "{color=#ffcf7a}The light is on.{/color} Rotation 1 flash every 10 seconds."
-                else "Status: {color=#ff8f6b}no signal from the lantern room.{/color} The camera is fine; the light is not." },
-            { "p", "Built 1887. Automated 1979, but kept by a resident keeper on request of the harbour board. Our volunteers keep this camera running so sailors and the curious can see the light from anywhere." },
+                else mark("Status: {color=#ff8f6b}no signal from the lantern room.{/color} The camera is fine; the light is not.") },
+            { "p", mark("Built 1887. Automated 1979, but kept by a resident keeper on request of the harbour board. Our volunteers keep this camera running so sailors and the curious can see the light from anywhere.") },
             { "rule" },
-            { "links", { { "Discuss on tidepool.forum", "tidepool.forum/t/gull-point" }, { "Local news", "coastnews.net" } } },
+            { "links", { { mark("Discuss on tidepool.forum"), "tidepool.forum/t/gull-point" }, { mark("Local news"), "coastnews.net" } } },
         },
     }
 end
 
 sites["coastnews.net"] = {
-    title = "Coast News",
+    title = mark("Coast News"),
     theme = NEWS,
     blocks = {
         { "h1", "{color=#c2402a}COAST{/color} NEWS" },
-        { "meta", "Tuesday edition — fog advisory until Thursday" },
+        { "meta", mark("Tuesday edition — fog advisory until Thursday") },
         { "rule" },
-        { "link", "Keeper missing at Gull Point", "coastnews.net/hale", "Search suspended overnight as fog rolls in." },
-        { "link", "Harbour board votes on new breakwater", "coastnews.net/breakwater" },
-        { "link", "Ferry times change for the winter", "coastnews.net/ferry" },
+        { "link", mark("Keeper missing at Gull Point"), "coastnews.net/hale", mark("Search suspended overnight as fog rolls in.") },
+        { "link", mark("Harbour board votes on new breakwater"), "coastnews.net/breakwater" },
+        { "link", mark("Ferry times change for the winter"), "coastnews.net/ferry" },
     },
 }
 
 sites["coastnews.net/hale"] = {
-    title = "Keeper missing at Gull Point — Coast News",
+    title = mark("Keeper missing at Gull Point — Coast News"),
     theme = NEWS,
     blocks = {
         { "meta", "{color=#c2402a}{b}LOCAL{/b}{/color}  ·  by M. Okafor  ·  updated 18:04" },
-        { "h1", "Keeper missing at Gull Point" },
-        { "img", "web/img/pier.png", "The north pier, closed since Tuesday morning." },
-        { "p", "Edwin Hale, 71, keeper of the Gull Point light for forty years, has not been seen since Tuesday. His boat is still moored and the cottage door was found unlocked." },
-        { "p", "Volunteers searched the headland and the shoreline until fog made it unsafe. The coastguard will resume at first light." },
-        { "quote", "He never let the light go out. Not once. Not in the '96 storm.", },
-        { "p", "Residents report that the light has been dark since Tuesday night. The harbour board says the lantern is automated and \"should not depend on anyone\"." },
+        { "h1", mark("Keeper missing at Gull Point") },
+        { "img", "web/img/pier.png", mark("The north pier, closed since Tuesday morning.") },
+        { "p", mark("Edwin Hale, 71, keeper of the Gull Point light for forty years, has not been seen since Tuesday. His boat is still moored and the cottage door was found unlocked.") },
+        { "p", mark("Volunteers searched the headland and the shoreline until fog made it unsafe. The coastguard will resume at first light.") },
+        { "quote", mark("He never let the light go out. Not once. Not in the '96 storm."), },
+        { "p", mark("Residents report that the light has been dark since Tuesday night. The harbour board says the lantern is automated and \"should not depend on anyone\".") },
         { "rule" },
-        { "links", { { "Live camera", "lighthousecam.net" }, { "Front page", "coastnews.net" } } },
+        { "links", { { mark("Live camera"), "lighthousecam.net" }, { mark("Front page"), "coastnews.net" } } },
     },
 }
 
 sites["tidepool.forum"] = {
-    title = "tidepool.forum",
+    title = mark("tidepool.forum"),
     theme = FORUM,
     blocks = {
-        { "h1", "tidepool" },
-        { "meta", "a forum for the north coast" },
+        { "h1", mark("tidepool") },
+        { "meta", mark("a forum for the north coast") },
         { "rule" },
-        { "link", "[Gull Point] the light is out again (44 replies)", "tidepool.forum/t/gull-point" },
-        { "link", "best tide pools after a storm?", "tidepool.forum/t/tides" },
-        { "link", "selling: 14ft dinghy, needs paint", "tidepool.forum/t/dinghy" },
+        { "link", mark("[Gull Point] the light is out again (44 replies)"), "tidepool.forum/t/gull-point" },
+        { "link", mark("best tide pools after a storm?"), "tidepool.forum/t/tides" },
+        { "link", mark("selling: 14ft dinghy, needs paint"), "tidepool.forum/t/dinghy" },
     },
 }
 
 sites["tidepool.forum/t/gull-point"] = {
-    title = "[Gull Point] the light is out again — tidepool",
+    title = mark("[Gull Point] the light is out again — tidepool"),
     theme = FORUM,
     blocks = {
-        { "h1", "[Gull Point] the light is out again" },
-        { "meta", "44 replies · 3 viewing now" },
+        { "h1", mark("[Gull Point] the light is out again") },
+        { "meta", mark("44 replies · 3 viewing now") },
         { "post", user = "saltwife", when = "2 days ago", avatar = "avatars/juno.png",
-            text = "Third night dark. Has anyone gone up there? Hale's lights are always on by now." },
+            text = mark("Third night dark. Has anyone gone up there? Hale's lights are always on by now.") },
         { "post", user = "gullwatcher", when = "2 days ago", avatar = "avatars/gull.png",
-            text = "Went to the gate. Cottage open, kettle cold. Lantern room door locked from the inside." },
+            text = mark("Went to the gate. Cottage open, kettle cold. Lantern room door locked from the inside.") },
         { "post", user = "harbourmaster_k", when = "yesterday",
-            text = "Please don't go up there. Leave it to the coastguard." },
+            text = mark("Please don't go up there. Leave it to the coastguard.") },
         { "post", user = "gullwatcher", when = "40 min ago", avatar = "avatars/gull.png",
-            text = "Whatever you do, don't keep the cam open at night. I mean it. Close the tab." },
-        { "links", { { "saltwife's photos", "driftwood.blog" }, { "Back to tidepool", "tidepool.forum" } } },
+            text = mark("Whatever you do, don't keep the cam open at night. I mean it. Close the tab.") },
+        { "links", { { mark("saltwife's photos"), "driftwood.blog" }, { mark("Back to tidepool"), "tidepool.forum" } } },
     },
 }
 
 sites["driftwood.blog"] = {
-    title = "driftwood — photos by saltwife",
+    title = mark("driftwood — photos by saltwife"),
     theme = NIGHT,
     blocks = {
-        { "h1", "driftwood" },
-        { "meta", "photos from the north coast, by saltwife" },
-        { "img", "web/img/coast.png", "Last light from the point. Mr Hale waved from the gallery rail." },
-        { "p", "Taken from the rocks below the light, a week ago. He always waves. He says the light needs someone to watch it, even now it turns by itself." },
-        { "links", { { "tidepool thread", "tidepool.forum/t/gull-point" } } },
+        { "h1", mark("driftwood") },
+        { "meta", mark("photos from the north coast, by saltwife") },
+        { "img", "web/img/coast.png", mark("Last light from the point. Mr Hale waved from the gallery rail.") },
+        { "p", mark("Taken from the rocks below the light, a week ago. He always waves. He says the light needs someone to watch it, even now it turns by itself.") },
+        { "links", { { mark("tidepool thread"), "tidepool.forum/t/gull-point" } } },
     },
 }
 
 sites["404"] = {
-    title = "Not found",
+    title = mark("Not found"),
     theme = LIGHT,
     blocks = {
         { "space", 80 },
-        { "h1", "Hmm. Nothing here." },
-        { "p", "The page could not be found. Check the address, or search for it." },
+        { "h1", mark("Hmm. Nothing here.") },
+        { "p", mark("The page could not be found. Check the address, or search for it.") },
         { "search" },
     },
 }
 
 -- Search results by keyword.
 local INDEX = {
-    { words = { "lighthouse", "gull", "light", "cam", "point" }, title = "Gull Point Light — Live camera", url = "lighthousecam.net",
-        text = "Watch the Gull Point light live, all night." },
-    { words = { "hale", "keeper", "missing", "gull", "point", "news" }, title = "Keeper missing at Gull Point — Coast News", url = "coastnews.net/hale",
-        text = "Edwin Hale, keeper of the Gull Point light for forty years, has not been seen since Tuesday." },
-    { words = { "gull", "point", "forum", "light", "out" }, title = "[Gull Point] the light is out again — tidepool", url = "tidepool.forum/t/gull-point",
-        text = "Third night dark. Has anyone gone up there?" },
-    { words = { "coast", "photos", "sunset", "saltwife", "driftwood" }, title = "driftwood — photos by saltwife", url = "driftwood.blog",
-        text = "Last light from the point." },
-    { words = { "coast", "news", "weather", "fog" }, title = "Coast News", url = "coastnews.net", text = "Fog advisory until Thursday." },
+    { words = { "lighthouse", "gull", "light", "cam", "point" }, title = mark("Gull Point Light — Live camera"), url = "lighthousecam.net",
+        text = mark("Watch the Gull Point light live, all night.") },
+    { words = { "hale", "keeper", "missing", "gull", "point", "news" }, title = mark("Keeper missing at Gull Point — Coast News"), url = "coastnews.net/hale",
+        text = mark("Edwin Hale, keeper of the Gull Point light for forty years, has not been seen since Tuesday.") },
+    { words = { "gull", "point", "forum", "light", "out" }, title = mark("[Gull Point] the light is out again — tidepool"), url = "tidepool.forum/t/gull-point",
+        text = mark("Third night dark. Has anyone gone up there?") },
+    { words = { "coast", "photos", "sunset", "saltwife", "driftwood" }, title = mark("driftwood — photos by saltwife"), url = "driftwood.blog",
+        text = mark("Last light from the point.") },
+    { words = { "coast", "news", "weather", "fog" }, title = mark("Coast News"), url = "coastnews.net", text = mark("Fog advisory until Thursday.") },
 }
 
 local function search(q: string)
@@ -186,7 +187,7 @@ local function search(q: string)
         table.insert(blocks, { "link", r.e.title, r.e.url, r.e.text })
     end
     if #results == 0 then
-        table.insert(blocks, { "p", `No results for "{q}". Try fewer words.` })
+        table.insert(blocks, { "p", kulisa.t("No results for \"{q}\". Try fewer words.", { q = q }) })
     end
     return { title = `{q} — Searchly`, theme = LIGHT, blocks = blocks }
 end
@@ -199,7 +200,7 @@ function pages.get(url: string)
     end
     local photo = url:match("^photo:(.*)$")
     if photo then
-        return { title = "Photo", theme = NIGHT, blocks = { { "img", photo }, { "meta", photo } } }
+        return { title = mark("Photo"), theme = NIGHT, blocks = { { "img", photo }, { "meta", photo } } }
     end
     local p = sites[url] or sites["404"]
     if type(p) == "function" then

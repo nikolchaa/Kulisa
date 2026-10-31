@@ -1,5 +1,6 @@
 -- Settings: wallpaper, sound, display, and saves (save and load slots with thumbnails).
 
+local mark = kulisa.lang.mark
 local config = require("os/config")
 local data = require("os/data")
 local shell = require("os/shell")
@@ -68,7 +69,7 @@ local function appearance()
             }),
         }))
     end
-    return ui.column({ gap = S(12), heading("Wallpaper"), ui.row({ gap = S(12), cards }) })
+    return ui.column({ gap = S(12), heading(mark("Wallpaper")), ui.row({ gap = S(12), cards }) })
 end
 
 local function slider(label: string, key: string)
@@ -98,27 +99,38 @@ local function slider(label: string, key: string)
 end
 
 local function sound()
-    return ui.column({ gap = S(16), width = "fill", heading("Volume"), slider("Music", "music"), slider("Sounds", "sound") })
+    return ui.column({ gap = S(16), width = "fill", heading(mark("Volume")), slider(mark("Music"), "music"), slider(mark("Sounds"), "sound") })
 end
 
 local function display()
-    local items = { heading("Display") }
+    local items = { heading(mark("Display")) }
     if kulisa.window.can_quit then
         table.insert(items, ui.row({
             gap = S(10),
-            theme.button("Window", function()
+            theme.button(mark("Window"), function()
                 settings.prefs.fullscreen = false
                 settings.on_change()
                 ui.refresh()
             end, { selected = not settings.prefs.fullscreen }),
-            theme.button("Fullscreen", function()
+            theme.button(mark("Fullscreen"), function()
                 settings.prefs.fullscreen = true
                 settings.on_change()
                 ui.refresh()
             end, { selected = settings.prefs.fullscreen }),
         }))
     else
-        table.insert(items, theme.label("The display follows your device.", { color = c.dim }))
+        table.insert(items, theme.label(mark("The display follows your device."), { color = c.dim }))
+    end
+    local languages = kulisa.lang.list()
+    if #languages > 1 then
+        table.insert(items, heading(mark("Language")))
+        local row = {}
+        for _, l in languages do
+            table.insert(row, theme.button(l.name, function()
+                kulisa.lang.set(l.code)
+            end, { key = l.code, selected = kulisa.lang.current() == l.code }))
+        end
+        table.insert(items, ui.row({ gap = S(10), row }))
     end
     return ui.column({ gap = S(12), items })
 end
@@ -147,16 +159,16 @@ local function saves()
                 height = S(110),
                 background = "#0a0c12",
                 info and info.thumbnail and ui.image({ image = info.thumbnail, width = "fill", height = "fill" }),
-                not info and theme.label("Empty", { anchor = "center", color = c.faint }),
+                not info and theme.label(mark("Empty"), { anchor = "center", color = c.faint }),
             }),
             theme.label(if info then os.date("%d %b  %H:%M", info.timestamp) else " ", { size = S(14), color = c.dim }),
             ui.row({
                 gap = S(8),
-                theme.button("Save", function()
+                theme.button(mark("Save"), function()
                     if info then
                         shell.dialog({
-                            title = "Overwrite this save?",
-                            buttons = { { "Cancel" }, { "Overwrite", function()
+                            title = mark("Overwrite this save?"),
+                            buttons = { { mark("Cancel") }, { mark("Overwrite"), function()
                                 settings.save_slot(slot)
                                 slots_rev:set(slots_rev:peek() + 1)
                             end, true } },
@@ -166,20 +178,20 @@ local function saves()
                         slots_rev:set(slots_rev:peek() + 1)
                     end
                 end, { size = S(15), padding = { S(6), S(14) }, id = `save{i}` }),
-                theme.button("Load", function()
+                theme.button(mark("Load"), function()
                     settings.load_slot(slot)
                 end, { size = S(15), padding = { S(6), S(14) }, disabled = info == nil, id = `load{i}` }),
             }),
         }))
     end
-    return ui.column({ gap = S(12), width = "fill", heading("Saves"), ui.grid({ columns = 3, gap = S(12), width = "fill", cards }) })
+    return ui.column({ gap = S(12), width = "fill", heading(mark("Saves")), ui.grid({ columns = 3, gap = S(12), width = "fill", cards }) })
 end
 
 local SECTIONS = {
-    { "appearance", "Appearance", "image", appearance },
-    { "sound", "Sound", "volume", sound },
-    { "display", "Display", "maximize", display },
-    { "saves", "Saves", "save", saves },
+    { "appearance", mark("Appearance"), "image", appearance },
+    { "sound", mark("Sound"), "volume", sound },
+    { "display", mark("Display"), "maximize", display },
+    { "saves", mark("Saves"), "save", saves },
 }
 
 function settings.build(win)

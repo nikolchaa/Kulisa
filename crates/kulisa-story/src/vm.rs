@@ -225,6 +225,8 @@ pub struct Vm {
     redo: Vec<Checkpoint>,
     /// Checkpoints kept for rollback.
     pub max_history: usize,
+    /// The language to show text in; `None` is the story's own.
+    language: Option<String>,
 }
 
 /// Lua truthiness: only nil and false are false.
@@ -256,11 +258,38 @@ impl Vm {
             history: VecDeque::new(),
             redo: Vec::new(),
             max_history: 100,
+            language: None,
         }
     }
 
     pub fn program(&self) -> &Arc<Program> {
         &self.program
+    }
+
+    /// Shows text in `language` from the next line on (see [`Vm::reshow`] for the current one).
+    pub fn set_language(&mut self, language: Option<String>) {
+        self.language = language;
+    }
+
+    /// Makes `next` show the line or menu the story waits at again (after a language change).
+    /// Returns whether it waits at one.
+    pub fn reshow(&mut self) -> bool {
+        let waiting = matches!(self.state, State::Waiting | State::Choosing)
+            && self.op().is_ok_and(|op| matches!(op, Op::Say(_) | Op::Menu { .. }));
+        if waiting {
+            self.state = State::Restored;
+        }
+        waiting
+    }
+
+    /// `parts` as written, or their translation into the current language.
+    fn localized<'a>(&'a self, who: Option<&str>, source: &str, parts: &'a [TextPart]) -> &'a [TextPart] {
+        let Some(table) = self.language.as_ref().and_then(|l| self.program.translations.get(l)) else {
+            return parts;
+        };
+        let found =
+            table.get(&crate::lang_key(who, source)).or_else(|| table.get(&crate::lang_key(None, source)));
+        found.map_or(parts, Vec::as_slice)
     }
 
     /// What is on stage now.
@@ -349,7 +378,8 @@ impl Vm {
             Some((id, name)) => Some(Speaker { id: name.clone(), data: self.eval(host, *id)? }),
             None => None,
         };
-        Ok(Line { who, text: self.text(host, &say.text)? })
+        let speaker = say.who.as_ref().map(|(_, name)| name.as_str());
+        Ok(Line { who, text: self.text(host, self.localized(speaker, &say.source, &say.text))? })
     }
 
     /// Builds the event for the blocking op at the current position.
@@ -366,7 +396,8 @@ impl Vm {
                         None => true,
                     };
                     if visible {
-                        items.push(MenuItem { index, text: self.text(host, &c.text)? });
+                        let parts = self.localized(None, &c.source, &c.text);
+                        items.push(MenuItem { index, text: self.text(host, parts)? });
                     }
                 }
                 if items.is_empty() {

@@ -1,6 +1,7 @@
 -- The shell: wallpaper, desktop icons and clock, taskbar, start menu, notifications (toasts),
 -- story captions, an objective hint, dialogs and the sign-in screen.
 
+local mark = kulisa.lang.mark
 local config = require("os/config")
 local theme = require("os/theme")
 local wm = require("os/wm")
@@ -386,10 +387,10 @@ ui.screen("start", function()
                 gap = S(14),
                 align = "center",
                 theme.avatar(config.user.avatar, S(56)),
-                ui.column({ gap = S(2), theme.bold(config.user.name, { size = S(20) }), theme.label("Local account", { size = S(15), color = c.dim }) }),
+                ui.column({ gap = S(2), theme.bold(config.user.name, { size = S(20) }), theme.label(mark("Local account"), { size = S(15), color = c.dim }) }),
             }),
             theme.divider(),
-            theme.label("Apps", { size = S(15), color = c.faint }),
+            theme.label(mark("Apps"), { size = S(15), color = c.faint }),
             ui.grid({ columns = 4, gap = S(6), width = "fill", apps }),
             theme.divider(),
             ui.row({ gap = S(4), width = "fill", actions }),
@@ -528,9 +529,9 @@ function shell.show_history()
         }))
     end
     if #items == 0 then
-        table.insert(items, theme.label("No notifications.", { color = c.dim }))
+        table.insert(items, theme.label(mark("No notifications."), { color = c.dim }))
     end
-    shell.dialog({ title = "Notifications", body = ui.scroll({ width = "fill", height = S(380), items }), buttons = { { "Close" } } })
+    shell.dialog({ title = mark("Notifications"), body = ui.scroll({ width = "fill", height = S(380), items }), buttons = { { mark("Close") } } })
 end
 
 -- Captions (narration) and the objective hint -----------------------------------------------------

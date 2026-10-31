@@ -28,7 +28,7 @@ function rules.give(id: string, n: number?)
     local v = vars()
     v.bag = v.bag or {}
     v.bag[id] = rules.count(id) + (n or 1)
-    log.add({ kind = "item", text = `Gained: {def.name}` .. (if (n or 1) > 1 then ` ×{n}` else ""), icon = def.icon })
+    log.add({ kind = "item", text = kulisa.t("Gained: {item}", { item = kulisa.t(def.name) }) .. (if (n or 1) > 1 then ` ×{n}` else ""), icon = def.icon })
 end
 
 function rules.take(id: string, n: number?)

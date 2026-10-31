@@ -15,7 +15,7 @@ end
 function history.add(line)
     local who = line.who
     table.insert(entries, {
-        name = who and (who.name or who.id) or nil,
+        name = who and kulisa.t(who.name or who.id) or nil,
         color = who and who.color or nil,
         text = line.text,
     })

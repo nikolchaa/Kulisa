@@ -1,6 +1,7 @@
 -- The settings a game usually changes first: names, colors, apps, wallpapers. Plain data; the
 -- rest of os/ and apps/ reads it.
 
+local mark = kulisa.lang.mark
 local config = {}
 
 -- Title, save id and display shape live in kulisa.toml.
@@ -11,10 +12,10 @@ config.fonts = { "fonts/Inter-Regular.ttf", "fonts/Inter-Bold.ttf" }
 config.font = "Inter"
 
 -- The player's account on the fake computer.
-config.user = { name = "Alex Rowan", avatar = "avatars/me.png" }
+config.user = { name = mark("Alex Rowan"), avatar = "avatars/me.png" }
 
 config.colors = {
-    text = "#e9ebf3",
+    text = mark("#e9ebf3"),
     dim = "#a3a9bc",
     faint = "#6d748b",
     accent = "#8ea2ff",
@@ -33,10 +34,10 @@ config.colors = {
 -- Apps by name: title, icon, default window size (design units), whether only one window of it
 -- can be open, and the module that builds its content (apps/<name>.luau).
 config.apps = {
-    chat = { title = "Messages", icon = "apps/chat.png", size = { 980, 680 }, single = true },
-    browser = { title = "Browser", icon = "apps/browser.png", size = { 1180, 780 }, single = true },
-    notes = { title = "Notes", icon = "apps/notes.png", size = { 760, 560 }, single = true },
-    settings = { title = "Settings", icon = "apps/settings.png", size = { 860, 640 }, single = true },
+    chat = { title = mark("Messages"), icon = "apps/chat.png", size = { 980, 680 }, single = true },
+    browser = { title = mark("Browser"), icon = "apps/browser.png", size = { 1180, 780 }, single = true },
+    notes = { title = mark("Notes"), icon = "apps/notes.png", size = { 760, 560 }, single = true },
+    settings = { title = mark("Settings"), icon = "apps/settings.png", size = { 860, 640 }, single = true },
 }
 -- Taskbar and start menu order; desktop icons.
 config.pinned = { "chat", "browser", "notes", "settings" }

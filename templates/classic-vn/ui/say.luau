@@ -8,6 +8,7 @@ local state = require("game/state")
 local style = require("ui/style")
 
 local ui = kulisa.ui
+local t = kulisa.t
 local c = config.colors
 
 ui.screen("say", function(props)
@@ -18,7 +19,7 @@ ui.screen("say", function(props)
     local busy = state.busy()
     local who = line and line.who
     local cps = if props and props.instant or state.mode() == "skip" then 0 else prefs.get("cps")
-    local name = not busy and who and (who.name or who.id)
+    local name = not busy and who and t(who.name or who.id)
     return ui.box({
         visible = shown,
         ui.box({

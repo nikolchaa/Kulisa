@@ -2,6 +2,7 @@
 -- the right. Phones (portrait): the illustration on top, the log below, the hero and the pack in
 -- sheets that slide up (ui/menus).
 
+local mark = kulisa.lang.mark
 local config = require("game/config")
 local items = require("game/items")
 local log = require("game/log")
@@ -149,7 +150,7 @@ local function log_panel()
             gap = S(14),
             padding = { S(20), 0 },
             style.divider(),
-            style.heading("The end", { size = S(26) }),
+            style.heading(mark("The end"), { size = S(26) }),
             ui.row({ gap = S(14), style.button("Play again", play.start, { id = "again" }), style.button("Title", function()
                 main.open_menu("title")
             end) }),
@@ -190,12 +191,12 @@ function main.hero()
             }),
             ui.column({
                 gap = S(4),
-                style.label(`\{b}{config.hero.name}\{/b}`, { size = S(32), color = c.paper }),
+                style.label(`\{b}{kulisa.t(config.hero.name)}\{/b}`, { size = S(32), color = c.paper }),
                 style.label(config.hero.title, { size = S(19), color = c.dim }),
-                style.label(`\{color={c.gold_hi}}●\{/color}  {v.gold or 0} gold`, { size = S(20), color = c.text }),
+                style.label(`\{color={c.gold_hi}}●\{/color}  {kulisa.t("{n} gold", { n = v.gold or 0 })}`, { size = S(20), color = c.text }),
             }),
         }),
-        style.bar("Health", v.hp or 0, v.max_hp or 0, c.blood),
+        style.bar(mark("Health"), v.hp or 0, v.max_hp or 0, c.blood),
         ui.row({ width = "fill", gap = S(10), stats }),
     })
 end
@@ -240,9 +241,9 @@ function main.pack()
         detail = ui.column({
             width = "fill",
             gap = S(8),
-            style.label(`\{b}{def.name}\{/b}`, { size = S(22), color = c.gold_hi }),
+            style.label(`\{b}{kulisa.t(def.name)}\{/b}`, { size = S(22), color = c.gold_hi }),
             style.label(def.text, { size = S(19), color = c.text, width = "fill" }),
-            def.use and style.button("Use", function()
+            def.use and style.button(mark("Use"), function()
                 rules.use(sel)
                 if not rules.has(sel) then
                     main.selected:set(nil)
@@ -254,7 +255,7 @@ function main.pack()
     return ui.column({
         width = "fill",
         gap = S(12),
-        style.heading("Pack"),
+        style.heading(mark("Pack")),
         ui.grid({ columns = 4, gap = S(10), width = "fill", slots }),
         detail,
     })
@@ -313,7 +314,7 @@ local function portrait()
             width = "fill",
             gap = S(12),
             align = "center",
-            ui.box({ width = "fill", style.bar("Health", v.hp or 0, v.max_hp or 0, c.blood, { height = S(14) }) }),
+            ui.box({ width = "fill", style.bar(mark("Health"), v.hp or 0, v.max_hp or 0, c.blood, { height = S(14) }) }),
             style.button("Hero", function() main.open_menu("hero") end, { id = "hero_tab", size = S(20) }),
             style.button("Pack", function() main.open_menu("pack") end, { id = "pack_tab", size = S(20) }),
             style.button("Menu", function() main.open_menu("menu") end, { id = "menu_tab", size = S(20) }),

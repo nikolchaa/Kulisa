@@ -1,4 +1,4 @@
--- The quick menu under the text box, and the "Skipping" / "Auto" indicator.
+-- The quick menu under the text box, and the t("Skipping") / t("Auto") indicator.
 
 local actions = require("game/actions")
 local config = require("game/config")
@@ -7,6 +7,7 @@ local state = require("game/state")
 local style = require("ui/style")
 
 local ui = kulisa.ui
+local t = kulisa.t
 
 ui.screen("quick", function()
     local mode = state.mode()
@@ -22,22 +23,22 @@ ui.screen("quick", function()
             anchor = "bottom",
             y = -style.size(2),
             gap = style.size(22),
-            config.rollback and b("Back", flow.rollback, { disabled = not kulisa.story.can_rollback() }),
-            b("History", function()
+            config.rollback and b(t("Back"), flow.rollback, { disabled = not kulisa.story.can_rollback() }),
+            b(t("History"), function()
                 actions.open_menu("history")
             end),
-            b("Skip", function()
+            b(t("Skip"), function()
                 flow.toggle("skip")
             end, { selected = mode == "skip" }),
-            b("Auto", function()
+            b(t("Auto"), function()
                 flow.toggle("auto")
             end, { selected = mode == "auto" }),
-            b("Save", function()
+            b(t("Save"), function()
                 actions.open_menu("save")
             end),
-            b("Q.Save", actions.quick_save),
-            b("Q.Load", actions.quick_load),
-            b("Prefs", function()
+            b(t("Q.Save"), actions.quick_save),
+            b(t("Q.Load"), actions.quick_load),
+            b(t("Prefs"), function()
                 actions.open_menu("prefs")
             end),
         }),
@@ -49,7 +50,7 @@ ui.screen("quick", function()
             slice_scale = style.design,
             tint = "#111116cc",
             padding = { style.size(8), style.size(18) },
-            style.label(if mode == "skip" then "Skipping" else "Auto", { size = style.size(24), color = config.colors.accent }),
+            style.label(if mode == "skip" then t("Skipping") else t("Auto"), { size = style.size(24), color = config.colors.accent }),
         }),
     })
 end, { z = 110, area = "safe" })

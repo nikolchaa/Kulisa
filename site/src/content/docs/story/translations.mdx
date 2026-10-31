@@ -1,0 +1,99 @@
+---
+title: Translations
+description: Put your game in other languages with plain text files.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Each language is one plain text file in the game's `lang/` folder. Translators need nothing but
+a text editor, and you can add a language at any time: saves keep working in every language.
+
+## Add a language
+
+```sh
+kulisa translate ja
+```
+
+This writes `lang/ja.txt` with all of the game's text: story lines, menu choices, character names
+and the template's buttons. Fill in the lines after `=`:
+
+```text
+language = 日本語
+font = fonts/NotoSansJP-Regular.ttf
+
+# story/script.kulisa:12
+@kitty
+You're new here. Are you here about the counter too?
+= 新入りだね。きみもカウンターが目当て？
+
+# ui/main_menu.luau:12
+Start
+= はじめる
+```
+
+- `language` is the name players see in the language menu.
+- `font` is a font in your game, for scripts your main font does not cover. It loads the first
+  time the language is used.
+- A line left empty after `=` shows the original.
+- Keep `[expressions]` and `{tags}`, though you can move them: `= [name]、{i}おはよう{/i}`.
+
+## Keep it up to date
+
+Run `kulisa translate ja` again after changing the game. It adds the new lines and keeps your
+translations. If you reword a line, the old translation moves to the end of the file as a
+comment, so you can reuse it:
+
+```text
+# No longer in the game. Reuse these or delete them:
+#   You're new here. Are you here about the counter too?
+#   = 新入りだね。きみもカウンターが目当て？
+```
+
+Lines are found by their text and who says them, so moving them around changes nothing. The same
+line said twice by one character has one translation. To translate a line for every character,
+delete its `@name` line.
+
+## Choosing a language
+
+Players pick a language in the templates' settings, which appears once a game has more than one.
+Their first start follows Steam's language, then the system's. Your game's own language is
+English unless you say otherwise:
+
+```toml
+[game]
+language = "sr"
+language_name = "Srpski"
+```
+
+To try a language without changing your settings, start the game with `KULISA_LANG=ja` (on the
+web, add `?lang=ja` to the address).
+
+## Your own screens
+
+Pass interface text through `kulisa.t`, written as a literal so `kulisa translate` can find it:
+
+```luau
+local t = kulisa.t
+
+ui.button({ ui.text(t("Start")) })
+ui.text(t("Page {n}", { n = page }))
+```
+
+Text in a table built when the game starts would be translated too early. Mark it, then translate
+it when you draw it:
+
+```luau
+local mark = kulisa.lang.mark
+local items = { lantern = { name = mark("Lantern") } }
+
+ui.text(kulisa.t(items.lantern.name))
+```
+
+Change languages from a script with `kulisa.lang.set("ja")`. See the
+[API reference](https://github.com/nikolchaa/Kulisa/blob/main/docs/API.md#translations).
+
+<Aside type="caution" title="Not done yet">
+- Right-to-left languages like Arabic and Hebrew have no mirrored layout yet.
+- Dates from `os.date` stay in English.
+- The system window's title stays in the game's own language.
+</Aside>

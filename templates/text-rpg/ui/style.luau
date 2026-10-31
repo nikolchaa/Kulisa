@@ -17,7 +17,7 @@ local S = style.size
 
 function style.label(text: string, opts)
     opts = opts or {}
-    opts.text = text
+    opts.text = kulisa.t(text)
     opts.size = opts.size or S(24)
     opts.font = opts.font or config.font
     opts.color = opts.color or c.text
@@ -28,7 +28,7 @@ function style.heading(text: string, opts)
     opts = opts or {}
     opts.color = opts.color or c.gold
     opts.size = opts.size or S(20)
-    return style.label(`\{b}{string.upper(text)}\{/b}`, opts)
+    return style.label(`\{b}{string.upper(kulisa.t(text))}\{/b}`, opts)
 end
 
 -- A dark panel with a gold border and corner ornaments.

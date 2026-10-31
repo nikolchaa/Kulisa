@@ -9,7 +9,7 @@ use kulisa_core::{
 };
 use kulisa_platform::Storage;
 use kulisa_render::Image;
-use kulisa_story::{Vm, compile};
+use kulisa_story::{Vm, compile_translated};
 use kulisa_text::{Align, TextBox, TextStyle, Typewriter};
 use mlua::{
     AnyUserData, Function, IntoLua, Lua, MetaMethod, Table, UserData, UserDataMethods, Value as LuaValue,
@@ -59,6 +59,7 @@ const EVENTS: &[&str] = &[
     "display",
     "reload",
     "quality",
+    "language",
 ];
 
 pub(crate) fn shared(lua: &Lua) -> Shared {
@@ -1242,7 +1243,7 @@ fn story_files(st: &State, files: Option<Vec<String>>) -> Result<Vec<(String, St
 pub(crate) fn compile_story(st: &State, files: Option<Vec<String>>) -> Result<kulisa_story::Program, String> {
     let sources = story_files(st, files)?;
     let refs: Vec<(&str, &str)> = sources.iter().map(|(f, s)| (f.as_str(), s.as_str())).collect();
-    compile(&refs).map_err(|e| e.to_string())
+    compile_translated(&refs, &st.lang.languages).map_err(|e| e.to_string())
 }
 
 fn story_api(lua: &Lua) -> mlua::Result<Table> {
@@ -1945,6 +1946,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     super::typing::install(lua, &input)?;
     super::sensors::install(lua, &k)?;
     super::steam::install(lua, &k)?;
+    super::lang::install(lua, &k)?;
     k.set("input", input)?;
     super::interact::install(lua, &k)?;
 

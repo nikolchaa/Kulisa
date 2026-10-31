@@ -26,6 +26,9 @@ enum Change {
 }
 
 fn change(path: &str) -> Change {
+    if path.starts_with("lang/") && path.ends_with(".txt") {
+        return Change::Story;
+    }
     let ext = path.rsplit_once('.').map_or("", |(_, e)| e).to_ascii_lowercase();
     match ext.as_str() {
         "wgsl" => Change::Shader,
@@ -120,6 +123,11 @@ impl Game {
     /// are found by their text, as with saves from older versions).
     fn reload_story(&mut self) -> Result<(), String> {
         let files = with_story(&self.state, false, |s| Ok(s.loaded.then(|| s.files.clone())))?;
+        {
+            let mut st = self.state.borrow_mut();
+            super::lang::load(&mut st)?;
+            super::ui::refresh_all(&mut st);
+        }
         let Some(files) = files else { return Ok(()) };
         let program = compile_story(&self.state.borrow(), files)?;
         let resume = with_story(&self.state, false, |s| {

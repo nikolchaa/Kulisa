@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 log.workspace = true
+sys-locale = "0.3"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))'.dependencies]
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
@@ -22,6 +23,7 @@ android_logger = "0.15"
 oslog = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+sys-locale = { version = "0.3", features = ["js"] }
 console_error_panic_hook = "0.1"
 console_log = "1"
 js-sys = "0.3"

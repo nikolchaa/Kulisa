@@ -430,6 +430,21 @@ line keeps its identity across sessions and edits that keep its text. The game
 keeps a seen set (and chosen menu choices) in persistent storage; `say` events
 carry `seen`, menu items `chosen`. `Vm::block_rollback` drops the history.
 
+### Translations
+
+`lang/<code>.txt` holds one language: a source line, then `= translation`, with `@who` when it
+belongs to one character. `kulisa translate <code>` writes and updates the file from the game
+(`story_strings` walks the syntax tree, `script_strings` scans Luau for `t("...")` and
+`mark("...")`), keeps what is translated and leaves unused translations as comments.
+`compile_translated` compiles the entries the story shows into `Program::translations`, with
+errors pointing into the file; entries only scripts use stay plain text, since brackets mean
+nothing there. The VM looks each line up as it shows it (`Vm::localized`): speaker first, then
+any speaker, then the original. Nothing about a language reaches saves, rollback or seen lines,
+which work on positions, so switching at any time is safe and `Vm::reshow` puts the current line
+up again. `kulisa.t` looks up interface text; screens rebuild on a switch. The start language
+is the forced one (`KULISA_LANG`, `?lang=`), the player's choice (`settings/language`), Steam's,
+then the system's. A language can name a font, loaded the first time it is used.
+
 ### Positions that survive updates
 
 A frame is saved as `(label, statement index, statement hash, resume_after)`.
@@ -968,3 +983,6 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
 | 2026-10-23 | Web pages go fullscreen on the first tap on touch devices (the whole page, not the canvas, so the soft keyboard's hidden input stays inside), by default and without a setting: a game on a phone wants the whole screen. |
 | 2026-10-23 | The web locks to the same resolved orientation as Android and iOS (the profile's, or the design's shape), retried whenever the page enters fullscreen, rather than a separate web setting; the rotate hint (`mismatch`) stays for browsers that refuse. |
 | 2026-10-25 | Drop the vendored `mlua` for a pinned upstream `main` commit, which carries the wasm32-unknown-unknown heap-dump fix; switch to the crates.io release once one includes it. |
+| 2026-10-31 | Store packaging: API 36 with `appCategory="game"` and predictive back off, App Bundles through bundletool without Gradle, passwords read from the environment by name so they reach no command line or log, signing keys never packed. macOS `.app` and App Store `.ipa` keep the no-Xcode-project approach (`actool`, `codesign`, `notarytool`). |
+| 2026-10-31 | Steam loads `steam_api` at startup through its flat C API instead of linking the `steamworks` crate: games without Steam need nothing, the repository holds none of Valve's files, and prebuilt players stay possible. Interfaces are found by trying versions. Cloud saves are Auto-Cloud on the data folder, which needs no code. |
+| 2026-10-31 | Translations are found by source text (with an optional speaker), not by statement, so moving lines keeps them and saves are untouched; two identical lines by one speaker share a translation. Plain text files instead of generated script files, so translators need no tools. Text inside tables built at startup is marked with `kulisa.lang.mark` and translated when drawn. |

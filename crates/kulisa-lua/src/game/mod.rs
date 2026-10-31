@@ -9,6 +9,7 @@ mod display;
 mod errors;
 mod hit;
 mod interact;
+mod lang;
 mod media;
 mod mesh;
 mod pad;
@@ -133,6 +134,7 @@ pub(crate) struct State {
     pub typing: typing::Typing,
     pub sensors: sensors::Sensors,
     pub steam: Option<Box<dyn kulisa_platform::SteamApi>>,
+    pub lang: lang::Lang,
     pub config: GameConfig,
     pub errors: errors::ErrorView,
     /// A development reload was asked for (Shift+R); the runtime picks it up.
@@ -298,7 +300,9 @@ pub(crate) fn with_story<R>(
 
 /// Runs the story to its next blocking event and passes every event to the handlers.
 pub(crate) fn story_advance(lua: &Lua, shared: &Shared) -> Result<(), String> {
+    let language = shared.borrow().lang.current.clone();
     let (events, key) = with_story(shared, true, |s| {
+        s.vm.set_language(language);
         s.timer = None;
         let mut events = Vec::new();
         loop {
@@ -593,6 +597,7 @@ impl Game {
             typing: Default::default(),
             sensors: Default::default(),
             steam: None,
+            lang: Default::default(),
             config,
             errors: Default::default(),
             reload_requested: false,
@@ -605,6 +610,7 @@ impl Game {
         state.display.device = device;
         state.errors.dev = dev;
         steam::connect(&mut state);
+        let lang_error = lang::load(&mut state).and_then(|()| lang::choose(&mut state)).err();
         let shared = Rc::new(RefCell::new(state));
         let lua = Lua::new();
         // Luau resolves global paths like `kulisa.screen.mode` once, when a function loads, if
@@ -634,7 +640,7 @@ impl Game {
         if !cfg!(target_arch = "wasm32") {
             game.start_audio();
         }
-        if let Some(e) = config_error {
+        if let Some(e) = config_error.or(lang_error) {
             game.start_failed(e);
         }
         if let Err(e) = game.run_main() {

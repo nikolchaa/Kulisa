@@ -9,6 +9,7 @@
 --
 -- The `desk` table is global so story `$` lines can call it (see README.md).
 
+local mark = kulisa.lang.mark
 local config = require("os/config")
 local data = require("os/data")
 local shell = require("os/shell")
@@ -54,7 +55,7 @@ local function deliver(id: string, msg)
     data.changed()
     shell.notify({
         title = t.name,
-        text = msg.text or "Sent a photo",
+        text = msg.text or mark("Sent a photo"),
         icon = t.avatar,
         silent = true,
         on_click = function()
@@ -129,7 +130,7 @@ kulisa.on("menu", function(items, caption)
             kulisa.story.choose(it.index)
         end })
     end
-    shell.dialog({ title = "Choose", buttons = buttons })
+    shell.dialog({ title = mark("Choose"), buttons = buttons })
 end)
 
 kulisa.on("pause", function(secs)
@@ -192,10 +193,10 @@ kulisa.on("end", function()
     bridge.started = false
     kulisa.after(1.5, function()
         shell.dialog({
-            title = "The end",
+            title = mark("The end"),
             icon = "apps/start.png",
-            text = "That is the whole sample story. Edit story/script.kulisa to write yours.",
-            buttons = { { "Keep exploring" }, { "Start over", bridge.restart, true } },
+            text = mark("That is the whole sample story. Edit story/script.kulisa to write yours."),
+            buttons = { { mark("Keep exploring") }, { mark("Start over"), bridge.restart, true } },
         })
     end)
 end)
@@ -267,7 +268,7 @@ function desk.note(title: string, text: string)
     table.insert(data.notes, 1, { title = title, text = text, time = theme.time_text() })
     data.changed()
     shell.notify({
-        title = "Notes",
+        title = mark("Notes"),
         text = `New note: {title}`,
         app = "notes",
         on_click = function()

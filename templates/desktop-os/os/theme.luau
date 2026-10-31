@@ -37,7 +37,7 @@ end
 
 function theme.label(text: string, opts)
     opts = opts or {}
-    opts.text = text
+    opts.text = kulisa.t(text)
     opts.size = opts.size or S(20)
     opts.font = opts.font or config.font
     opts.color = opts.color or c.text
@@ -45,7 +45,7 @@ function theme.label(text: string, opts)
 end
 
 function theme.bold(text: string, opts)
-    return theme.label(`\{b}{text}\{/b}`, opts)
+    return theme.label(`\{b}{kulisa.t(text)}\{/b}`, opts)
 end
 
 -- A white glyph from icons/ tinted with `color`.

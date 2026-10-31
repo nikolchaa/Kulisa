@@ -1,6 +1,7 @@
 -- Messages: contacts on the left, the conversation on the right. Contacts and messages come from
 -- the story (os/story.luau); replies appear as chips when the story asks a question.
 
+local mark = kulisa.lang.mark
 local bridge = require("os/story")
 local config = require("os/config")
 local data = require("os/data")
@@ -46,8 +47,8 @@ local function contact(t, is_selected: boolean)
     local last = t.messages[#t.messages]
     local preview = if bridge.typing() == t.id then "typing…"
         elseif last == nil then ""
-        elseif last.image then "Photo"
-        else (if last.from == "me" then "You: " else "") .. last.text
+        elseif last.image then mark("Photo")
+        else (if last.from == "me" then mark("You: ") else "") .. last.text
     if #preview > 38 then
         preview = preview:sub(1, utf8.offset(preview, 36) or 36) .. "…"
     end
@@ -136,7 +137,7 @@ local function conversation(t, width: number)
         return ui.box({
             width = "fill",
             height = "fill",
-            theme.label("No conversations yet.", { anchor = "center", color = c.faint }),
+            theme.label(mark("No conversations yet."), { anchor = "center", color = c.faint }),
         })
     end
     local items = {}
@@ -154,7 +155,7 @@ local function conversation(t, width: number)
                 background = "gui/bubble_in.png",
                 slice = 20,
                 tint = c.bubble_in,
-                theme.label("{wave=0.16}• • •{/wave}", { size = S(20), color = c.dim }),
+                theme.label(mark("{wave=0.16}• • •{/wave}"), { size = S(20), color = c.dim }),
             }),
         }))
     end
@@ -180,7 +181,7 @@ local function conversation(t, width: number)
                 background = "gui/pill.png",
                 slice = 15,
                 tint = c.panel_hi,
-                theme.label("Message", { size = S(17), color = c.faint }),
+                theme.label(mark("Message"), { size = S(17), color = c.faint }),
             }),
             theme.glyph("send", S(22), c.faint),
         })
@@ -231,7 +232,7 @@ function chat.build(win)
             padding = S(10),
             gap = S(4),
             background = "#00000026",
-            theme.bold("Messages", { size = S(20), margin = { S(6), S(8), S(10), S(8) } }),
+            theme.bold(mark("Messages"), { size = S(20), margin = { S(6), S(8), S(10), S(8) } }),
             ui.scroll({ width = "fill", height = "fill", list }),
         }),
         theme.divider(true),

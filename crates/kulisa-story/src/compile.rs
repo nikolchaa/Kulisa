@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::diag::{Diagnostic, Diagnostics, Loc, suggest};
+use crate::{Language, lang_key};
 
 pub type ChunkId = u32;
 
@@ -38,11 +39,15 @@ pub struct SayOp {
     /// Chunk evaluating the character (`define`d value), and its name in the script.
     pub who: Option<(ChunkId, String)>,
     pub text: Vec<TextPart>,
+    /// The text as written, which finds its translation.
+    pub source: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChoiceOp {
     pub text: Vec<TextPart>,
+    /// The text as written, which finds its translation.
+    pub source: String,
     pub guard: Option<ChunkId>,
     /// Op index the choice continues at.
     pub target: u32,
@@ -128,6 +133,8 @@ pub struct Program {
     pub defaults: Vec<(String, ChunkId)>,
     /// Top-level `lua:` blocks, in source order.
     pub init: Vec<ChunkId>,
+    /// Translated text by language code, then by [`crate::lang_key`].
+    pub translations: HashMap<String, HashMap<String, Vec<TextPart>>>,
 }
 
 impl Program {
@@ -145,11 +152,19 @@ struct Compiler<'a> {
     errors: Vec<Diagnostic>,
     labels: HashSet<String>,
     characters: HashSet<String>,
+    /// Translation keys of the text the story shows.
+    shown: HashSet<String>,
     lines: &'a HashMap<String, Vec<String>>,
 }
 
 /// Compiles story files (`(name, source)` pairs) into one program.
 pub fn compile(files: &[(&str, &str)]) -> Result<Program, Diagnostics> {
+    compile_translated(files, &[])
+}
+
+/// Compiles story files with their translations; `[expressions]` in translated text are checked
+/// like the story's own, and errors point into the language file.
+pub fn compile_translated(files: &[(&str, &str)], languages: &[Language]) -> Result<Program, Diagnostics> {
     let mut errors = Vec::new();
     let mut parsed = Vec::new();
     for (name, src) in files {
@@ -158,13 +173,18 @@ pub fn compile(files: &[(&str, &str)]) -> Result<Program, Diagnostics> {
             Err(e) => errors.extend(e),
         }
     }
-    let lines: HashMap<String, Vec<String>> =
-        files.iter().map(|(n, s)| (n.to_string(), s.lines().map(str::to_string).collect())).collect();
+    let lines: HashMap<String, Vec<String>> = files
+        .iter()
+        .copied()
+        .chain(languages.iter().map(|l| (l.file.as_str(), l.source.as_str())))
+        .map(|(n, s)| (n.to_string(), s.lines().map(str::to_string).collect()))
+        .collect();
     let mut c = Compiler {
         program: Program::default(),
         errors,
         labels: HashSet::new(),
         characters: HashSet::new(),
+        shown: HashSet::new(),
         lines: &lines,
     };
     c.declare(&parsed);
@@ -175,6 +195,13 @@ pub fn compile(files: &[(&str, &str)]) -> Result<Program, Diagnostics> {
                 c.program.labels.insert(l.name.clone(), code);
             }
         }
+    }
+    for language in languages {
+        // Interface text has no `[expressions]`, and brackets in it are just brackets.
+        let story = language.entries.iter().filter(|(key, _)| c.shown.contains(*key));
+        let story: Vec<_> = story.collect();
+        let table = story.into_iter().map(|(key, e)| (key.clone(), c.text(&e.text, &e.loc))).collect();
+        c.program.translations.insert(language.code.clone(), table);
     }
     if c.errors.is_empty() { Ok(c.program) } else { Err(Diagnostics(c.errors)) }
 }
@@ -342,7 +369,10 @@ impl Compiler<'_> {
             }
             (self.chunk(ChunkKind::Expr, name, loc), name.clone())
         });
-        SayOp { who, text: self.text(&s.text, &s.text_loc) }
+        let speaker = s.who.as_ref().map(|(name, _)| name.as_str());
+        self.shown.insert(lang_key(speaker, &s.text));
+        self.shown.insert(lang_key(None, &s.text));
+        SayOp { who, text: self.text(&s.text, &s.text_loc), source: s.text.clone() }
     }
 
     fn stmt(&mut self, s: &Stmt, code: &mut LabelCode) {
@@ -353,10 +383,12 @@ impl Compiler<'_> {
             }
             StmtKind::Menu { caption, choices } => {
                 let caption = caption.as_ref().map(|c| self.say(c));
+                self.shown.extend(choices.iter().map(|c| lang_key(None, &c.text)));
                 let ops: Vec<ChoiceOp> = choices
                     .iter()
                     .map(|c| ChoiceOp {
                         text: self.text(&c.text, &c.text_loc),
+                        source: c.text.clone(),
                         guard: c.guard.as_ref().map(|(g, loc)| self.chunk(ChunkKind::Expr, g, loc)),
                         target: 0,
                     })

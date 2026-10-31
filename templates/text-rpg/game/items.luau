@@ -1,62 +1,63 @@
 -- Items: what they are called, their icon and description, and what using one does. Stories add
 -- and remove them with give / take (game/rules.luau) and test them with has.
 
+local mark = kulisa.lang.mark
 local items = {}
 
 items.lantern = {
-    name = "Lantern",
+    name = mark("Lantern"),
     icon = "items/lantern.png",
-    text = "A tin lantern with a steady flame. Dark places are less dark.",
+    text = mark("A tin lantern with a steady flame. Dark places are less dark."),
 }
 items.bread = {
-    name = "Heel of bread",
+    name = mark("Heel of bread"),
     icon = "items/bread.png",
-    text = "Hard, but it keeps you going. Restores 2 health.",
+    text = mark("Hard, but it keeps you going. Restores 2 health."),
     use = function(rules)
         rules.heal(2)
         rules.take("bread")
-        return "You eat the bread."
+        return kulisa.t("You eat the bread.")
     end,
 }
 items.herb = {
-    name = "Woundwort",
+    name = mark("Woundwort"),
     icon = "items/herb.png",
-    text = "A bitter healing herb. Restores 4 health.",
+    text = mark("A bitter healing herb. Restores 4 health."),
     use = function(rules)
         rules.heal(4)
         rules.take("herb")
-        return "You chew the woundwort. The pain eases."
+        return kulisa.t("You chew the woundwort. The pain eases.")
     end,
 }
 items.key = {
-    name = "Rusty key",
+    name = mark("Rusty key"),
     icon = "items/key.png",
-    text = "Found in the mill cellar. It is warm, somehow.",
+    text = mark("Found in the mill cellar. It is warm, somehow."),
 }
 items.coins = {
-    name = "Coin purse",
+    name = mark("Coin purse"),
     icon = "items/coins.png",
-    text = "Someone's savings. Adds 5 gold when opened.",
+    text = mark("Someone's savings. Adds 5 gold when opened."),
     use = function(rules)
         rules.take("coins")
         rules.pay(-5)
-        return "Five coins clink into your pocket."
+        return kulisa.t("Five coins clink into your pocket.")
     end,
 }
 items.rope = {
-    name = "Rope",
+    name = mark("Rope"),
     icon = "items/rope.png",
-    text = "Thirty feet of good hemp.",
+    text = mark("Thirty feet of good hemp."),
 }
 items.map = {
-    name = "Torn map",
+    name = mark("Torn map"),
     icon = "items/map.png",
-    text = "Half a map of the valley. An X marks the old well.",
+    text = mark("Half a map of the valley. An X marks the old well."),
 }
 items.dagger = {
-    name = "Dagger",
+    name = mark("Dagger"),
     icon = "items/dagger.png",
-    text = "Light and sharp. +1 Might while you carry it.",
+    text = mark("Light and sharp. +1 Might while you carry it."),
     might = 1,
 }
 

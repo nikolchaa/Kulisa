@@ -8,6 +8,7 @@
 --   can be dragged around. Notifications open what they are about.
 --   Space / Enter: continue a caption. Escape: close the start menu or a dialog.
 
+local mark = kulisa.lang.mark
 local config = require("os/config")
 
 kulisa.save.setup({ version = config.save_version })
@@ -92,7 +93,7 @@ end
 settings.save_slot = function(slot: string)
     local shot = kulisa.screen:capture(384, 216)
     kulisa.save.write(slot, { thumbnail = shot })
-    shell.notify({ title = "Saved", text = "Your progress was saved.", app = "settings", silent = true })
+    shell.notify({ title = mark("Saved"), text = mark("Your progress was saved."), app = "settings", silent = true })
 end
 
 local function load_slot(slot: string)
@@ -114,9 +115,9 @@ end)
 
 settings.load_slot = function(slot: string)
     shell.dialog({
-        title = "Load this save?",
-        text = "Anything since your last save is lost.",
-        buttons = { { "Cancel" }, { "Load", function()
+        title = mark("Load this save?"),
+        text = mark("Anything since your last save is lost."),
+        buttons = { { mark("Cancel") }, { mark("Load"), function()
             load_slot(slot)
         end, true } },
     })
@@ -148,8 +149,8 @@ local function load_menu()
             load_slot(s.slot)
         end })
     end
-    table.insert(slots, { "Cancel" })
-    shell.dialog({ title = "Load", buttons = slots })
+    table.insert(slots, { mark("Cancel") })
+    shell.dialog({ title = mark("Load"), buttons = slots })
 end
 
 bridge.restart = function()
@@ -166,12 +167,12 @@ end
 local refresh_signin
 
 shell.actions = {
-    { label = "Save", icon = "save", run = function() wm.open("settings", "saves") end },
-    { label = "Settings", icon = "maximize", run = function() wm.open("settings", "appearance") end },
-    { label = "Restart story", icon = "reload", run = function()
-        shell.dialog({ title = "Start the story over?", text = "Unsaved progress is lost.", buttons = { { "Cancel" }, { "Start over", bridge.restart, true } } })
+    { label = mark("Save"), icon = "save", run = function() wm.open("settings", "saves") end },
+    { label = mark("Settings"), icon = "maximize", run = function() wm.open("settings", "appearance") end },
+    { label = mark("Restart story"), icon = "reload", run = function()
+        shell.dialog({ title = mark("Start the story over?"), text = mark("Unsaved progress is lost."), buttons = { { mark("Cancel") }, { mark("Start over"), bridge.restart, true } } })
     end },
-    { label = if kulisa.window.can_quit then "Shut down" else "Sign out", icon = "power", run = function()
+    { label = if kulisa.window.can_quit then mark("Shut down") else mark("Sign out"), icon = "power", run = function()
         if kulisa.window.can_quit then
             kulisa.window:quit()
         else
@@ -185,13 +186,13 @@ shell.actions = {
 }
 
 refresh_signin = function()
-    shell.signin_buttons = { { if newest_save() then "New story" else "Sign in", begin, true } }
+    shell.signin_buttons = { { if newest_save() then mark("New story") else mark("Sign in"), begin, true } }
     if newest_save() then
-        table.insert(shell.signin_buttons, 1, { "Continue", function()
+        table.insert(shell.signin_buttons, 1, { mark("Continue"), function()
             load_slot(newest_save().slot)
         end, true })
         shell.signin_buttons[2][3] = false
-        table.insert(shell.signin_buttons, { "Load…", load_menu })
+        table.insert(shell.signin_buttons, { mark("Load…"), load_menu })
     end
 end
 

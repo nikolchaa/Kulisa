@@ -1,5 +1,6 @@
 -- Notes: what the story wrote down (desk.note). A list on the left, the note on the right.
 
+local mark = kulisa.lang.mark
 local config = require("os/config")
 local data = require("os/data")
 local theme = require("os/theme")
@@ -48,7 +49,7 @@ function notes.build(win)
             height = "fill",
             padding = S(10),
             background = "#00000026",
-            #list == 0 and theme.label("No notes yet.", { color = c.faint, margin = S(10) }),
+            #list == 0 and theme.label(mark("No notes yet."), { color = c.faint, margin = S(10) }),
             ui.scroll({ width = "fill", height = "fill", list }),
         }),
         theme.divider(true),

@@ -55,6 +55,7 @@ export default defineConfig({
 						{ label: 'Variables and Luau', slug: 'story/variables' },
 						{ label: 'Stage and sound', slug: 'story/stage' },
 						{ label: 'Saves and updates', slug: 'story/saves' },
+						{ label: 'Translations', slug: 'story/translations' },
 						{ label: 'Errors', slug: 'story/errors' },
 						{ label: 'Cheat sheet', slug: 'story/cheat-sheet' },
 					],

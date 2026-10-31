@@ -7,6 +7,7 @@ local flow = require("game/flow")
 local style = require("ui/style")
 
 local ui = kulisa.ui
+local t = kulisa.t
 local c = config.colors
 
 ui.screen("confirm", function(props)
@@ -26,11 +27,11 @@ ui.screen("confirm", function(props)
                 style.label(props.message, { size = style.size(34), align = "center", width = "fill" }),
                 ui.row({
                     gap = style.size(80),
-                    style.button("Yes", function()
+                    style.button(t("Yes"), function()
                         ui.hide("confirm")
                         props.yes()
                     end, { size = style.size(34) }),
-                    style.button("No", function()
+                    style.button(t("No"), function()
                         ui.hide("confirm")
                     end, { size = style.size(34), autofocus = true }),
                 }),
@@ -89,7 +90,7 @@ ui.screen("rotate", function()
                 padding = style.size(8),
                 ui.box({ width = "fill", height = "fill", background = "gui/round.png", slice = 16, slice_scale = style.design, tint = c.ink }),
             }),
-            style.label("Please turn your device sideways", { size = style.size(40) }),
+            style.label(t("Please turn your device sideways"), { size = style.size(40) }),
         }),
     })
 end, { z = 1000, modal = true, area = "screen" })
@@ -117,9 +118,9 @@ ui.screen("error", function(props)
             ui.column({
                 width = "fill",
                 gap = style.size(8),
-                style.label("{b}Script error{/b}", { size = style.size(26), color = c.accent }),
+                style.label(`\{b}{t("Script error")}\{/b}`, { size = style.size(26), color = c.accent }),
                 style.label(props.text, { size = style.size(22), width = "fill" }),
-                style.button("Dismiss", function()
+                style.button(t("Dismiss"), function()
                     ui.hide("error")
                 end, { size = style.size(22) }),
             }),

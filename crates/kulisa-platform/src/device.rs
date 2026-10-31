@@ -24,6 +24,16 @@ pub fn dev_override() -> bool {
     option("KULISA_DEV", "dev").is_some_and(|v| v != "0")
 }
 
+/// A forced language (`ja`) from `KULISA_LANG` (or `?lang=`).
+pub fn language_override() -> Option<String> {
+    option("KULISA_LANG", "lang")
+}
+
+/// The language the player's system or browser uses (`ja-JP`).
+pub fn system_language() -> Option<String> {
+    sys_locale::get_locale()
+}
+
 /// A forced quality tier (`low`, `medium`, `high`) from `KULISA_QUALITY` (or `?quality=`).
 pub fn quality_override() -> Option<String> {
     option("KULISA_QUALITY", "quality")

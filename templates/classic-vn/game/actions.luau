@@ -88,14 +88,14 @@ function actions.quick_save()
         return
     end
     kulisa.save.write("quick", { thumbnail = kulisa.screen:capture(384, 216) })
-    flow.notify("Quick saved.")
+    flow.notify(kulisa.t("Quick saved."))
 end
 
 function actions.quick_load()
     if kulisa.save.exists("quick") then
         actions.load("quick")
     else
-        flow.notify("No quick save yet.")
+        flow.notify(kulisa.t("No quick save yet."))
     end
 end
 
@@ -126,7 +126,7 @@ function actions.main_menu()
 end
 
 function actions.quit()
-    actions.confirm("Are you sure you want to quit?", function()
+    actions.confirm(kulisa.t("Are you sure you want to quit?"), function()
         prefs.flush(true)
         kulisa.window:quit()
     end)

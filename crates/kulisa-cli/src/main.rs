@@ -25,6 +25,7 @@ const HELP: &str = "kulisa: make and build Kulisa games
                                                 --universal: Apple silicon and Intel (macos)
                                                 --notarize: send to Apple's notary service (macos)
   kulisa pack [GAME] [--out FILE]               pack the game into a .kpak
+  kulisa translate CODE [GAME]                  write or update lang/CODE.txt with the game's text
   kulisa serve [DIR] [--port N]                 serve a web build
 
 GAME is a game folder (default: the current folder). Builds go to GAME/dist/TARGET.
@@ -108,6 +109,7 @@ fn main() {
         "run" => play(&a),
         "build" => build(&a),
         "pack" => pack(&a),
+        "translate" => translate(&a),
         "serve" => {
             let dir = a.positional.first().map_or_else(|| PathBuf::from("dist/web"), PathBuf::from);
             serve::serve(&dir, a.port()?, None)
@@ -451,6 +453,66 @@ fn build(a: &Args) -> Result {
         "ios" => Err("iOS builds need a Mac with Xcode".into()),
         other => Err(format!("unknown target `{other}`: windows, linux, macos, web, android or ios")),
     }
+}
+
+/// Game files with `extension`, as (path relative to the game, source), sorted.
+fn game_sources(game: &Path, extension: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut stack = vec![game.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            let Ok(rel) = p.strip_prefix(game) else { continue };
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            if !kulisa_platform::is_game_file(&rel) {
+                continue;
+            }
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().is_some_and(|x| x == extension)
+                && let Ok(src) = fs::read_to_string(&p)
+            {
+                out.push((rel, src));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+fn translate(a: &Args) -> Result {
+    let code = a.positional.first().ok_or("kulisa translate CODE [GAME]; CODE is like ja or pt-BR")?;
+    if !kulisa_story::valid_lang_code(code) {
+        return Err(format!("`{code}` cannot name a language; use a code like ja or pt-BR"));
+    }
+    let game = a.game(1)?;
+    let title = kulisa_story::LangSource {
+        who: None,
+        text: game.config.title.clone(),
+        place: kulisa_platform::CONFIG_FILE.to_string(),
+    };
+    let mut sources = vec![title];
+    for (path, src) in game_sources(&game.dir, "kulisa") {
+        let file = kulisa_story::parse(&path, &src).map_err(|e| kulisa_story::Diagnostics(e).to_string())?;
+        sources.extend(kulisa_story::story_strings(&file));
+    }
+    for (path, src) in game_sources(&game.dir, "luau") {
+        sources.extend(kulisa_story::script_strings(&path, &src));
+    }
+    let path = game.dir.join("lang").join(format!("{code}.txt"));
+    let name = format!("lang/{code}.txt");
+    let old = match fs::read_to_string(&path) {
+        Ok(src) => Some(kulisa_story::parse_language(&name, &src).map_err(|e| e.to_string())?),
+        Err(_) => None,
+    };
+    let (text, report) = kulisa_story::update_language(code, old.as_ref(), &sources);
+    fs::create_dir_all(game.dir.join("lang")).map_err(|e| e.to_string())?;
+    fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    println!(
+        "{name}: {} texts, {} to translate, {} no longer used.",
+        report.total, report.missing, report.unused
+    );
+    Ok(())
 }
 
 fn pack(a: &Args) -> Result {

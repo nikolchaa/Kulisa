@@ -1,6 +1,7 @@
 -- Menus: the title screen, save and load slots, settings, and on phones the hero / pack / menu
 -- sheets. One modal screen shows whichever is open.
 
+local mark = kulisa.lang.mark
 local config = require("game/config")
 local log = require("game/log")
 local main = require("ui/main")
@@ -38,7 +39,7 @@ end
 main.open_menu = menus.show
 
 local function close_button()
-    return style.button("Close", function()
+    return style.button(mark("Close"), function()
         menus.show(if play.started then nil else "title")
     end, { id = "close" })
 end
@@ -80,7 +81,7 @@ local function slots(mode: string)
                     height = S(if style.phone then 150 else 128),
                     background = "#0a0706",
                     info and info.thumbnail and ui.image({ image = info.thumbnail, width = "fill", height = "fill" }),
-                    not info and style.label("Empty", { anchor = "center", color = c.faint, size = S(20) }),
+                    not info and style.label(mark("Empty"), { anchor = "center", color = c.faint, size = S(20) }),
                 }),
                 style.label(if info then os.date("%d %b  %H:%M", info.timestamp) else " ", { size = S(18), color = c.dim }),
                 style.label(if info then info.title else " ", { size = S(17), color = c.text, width = "fill" }),
@@ -90,7 +91,7 @@ local function slots(mode: string)
     return ui.column({
         width = "fill",
         gap = S(20),
-        style.heading(if mode == "save" then "Save" else "Load", { size = S(26) }),
+        style.heading(if mode == "save" then mark("Save") else mark("Load"), { size = S(26) }),
         ui.grid({ columns = if style.phone then 2 else 3, gap = S(16), width = "fill", cards }),
     })
 end
@@ -120,14 +121,34 @@ local function slider(label: string, key: string, min: number, max: number, step
     })
 end
 
+-- A button per language, when the game has more than one (lang/*.txt).
+local function languages()
+    local list = kulisa.lang.list()
+    if #list < 2 then
+        return nil
+    end
+    local row = {}
+    for _, l in list do
+        table.insert(row, style.button(l.name, function()
+            kulisa.lang.set(l.code)
+        end, { key = l.code, selected = kulisa.lang.current() == l.code }))
+    end
+    return ui.column({
+        gap = S(8),
+        style.label(mark("Language"), { size = S(21), color = c.dim }),
+        ui.row({ gap = S(8), row }),
+    })
+end
+
 local function settings()
     return ui.column({
         width = "fill",
         gap = S(24),
-        style.heading("Settings", { size = S(26) }),
-        slider("Text speed", "cps", 15, 120, 5),
-        slider("Music", "music", 0, 1),
-        slider("Sounds", "sound", 0, 1),
+        style.heading(mark("Settings"), { size = S(26) }),
+        slider(mark("Text speed"), "cps", 15, 120, 5),
+        slider(mark("Music"), "music", 0, 1),
+        slider(mark("Sounds"), "sound", 0, 1),
+        languages(),
     })
 end
 
@@ -137,7 +158,7 @@ local function title()
         table.insert(buttons, style.button(label, f, { width = S(360), id = id, size = S(26), autofocus = #buttons == 0 }))
     end
     if kulisa.save.exists("quick") or #kulisa.save.list() > 0 then
-        add("Continue", function()
+        add(mark("Continue"), function()
             local best
             for _, s in kulisa.save.list() do
                 if best == nil or s.timestamp > best.timestamp then
@@ -147,14 +168,14 @@ local function title()
             menus.load(best.slot)
         end, "continue")
     end
-    add("New journey", function()
+    add(mark("New journey"), function()
         menus.show(nil)
         play.start()
     end, "new")
-    add("Load", function() menus.show("load") end, "title_load")
-    add("Settings", function() menus.show("settings") end, "title_settings")
+    add(mark("Load"), function() menus.show("load") end, "title_load")
+    add(mark("Settings"), function() menus.show("settings") end, "title_settings")
     if kulisa.window.can_quit then
-        add("Quit", function() kulisa.window:quit() end, "quit")
+        add(mark("Quit"), function() kulisa.window:quit() end, "quit")
     end
     -- The picture covers the screen (cropped, never stretched).
     local _, _, vw, vh = kulisa.screen:visible()
@@ -170,8 +191,8 @@ local function title()
             anchor = "center",
             align = "center",
             gap = S(16),
-            style.label(`\{b}{config.title}\{/b}`, { size = S(if style.phone then 76 else 92), color = c.paper }),
-            style.label("a short text adventure", { size = S(26), color = c.gold }),
+            style.label(`\{b}{kulisa.t(config.title)}\{/b}`, { size = S(if style.phone then 76 else 92), color = c.paper }),
+            style.label(mark("a short text adventure"), { size = S(26), color = c.gold }),
             ui.box({ height = S(30), width = 1 }),
             buttons,
         }),
@@ -196,11 +217,11 @@ ui.screen("menu", function()
         content = ui.column({
             width = "fill",
             gap = S(14),
-            style.heading("Menu", { size = S(26) }),
+            style.heading(mark("Menu"), { size = S(26) }),
             style.button("Save", function() menus.show("save") end, { width = "fill", id = "m_save" }),
             style.button("Load", function() menus.show("load") end, { width = "fill", id = "m_load" }),
             style.button("Settings", function() menus.show("settings") end, { width = "fill", id = "m_settings" }),
-            style.button("Title screen", function()
+            style.button(mark("Title screen"), function()
                 play.started = false
                 log.clear()
                 menus.show("title")

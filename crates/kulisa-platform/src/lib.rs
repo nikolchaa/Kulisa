@@ -16,7 +16,10 @@ pub use assets::build_pack;
 pub use assets::fetch;
 pub use assets::{Assets, Pack, is_game_file, normalize};
 pub use config::{CONFIG_FILE, Config, ConfigValue, GameConfig, ORIENTATIONS, QUALITY_TIERS, valid_id};
-pub use device::{Motion, dev_override, profile_override, quality_override, safe_area_override};
+pub use device::{
+    Motion, dev_override, language_override, profile_override, quality_override, safe_area_override,
+    system_language,
+};
 #[cfg(target_arch = "wasm32")]
 pub use device::{web_fullscreen, web_lock_orientation, web_safe_area, web_touch};
 pub use steam::{SteamApi, connect as steam_connect};

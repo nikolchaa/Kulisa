@@ -5,18 +5,19 @@ local config = require("game/config")
 local style = require("ui/style")
 
 local ui = kulisa.ui
+local t = kulisa.t
 local c = config.colors
 
 ui.screen("main_menu", function()
     local nav = {
-        style.button("Start", actions.start, { size = style.size(40), id = "start", autofocus = true }),
-        style.button("Load", function()
+        style.button(t("Start"), actions.start, { size = style.size(40), id = "start", autofocus = true }),
+        style.button(t("Load"), function()
             actions.open_menu("load")
         end, { size = style.size(40) }),
-        style.button("Preferences", function()
+        style.button(t("Preferences"), function()
             actions.open_menu("prefs")
         end, { size = style.size(40) }),
-        kulisa.window.can_quit and style.button("Quit", actions.quit, { size = style.size(40) }),
+        kulisa.window.can_quit and style.button(t("Quit"), actions.quit, { size = style.size(40) }),
     }
     return ui.box({
         ui.box({
@@ -29,12 +30,12 @@ ui.screen("main_menu", function()
                 height = "fill",
                 margin = style.safe_padding(0),
                 gap = style.size(14),
-                style.label(`\{b}{config.title}\{/b}`, { size = style.size(64), color = c.paper }),
-                style.label(`Version {config.version}`, { size = style.size(24), color = c.haze }),
+                style.label(`\{b}{t(config.title)}\{/b}`, { size = style.size(64), color = c.paper }),
+                style.label(t("Version {version}", { version = config.version }), { size = style.size(24), color = c.haze }),
                 ui.spacer({ width = 1 }),
                 nav,
                 ui.spacer({ width = 1, height = style.size(40) }),
-                style.label(`Made with Kulisa {kulisa.version}`, { size = style.size(20), color = c.haze }),
+                style.label(t("Made with Kulisa {version}", { version = kulisa.version }), { size = style.size(20), color = c.haze }),
             }),
         }),
     })

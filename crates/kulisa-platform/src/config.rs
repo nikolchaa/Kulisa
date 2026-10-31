@@ -141,6 +141,9 @@ pub struct GameConfig {
     /// `xcrun notarytool store-credentials`).
     pub macos_identity: Option<String>,
     pub macos_notary_profile: Option<String>,
+    /// `[game] language` and `language_name`: what the game is written in.
+    pub source_language: String,
+    pub source_language_name: String,
     /// `[steam] app_id`: connect to Steam as this app on desktop.
     pub steam_app_id: Option<u32>,
     /// `[steam] sdk`: the Steamworks SDK folder builds copy the Steam library from, relative to
@@ -217,6 +220,8 @@ impl GameConfig {
             macos_bundle_id: raw.str("macos.bundle_id")?.map_or(ios_bundle_id, str::to_string),
             macos_identity: raw.str("macos.identity")?.map(str::to_string),
             macos_notary_profile: raw.str("macos.notary_profile")?.map(str::to_string),
+            source_language: raw.str("game.language")?.unwrap_or("en").to_string(),
+            source_language_name: raw.str("game.language_name")?.unwrap_or("English").to_string(),
             steam_app_id,
             steam_sdk: raw.str("steam.sdk")?.map(str::to_string),
             id,

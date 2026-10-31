@@ -9,6 +9,7 @@ local state = require("game/state")
 local style = require("ui/style")
 
 local ui = kulisa.ui
+local t = kulisa.t
 local c = config.colors
 
 -- Save/load page: 1-9, "auto" or "quick".
@@ -44,7 +45,7 @@ local function slots(mode: string)
         local on_click = function()
             if mode == "save" then
                 if info then
-                    actions.confirm("Overwrite this save?", function()
+                    actions.confirm(t("Overwrite this save?"), function()
                         actions.save(name)
                     end)
                 else
@@ -52,7 +53,7 @@ local function slots(mode: string)
                 end
             elseif info then
                 if state.started then
-                    actions.confirm("Loading will lose unsaved progress. Continue?", function()
+                    actions.confirm(t("Loading will lose unsaved progress. Continue?"), function()
                         actions.load(name)
                     end)
                 else
@@ -60,7 +61,7 @@ local function slots(mode: string)
                 end
             end
         end
-        local when = if info then os.date("%Y-%m-%d  %H:%M", info.timestamp) else "Empty slot"
+        local when = if info then os.date("%Y-%m-%d  %H:%M", info.timestamp) else t("Empty slot")
         table.insert(cards, style.card(on_click, {
             key = name,
             disabled = mode == "load" and info == nil or (mode == "save" and (p == "auto" or p == "quick")),
@@ -82,7 +83,7 @@ local function slots(mode: string)
     end
     local pages = {}
     for _, p2 in { "auto", "quick", 1, 2, 3, 4, 5, 6, 7, 8, 9 } do
-        local label = if p2 == "auto" then "A" elseif p2 == "quick" then "Q" else tostring(p2)
+        local label = if p2 == "auto" then t("A") elseif p2 == "quick" then t("Q") else tostring(p2)
         table.insert(pages, style.button(label, function()
             page:set(p2)
         end, { selected = p == p2, key = label, size = style.size(26) }))
@@ -113,20 +114,29 @@ local function preferences()
     prefs.changed()
     local left = {}
     if kulisa.platform ~= "android" and kulisa.platform ~= "ios" then
-        table.insert(left, style.heading("Display"))
-        table.insert(left, choice("Window", "fullscreen", false))
-        table.insert(left, choice("Fullscreen", "fullscreen", true))
+        table.insert(left, style.heading(t("Display")))
+        table.insert(left, choice(t("Window"), "fullscreen", false))
+        table.insert(left, choice(t("Fullscreen"), "fullscreen", true))
     end
     if kulisa.screen.touch then
-        table.insert(left, style.heading("Rollback side"))
-        table.insert(left, choice("Disable", "rollback_side", "disable"))
-        table.insert(left, choice("Left", "rollback_side", "left"))
-        table.insert(left, choice("Right", "rollback_side", "right"))
+        table.insert(left, style.heading(t("Rollback side")))
+        table.insert(left, choice(t("Disable"), "rollback_side", "disable"))
+        table.insert(left, choice(t("Left"), "rollback_side", "left"))
+        table.insert(left, choice(t("Right"), "rollback_side", "right"))
     end
-    table.insert(left, style.heading("Skip"))
-    table.insert(left, toggle("Unseen text", "skip_unseen"))
-    table.insert(left, toggle("After choices", "skip_after_choices"))
-    table.insert(left, toggle("Transitions", "transitions"))
+    local languages = kulisa.lang.list()
+    if #languages > 1 then
+        table.insert(left, style.heading(t("Language")))
+        for _, l in languages do
+            table.insert(left, style.option(l.name, kulisa.lang.current() == l.code, function()
+                kulisa.lang.set(l.code)
+            end))
+        end
+    end
+    table.insert(left, style.heading(t("Skip")))
+    table.insert(left, toggle(t("Unseen text"), "skip_unseen"))
+    table.insert(left, toggle(t("After choices"), "skip_after_choices"))
+    table.insert(left, toggle(t("Transitions"), "transitions"))
 
     local cps = prefs.get("cps")
     local speed = if cps == 0 then 150 else cps
@@ -146,23 +156,23 @@ local function preferences()
             gap = style.size(22),
             ui.column({
                 gap = style.size(6),
-                style.heading("Text speed"),
+                style.heading(t("Text speed")),
                 style.slider(speed, 10, 150, function(v)
                     prefs.set("cps", if v >= 150 then 0 else math.floor(v))
                 end, { step = 5 }),
             }),
             ui.column({
                 gap = style.size(6),
-                style.heading("Auto-forward time"),
+                style.heading(t("Auto-forward time")),
                 -- Faster to the right: the slider shows 4 - delay.
                 style.slider(4 - prefs.get("auto_delay"), 0, 3.5, function(v)
                     prefs.set("auto_delay", 4 - v)
                 end, { step = 0.1 }),
             }),
-            volume("Music volume", "music"),
-            volume("Sound volume", "sound"),
-            volume("Voice volume", "voice"),
-            toggle("Mute all", "mute"),
+            volume(t("Music volume"), "music"),
+            volume(t("Sound volume"), "sound"),
+            volume(t("Voice volume"), "voice"),
+            toggle(t("Mute all"), "mute"),
         }),
     })
 end
@@ -180,12 +190,12 @@ local function backlog()
         }))
     end
     if #items == 0 then
-        table.insert(items, style.label("The history is empty.", { color = c.haze }))
+        table.insert(items, style.label(t("The history is empty."), { color = c.haze }))
     end
     return ui.scroll({ width = "fill", height = "fill", start = "end", items })
 end
 
-local TITLES = { save = "Save", load = "Load", prefs = "Preferences", history = "History" }
+local TITLES = { save = "Save", load = "Load", prefs = "Preferences", history = t("History") }
 
 ui.screen("game_menu", function()
     local section = state.menu() or "save"
@@ -194,23 +204,23 @@ ui.screen("game_menu", function()
         table.insert(nav, style.button(label, f, { selected = selected, autofocus = selected, size = style.size(32) }))
     end
     if state.started then
-        item("History", function() actions.open_menu("history") end, section == "history")
-        item("Save", function() actions.open_menu("save") end, section == "save")
+        item(t("History"), function() actions.open_menu("history") end, section == "history")
+        item(t("Save"), function() actions.open_menu("save") end, section == "save")
     else
-        item("Start", function()
+        item(t("Start"), function()
             actions.close_menu()
             actions.start()
         end)
     end
-    item("Load", function() actions.open_menu("load") end, section == "load")
-    item("Preferences", function() actions.open_menu("prefs") end, section == "prefs")
+    item(t("Load"), function() actions.open_menu("load") end, section == "load")
+    item(t("Preferences"), function() actions.open_menu("prefs") end, section == "prefs")
     if state.started then
-        item("Main Menu", function()
-            actions.confirm("Return to the main menu? Unsaved progress is lost.", actions.main_menu)
+        item(t("Main Menu"), function()
+            actions.confirm(t("Return to the main menu? Unsaved progress is lost."), actions.main_menu)
         end)
     end
     if kulisa.window.can_quit then
-        item("Quit", actions.quit)
+        item(t("Quit"), actions.quit)
     end
     local content
     if section == "save" or section == "load" then
@@ -231,17 +241,17 @@ ui.screen("game_menu", function()
                 width = style.size(300),
                 height = "fill",
                 gap = style.size(12),
-                style.label(`\{b}{config.title}\{/b}`, { size = style.size(40), color = c.accent }),
+                style.label(`\{b}{t(config.title)}\{/b}`, { size = style.size(40), color = c.accent }),
                 ui.spacer({ height = style.size(30), width = 1 }),
                 nav,
                 ui.spacer({ width = 1 }),
-                style.button("Return", actions.close_menu, { size = style.size(32) }),
+                style.button(t("Return"), actions.close_menu, { size = style.size(32) }),
             }),
             ui.column({
                 width = "fill",
                 height = "fill",
                 gap = style.size(24),
-                style.label(`\{b}{TITLES[section]}\{/b}`, { size = style.size(44) }),
+                style.label(`\{b}{t(TITLES[section])}\{/b}`, { size = style.size(44) }),
                 content,
             }),
         }),

@@ -1145,6 +1145,125 @@ fn timers_report_what_engine_calls_got_wrong() {
     assert!(errors.iter().all(|e| !e.contains("error in error handling")), "{errors:?}");
 }
 
+const LANG_STORY: &str = r#"
+define kitty = Character("Kitty")
+default name = "Pat"
+
+label start:
+    kitty "Hello [name]."
+    "Narration."
+    menu:
+        "Stay"
+        "Well?":
+            "Yes."
+        "Other":
+            pass
+"#;
+
+const LANG_FILE: &str = "language = Srpski\n\n@kitty\nHello [name].\n= Zdravo [name].\n\nWell?\n= Dakle?\n\nStart\n= Pocni\n\nPage {n}\n= Strana {n}\n";
+
+#[test]
+fn stories_and_screens_switch_language_at_once() {
+    let id = format!("kulisa_test_lang_{}", std::process::id());
+    let toml = format!("[game]\nid = \"{id}\"\nlanguage_name = \"Own\"\n");
+    let main = r#"
+        kulisa.display(64, 64, "fit")
+        events = {}
+        languages = {}
+        kulisa.on("say", function(line) table.insert(events, "say:" .. line.text) end)
+        kulisa.on("menu", function(items) table.insert(events, "menu:" .. items[1].text) end)
+        kulisa.on("language", function(code) table.insert(languages, code) end)
+        kulisa.lang.set("en")
+        kulisa.story.load()
+        kulisa.story.start()
+    "#;
+    let g = game!("main.luau" => main, "story/s.kulisa" => LANG_STORY, "lang/sr.txt" => LANG_FILE,
+        "kulisa.toml" => toml.as_str());
+    assert_eq!(events(&g), ["say:Hello Pat."]);
+
+    let list: Vec<(String, String)> = g
+        .eval::<mlua::Table>("t", "return kulisa.lang.list()")
+        .unwrap()
+        .sequence_values::<mlua::Table>()
+        .map(|t| {
+            let t = t.unwrap();
+            (t.get("code").unwrap(), t.get("name").unwrap())
+        })
+        .collect();
+    assert_eq!(list, [("en".to_string(), "Own".to_string()), ("sr".to_string(), "Srpski".to_string())]);
+
+    // The line on screen follows at once, with its expression evaluated, without moving on.
+    g.eval::<()>("t", "kulisa.lang.set('sr')").unwrap();
+    assert_eq!(events(&g), ["say:Zdravo Pat."]);
+    assert_eq!(g.eval::<String>("t", "return kulisa.lang.current()").unwrap(), "sr");
+    assert_eq!(g.eval::<Vec<String>>("t", "return languages").unwrap(), ["en", "sr"]);
+    assert_eq!(g.eval::<String>("t", "return kulisa.t('Start')").unwrap(), "Pocni");
+    assert_eq!(g.eval::<String>("t", "return kulisa.t('Page {n}', { n = 3 })").unwrap(), "Strana 3");
+    assert_eq!(
+        g.eval::<String>("t", "return kulisa.t('Not in the file {x}', { x = 'y' })").unwrap(),
+        "Not in the file y"
+    );
+
+    // Untranslated text shows the original; menus translate too, including when re-shown.
+    g.eval::<bool>("t", "return kulisa.story.next()").unwrap();
+    assert_eq!(events(&g), ["say:Narration."]);
+    g.eval::<bool>("t", "return kulisa.story.next()").unwrap();
+    assert_eq!(events(&g), ["menu:Dakle?"]);
+    g.eval::<()>("t", "kulisa.lang.set('en')").unwrap();
+    assert_eq!(events(&g), ["menu:Well?"]);
+    g.eval::<()>("t", "kulisa.lang.set('sr')").unwrap();
+    assert_eq!(events(&g), ["menu:Dakle?"]);
+
+    // Saves are not tied to a language: rollback restores the line in the current one.
+    assert!(g.eval::<bool>("t", "return kulisa.story.rollback()").unwrap());
+    assert_eq!(events(&g), ["say:Narration."]);
+    assert!(g.eval::<bool>("t", "return kulisa.story.rollback()").unwrap());
+    assert_eq!(events(&g), ["say:Zdravo Pat."]);
+
+    let err = g.eval::<()>("t", "kulisa.lang.set('xx')").unwrap_err();
+    assert!(err.contains("no language `xx`") && err.contains("sr"), "{err}");
+
+    // The choice is remembered for the next start.
+    let again = "kulisa.display(64, 64, 'fit')";
+    let g2 = game!("main.luau" => again, "story/s.kulisa" => LANG_STORY, "lang/sr.txt" => LANG_FILE,
+        "kulisa.toml" => toml.as_str());
+    assert_eq!(g2.eval::<String>("t", "return kulisa.lang.current()").unwrap(), "sr");
+    if let Ok(dir) = kulisa_platform::data_dir(&id) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+#[test]
+fn broken_language_files_name_their_line() {
+    let main = "kulisa.display(64, 64, 'fit')";
+    let Some(r) = renderer() else { return };
+    let dir = folder(&[("main.luau", main.as_bytes()), ("lang/sr.txt", b"= orphan\n")]);
+    let g = Game::start(Assets::dir(dir), r, Default::default(), true);
+    let errors = g.shown_errors();
+    assert!(errors.iter().any(|e| e.contains("lang/sr.txt:1:1")), "{errors:?}");
+
+    // Bad expressions in translated text stop the story load, pointing into the file.
+    let main = "kulisa.display(64, 64, 'fit')\nok, message = pcall(kulisa.story.load)";
+    let story = "label start:\n    \"Hi.\"\n";
+    let g =
+        game!("main.luau" => main, "story/s.kulisa" => story, "lang/sr.txt" => "Hi.\n= Zdravo [unclosed\n");
+    let (ok, message): (bool, String) = g.eval("t", "return ok, tostring(message)").unwrap();
+    assert!(!ok && message.contains("lang/sr.txt:2"), "{message}");
+
+    // Interface text is not story text: brackets in it are just brackets.
+    let lang = "Hi.
+= Zdravo.
+
+See [the map]
+= Vidi [mapu
+";
+    let main = "kulisa.display(64, 64, 'fit')
+kulisa.story.load()
+kulisa.lang.set('sr')";
+    let g = game!("main.luau" => main, "story/s.kulisa" => story, "lang/sr.txt" => lang);
+    assert_eq!(g.eval::<String>("t", "return kulisa.t('See [the map]')").unwrap(), "Vidi [mapu");
+}
+
 /// Steam without a Steam client: records calls and knows one achievement and one stat.
 #[derive(Default)]
 struct FakeSteam {
