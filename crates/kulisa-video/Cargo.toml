@@ -27,9 +27,10 @@ objc2-foundation = { version = "0.2", features = ["NSArray", "NSString", "NSURL"
 wasm-bindgen.workspace = true
 web-sys = { version = "0.3", features = ["Document", "Element", "HtmlMediaElement", "HtmlVideoElement", "MediaError", "Window"] }
 
-# Linux has no decoder every system is sure to have, so builds convert videos for this one.
+# Linux has no decoder every system is sure to have, so builds convert videos for this one. Its
+# assembly only links with both bit depths, though conversions are all 8-bit.
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
-rav1d = { version = "1.1", default-features = false, features = ["asm", "bitdepth_8"] }
+rav1d = { version = "1.1", default-features = false, features = ["asm", "bitdepth_8", "bitdepth_16"] }
 symphonia = { version = "0.6", default-features = false, features = ["ogg", "vorbis"] }
 
 # The Linux decoder is tested everywhere it builds, without its assembly (which needs nasm).
