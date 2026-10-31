@@ -79,6 +79,12 @@ kulisa.on("say", function(line)
         local t = data.thread(id, if who.me then nil else who)
         local last = t.messages[#t.messages]
         local from = if who.me then "me" else "them"
+        if line.replay and last and last.from == from then
+            -- A language switch shows the current line again: no new message, no sound.
+            last.text = text
+            data.changed()
+            return
+        end
         if restoring and last and last.text == text and last.from == from then
             -- After a load the current line comes again; it is already in the thread.
             restoring = false
@@ -116,7 +122,7 @@ end
 
 kulisa.on("menu", function(items, caption)
     if caption then
-        shell.caption(caption.text, caption.who and caption.who.name)
+        shell.caption(caption.text, caption.who and kulisa.t(caption.who.name))
     end
     if last_chat and bridge.thread then
         bridge.replies:set({ thread = bridge.thread, items = items })

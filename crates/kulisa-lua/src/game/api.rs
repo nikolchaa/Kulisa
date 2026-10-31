@@ -1947,6 +1947,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     super::sensors::install(lua, &k)?;
     super::steam::install(lua, &k)?;
     super::lang::install(lua, &k)?;
+    super::speech::install(lua, &k)?;
     k.set("input", input)?;
     super::interact::install(lua, &k)?;
 

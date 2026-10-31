@@ -6,6 +6,7 @@ local config = require("game/config")
 local history = require("game/history")
 local prefs = require("game/prefs")
 local state = require("game/state")
+local voice = require("game/voice")
 local style = require("ui/style")
 
 local ui = kulisa.ui
@@ -133,6 +134,11 @@ local function preferences()
             end))
         end
     end
+    table.insert(left, style.heading(t("Accessibility")))
+    if kulisa.speech.available() then
+        table.insert(left, style.option(t("Self-voicing (V)"), prefs.get("self_voicing"), voice.toggle))
+    end
+    table.insert(left, toggle(t("Solid text box"), "solid_box"))
     table.insert(left, style.heading(t("Skip")))
     table.insert(left, toggle(t("Unseen text"), "skip_unseen"))
     table.insert(left, toggle(t("After choices"), "skip_after_choices"))
@@ -154,6 +160,13 @@ local function preferences()
         ui.column({ gap = style.size(8), left }),
         ui.column({
             gap = style.size(22),
+            ui.column({
+                gap = style.size(6),
+                style.heading(t("Text size")),
+                style.slider(prefs.get("text_scale"), 1, 1.6, function(v)
+                    prefs.set("text_scale", v)
+                end, { step = 0.1 }),
+            }),
             ui.column({
                 gap = style.size(6),
                 style.heading(t("Text speed")),
@@ -186,7 +199,7 @@ local function backlog()
             gap = style.size(4),
             padding = { style.size(10), 0 },
             e.name and style.label(`\{b}{e.name}\{/b}`, { size = style.size(26), color = e.color or c.paper }),
-            style.label(e.text, { size = style.size(28), color = c.paper, width = "fill" }),
+            style.label(e.text, { size = style.size(28) * prefs.get("text_scale"), color = c.paper, width = "fill" }),
         }))
     end
     if #items == 0 then

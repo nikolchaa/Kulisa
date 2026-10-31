@@ -105,6 +105,19 @@ impl<N: Default> Ui<N> {
         Some((self.screens[i].name.clone(), w.el.id.clone()))
     }
 
+    /// The text of the focused widget: its own, or the first inside it.
+    pub fn focused_text(&self) -> Option<&str> {
+        fn first<N>(w: &Widget<N>) -> Option<&str> {
+            w.el.text.as_ref().map(|t| t.markup.as_str()).or_else(|| w.children.iter().find_map(first))
+        }
+        let (i, path) = self.focus_target()?;
+        let mut w = self.screens[i].root.as_ref()?;
+        for &k in &path {
+            w = &w.children[k];
+        }
+        first(w)
+    }
+
     /// Drops the focus everywhere.
     pub fn clear_focus(&mut self) {
         for s in &mut self.screens {

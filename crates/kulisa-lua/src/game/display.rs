@@ -92,6 +92,8 @@ pub struct Device {
     pub sensors: bool,
     /// The platform can vibrate (or has a gamepad to rumble).
     pub haptics: bool,
+    /// The system can read text aloud.
+    pub speech: bool,
 }
 
 /// Things scripts asked for that the runtime does (see [`crate::Game::take_requests`]).

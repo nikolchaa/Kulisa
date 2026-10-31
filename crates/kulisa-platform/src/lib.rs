@@ -8,6 +8,8 @@ mod storage;
 #[cfg(target_arch = "wasm32")]
 mod web_motion;
 #[cfg(target_arch = "wasm32")]
+mod web_speech;
+#[cfg(target_arch = "wasm32")]
 mod web_text;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,6 +32,8 @@ pub use storage::data_dir;
 pub use storage::set_android_data_dir;
 #[cfg(target_arch = "wasm32")]
 pub use web_motion::{web_motion, web_motion_start, web_motion_stop, web_vibrate};
+#[cfg(target_arch = "wasm32")]
+pub use web_speech::{web_speak, web_speech_available, web_speech_stop};
 #[cfg(target_arch = "wasm32")]
 pub use web_text::{TextEvent, web_keyboard_inset, web_text_events, web_text_focus};
 

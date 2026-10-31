@@ -18,6 +18,7 @@ mod pointer;
 mod quality;
 mod reload;
 mod sensors;
+mod speech;
 mod steam;
 mod typing;
 mod ui;
@@ -38,6 +39,7 @@ use mlua::{Function, IntoLuaMulti, Lua, Table, Value as LuaValue};
 
 use crate::story::{StoryHost, from_value};
 pub use display::{Device, FormFactor, Orientation, Requests};
+pub use speech::SpeechRequest;
 
 const PRELUDE: &str = include_str!("prelude.luau");
 
@@ -135,6 +137,7 @@ pub(crate) struct State {
     pub sensors: sensors::Sensors,
     pub steam: Option<Box<dyn kulisa_platform::SteamApi>>,
     pub lang: lang::Lang,
+    pub speech: Vec<speech::SpeechRequest>,
     pub config: GameConfig,
     pub errors: errors::ErrorView,
     /// A development reload was asked for (Shift+R); the runtime picks it up.
@@ -399,9 +402,16 @@ fn dispatch(lua: &Lua, shared: &Shared, events: Vec<Event>, seen: &Seen) -> mlua
             story_freeze(shared, false);
         }
         match ev {
-            Event::Say(line) => emit(shared, "say", line_table(lua, &line, seen.line)?),
+            Event::Say(line) => {
+                let t = line_table(lua, &line, seen.line)?;
+                t.set("replay", shared.borrow().lang.replaying)?;
+                emit(shared, "say", t);
+            }
             Event::Menu { caption, items } => {
                 let caption = caption.map(|c| line_table(lua, &c, seen.line)).transpose()?;
+                if let Some(c) = &caption {
+                    c.set("replay", shared.borrow().lang.replaying)?;
+                }
                 let list = lua.create_table()?;
                 for item in items {
                     let t = lua.create_table()?;
@@ -598,6 +608,7 @@ impl Game {
             sensors: Default::default(),
             steam: None,
             lang: Default::default(),
+            speech: Vec::new(),
             config,
             errors: Default::default(),
             reload_requested: false,

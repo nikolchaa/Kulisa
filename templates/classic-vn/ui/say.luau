@@ -14,6 +14,7 @@ local c = config.colors
 ui.screen("say", function(props)
     local line = props and props.line or state.line
     prefs.changed()
+    local scale = prefs.get("text_scale")
     local shown = state.window() and not state.hidden() and line ~= nil
     -- During a transition the box stays up but the next line waits for it, as in Ren'Py.
     local busy = state.busy()
@@ -26,11 +27,12 @@ ui.screen("say", function(props)
             anchor = "bottom",
             width = "88%",
             max_width = config.display.width * 0.88,
-            height = style.size(250),
+            -- Bigger text gets a taller box, so long lines still fit.
+            height = style.size(250) * scale,
             y = -style.size(62),
-            background = "gui/textbox.png",
-            slice = 20,
-            slice_scale = style.design,
+            background = if prefs.get("solid_box") then c.ink else "gui/textbox.png",
+            slice = if prefs.get("solid_box") then nil else 20,
+            slice_scale = if prefs.get("solid_box") then nil else style.design,
             padding = { style.size(34), style.size(48) },
             name and ui.box({
                 x = 0,
@@ -47,7 +49,7 @@ ui.screen("say", function(props)
                 key = tostring(line and line.n or 0),
                 text = line and line.text or "",
                 width = "fill",
-                size = style.size(config.text.size),
+                size = style.size(config.text.size) * scale,
                 line_height = config.text.line_height,
                 font = config.font,
                 color = c.paper,

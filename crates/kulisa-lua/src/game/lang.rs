@@ -21,6 +21,8 @@ pub(crate) struct Lang {
     /// The translation in use; `None` is the game's own language.
     pub current: Option<String>,
     fonts: HashSet<String>,
+    /// The story is showing its current line again, in the new language.
+    pub replaying: bool,
 }
 
 impl Lang {
@@ -212,7 +214,10 @@ pub(super) fn install(lua: &Lua, k: &Table) -> mlua::Result<()> {
                     Ok(matches!(s.waiting, Waiting::Line | Waiting::Menu) && s.vm.reshow())
                 }))?;
                 if reshow {
-                    rt(story_restored(lua, &sh))?;
+                    sh.borrow_mut().lang.replaying = true;
+                    let shown = story_restored(lua, &sh);
+                    sh.borrow_mut().lang.replaying = false;
+                    rt(shown)?;
                 }
             }
             emit(&sh, "language", code);

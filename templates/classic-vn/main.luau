@@ -22,6 +22,7 @@ kulisa.screen.clear = config.colors.ink
 local actions = require("game/actions")
 local flow = require("game/flow")
 local prefs = require("game/prefs")
+local voice = require("game/voice")
 local stage = require("game/stage")
 local state = require("game/state")
 require("ui/say")
@@ -112,6 +113,10 @@ end)
 kulisa.on("key", function(key)
     if key == "escape" or key == "back" then
         actions.toggle_menu("save")
+        return
+    end
+    if key == "v" then
+        voice.toggle()
         return
     end
     if not playing() then

@@ -56,6 +56,7 @@ export default defineConfig({
 						{ label: 'Stage and sound', slug: 'story/stage' },
 						{ label: 'Saves and updates', slug: 'story/saves' },
 						{ label: 'Translations', slug: 'story/translations' },
+						{ label: 'Accessibility', slug: 'story/accessibility' },
 						{ label: 'Errors', slug: 'story/errors' },
 						{ label: 'Cheat sheet', slug: 'story/cheat-sheet' },
 					],

@@ -23,6 +23,12 @@ ui.screen("quick", function()
             anchor = "bottom",
             y = -style.size(2),
             gap = style.size(22),
+            -- Readable over any scene.
+            background = "gui/round.png",
+            slice = 16,
+            slice_scale = style.design,
+            tint = "#111116b8",
+            padding = { style.size(4), style.size(16) },
             config.rollback and b(t("Back"), flow.rollback, { disabled = not kulisa.story.can_rollback() }),
             b(t("History"), function()
                 actions.open_menu("history")

@@ -87,6 +87,9 @@ config.prefs = {
     voice = 1.0,
     mute = false,
     fullscreen = false,
+    self_voicing = false,
+    text_scale = 1, -- dialogue text size
+    solid_box = false, -- an opaque text box, for contrast
 }
 
 return config

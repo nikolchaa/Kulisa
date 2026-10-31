@@ -9,6 +9,7 @@ mod gamepad;
 #[cfg(target_os = "ios")]
 mod ios;
 mod sensors;
+mod speech;
 #[cfg(not(any(target_os = "android", target_os = "ios", target_arch = "wasm32")))]
 mod watch;
 #[cfg(target_arch = "wasm32")]
@@ -51,6 +52,7 @@ struct App {
     game: Option<Game>,
     pads: gamepad::Pads,
     sensors: sensors::Sensors,
+    speech: speech::Speech,
     /// The on-screen keyboard's height in window pixels, as last read.
     keyboard: f32,
     last_frame: Instant,
@@ -127,6 +129,7 @@ fn device(w: &Window) -> Device {
         can_quit: !mobile && !cfg!(target_arch = "wasm32"),
         sensors: sensors::available(touch),
         haptics: mobile || cfg!(target_arch = "wasm32"),
+        speech: speech::available(),
     }
 }
 
@@ -192,6 +195,7 @@ impl App {
             game: None,
             pads: gamepad::Pads::new(),
             sensors: sensors::Sensors::new(),
+            speech: Default::default(),
             keyboard: 0.0,
             last_frame: Instant::now(),
             files: None,
@@ -255,6 +259,8 @@ impl App {
         if let Some(on) = game.take_sensor_request() {
             self.sensors.set(on);
         }
+        self.speech.apply(game.take_speech());
+        self.speech.poll();
         for (strength, secs) in game.take_haptics() {
             #[cfg(target_os = "android")]
             android::vibrate(&self.android, strength, secs);
@@ -777,6 +783,7 @@ pub fn run() {
 /// `assets/game.kpak`.
 #[cfg(target_os = "android")]
 pub fn run_android(app: AndroidApp) {
+    android::set_app(&app);
     use std::io::Read;
     use winit::platform::android::EventLoopBuilderExtAndroid;
     kulisa_platform::init_logging();

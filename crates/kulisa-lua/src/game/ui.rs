@@ -1069,6 +1069,13 @@ pub(crate) fn api(lua: &Lua) -> mlua::Result<Table> {
             })
         })?,
     )?;
+    // focused_text() -> what the focused widget says, without markup: for reading menus aloud.
+    t.set(
+        "focused_text",
+        lua.create_function(|lua, ()| {
+            with(lua, |st| Ok(st.ui.ui.focused_text().map(super::speech::plain_text)))
+        })?,
+    )?;
     t.set(
         "unfocus",
         lua.create_function(|lua, ()| {

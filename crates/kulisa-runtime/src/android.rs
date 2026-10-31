@@ -1,4 +1,4 @@
-//! Android activity calls through JNI: orientation lock and system-bar insets.
+//! Android activity calls through JNI: orientation lock, system-bar insets, text to speech.
 
 use std::ffi::{CStr, c_void};
 
@@ -196,6 +196,131 @@ impl Env {
             self.drop_ref(c);
             (!self.failed() && !r.is_null()).then_some(r)
         }
+    }
+}
+
+/// The system's text to speech, kept across frames.
+pub struct Tts(jobject);
+
+static APP: std::sync::OnceLock<AndroidApp> = std::sync::OnceLock::new();
+
+/// Remembers the app for what runs outside the event loop's calls.
+pub fn set_app(app: &AndroidApp) {
+    let _ = APP.set(app.clone());
+}
+
+pub fn app() -> Option<AndroidApp> {
+    APP.get().cloned()
+}
+
+impl Env {
+    /// `new class(args)`, as a local reference.
+    fn new_object(&self, class: &CStr, sig: &CStr, args: &[jvalue]) -> Option<jobject> {
+        // SAFETY: names are valid C strings, `args` match `sig` and references are freed.
+        unsafe {
+            let e = &**self.env;
+            let c = (e.FindClass?)(self.env, class.as_ptr());
+            if self.failed() || c.is_null() {
+                return None;
+            }
+            let m = (e.GetMethodID?)(self.env, c, c"<init>".as_ptr(), sig.as_ptr());
+            if self.failed() || m.is_null() {
+                self.drop_ref(c);
+                return None;
+            }
+            let r = (e.NewObjectA?)(self.env, c, m, args.as_ptr());
+            self.drop_ref(c);
+            (!self.failed() && !r.is_null()).then_some(r)
+        }
+    }
+
+    fn call_int_args(&self, obj: jobject, name: &CStr, sig: &CStr, args: &[jvalue]) -> Option<jint> {
+        let (class, m) = self.method(obj, name, sig)?;
+        // SAFETY: `m` belongs to `obj`'s class and `args` match `sig`.
+        let r = unsafe { ((**self.env).CallIntMethodA?)(self.env, obj, m, args.as_ptr()) };
+        self.drop_ref(class);
+        (!self.failed()).then_some(r)
+    }
+
+    fn java_string(&self, s: &str) -> Option<jobject> {
+        let c = std::ffi::CString::new(s.replace('\0', " ")).ok()?;
+        self.new_string(&c)
+    }
+}
+
+/// Starts the service; it connects a moment later, and `tts_say` fails until it has.
+pub fn tts_create(app: &AndroidApp) -> Option<Tts> {
+    let env = Env::attach(app)?;
+    let activity = app.activity_as_ptr() as jobject;
+    let local = env.new_object(
+        c"android/speech/tts/TextToSpeech",
+        c"(Landroid/content/Context;Landroid/speech/tts/TextToSpeech$OnInitListener;)V",
+        &[jvalue { l: activity }, jvalue { l: std::ptr::null_mut() }],
+    )?;
+    // SAFETY: `local` is a live local reference; the global one stays for the process.
+    let global = unsafe { ((**env.env).NewGlobalRef?)(env.env, local) };
+    env.drop_ref(local);
+    (!global.is_null()).then_some(Tts(global))
+}
+
+/// Speaks; `false` means the service is not ready yet.
+pub fn tts_say(
+    app: &AndroidApp,
+    tts: &Tts,
+    text: &str,
+    language: &str,
+    interrupt: bool,
+    volume: f32,
+) -> bool {
+    let Some(env) = Env::attach(app) else { return false };
+    if let Some(tag) = env.java_string(language) {
+        let locale = env.static_object(
+            c"java/util/Locale",
+            c"forLanguageTag",
+            c"(Ljava/lang/String;)Ljava/util/Locale;",
+            &[jvalue { l: tag }],
+        );
+        if let Some(locale) = locale {
+            env.call_int_args(tts.0, c"setLanguage", c"(Ljava/util/Locale;)I", &[jvalue { l: locale }]);
+            env.drop_ref(locale);
+        }
+        env.drop_ref(tag);
+    }
+    let Some(bundle) = env.new_object(c"android/os/Bundle", c"()V", &[]) else { return false };
+    if let Some(key) = env.new_string(c"volume") {
+        env.call_void(
+            bundle,
+            c"putFloat",
+            c"(Ljava/lang/String;F)V",
+            &[jvalue { l: key }, jvalue { f: volume }],
+        );
+        env.drop_ref(key);
+    }
+    let (Some(chars), Some(id)) = (env.java_string(text), env.new_string(c"kulisa")) else {
+        env.drop_ref(bundle);
+        return false;
+    };
+    // QUEUE_FLUSH is 0, QUEUE_ADD is 1. Anything but SUCCESS (0) means not ready.
+    let result = env.call_int_args(
+        tts.0,
+        c"speak",
+        c"(Ljava/lang/CharSequence;ILandroid/os/Bundle;Ljava/lang/String;)I",
+        &[
+            jvalue { l: chars },
+            jvalue { i: if interrupt { 0 } else { 1 } },
+            jvalue { l: bundle },
+            jvalue { l: id },
+        ],
+    );
+    env.drop_ref(id);
+    env.drop_ref(chars);
+    env.drop_ref(bundle);
+    result == Some(0)
+}
+
+pub fn tts_stop(app: &AndroidApp, tts: &Tts) {
+    if let Some(env) = Env::attach(app) {
+        env.call_int(tts.0, c"stop");
     }
 }
 

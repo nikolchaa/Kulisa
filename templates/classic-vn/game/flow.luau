@@ -11,6 +11,7 @@
 local config = require("game/config")
 local history = require("game/history")
 local prefs = require("game/prefs")
+local voice = require("game/voice")
 local state = require("game/state")
 
 local flow = {}
@@ -40,7 +41,23 @@ function flow.toggle(mode: string)
 end
 
 -- The story ran into a line.
+-- An alt line just spoke: what follows waits for it.
+local voice_queue = false
+
 function flow.say(line)
+    -- Lines only self-voicing players hear (`Character(nil, { alt = true })`).
+    if line.who and line.who.alt then
+        if voice.on() then
+            voice.line(line, voice_queue)
+            voice_queue = true
+        end
+        kulisa.after(0, function()
+            kulisa.story.next()
+        end)
+        return
+    end
+    voice.line(line, voice_queue)
+    voice_queue = false
     state.count += 1
     history.add(line)
     state.line = { who = line.who, text = line.text, seen = line.seen, n = state.count }
@@ -67,6 +84,8 @@ function flow.menu(items, caption)
     if caption then
         flow.say(caption)
     end
+    voice.menu(items, caption ~= nil or voice_queue)
+    voice_queue = false
     state.choices = { items = items }
     state.instant = false
     if config.autosave and state.started then

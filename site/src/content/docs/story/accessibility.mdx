@@ -1,0 +1,42 @@
+---
+title: Accessibility
+description: Self-voicing, text size and keyboard play for your game's players.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+The `classic-vn` template comes with these. Players find them under **Preferences → Accessibility**.
+
+- **Self-voicing** reads lines, choices and the button in focus aloud, with the voice the player's
+  system already has. Press **V** to turn it on or off at any time.
+- **Text size** makes dialogue and the history larger, and the text box grows to fit.
+- **Solid text box** puts text on an opaque background, for contrast.
+- **Keyboard or gamepad only**: every menu and choice can be reached without a pointer.
+
+## Describe what is on screen
+
+Self-voicing players cannot see your art. Add lines only they hear with a character that has
+`alt` set:
+
+```kulisa
+define alt = Character(nil, { alt = true })
+
+label start:
+    scene bg kitchen
+    alt "A sunlit kitchen. A white kitten sits on the counter."
+    "Afternoon sun had found the kitchen counter."
+```
+
+Everyone else never sees those lines, and they do not stop the story.
+
+## Your own screens
+
+Other templates and your own interfaces can use the same parts: `kulisa.speech.say(text)` reads
+text aloud, and `kulisa.ui.focused_text()` says what the focused widget shows. See the
+[API reference](https://github.com/nikolchaa/Kulisa/blob/main/docs/API.md#speech).
+
+<Aside type="caution" title="Not done yet">
+- Screen readers like NVDA or VoiceOver cannot see the interface; self-voicing takes their place.
+- Windows speaks with the system's default voice, whatever the game's language.
+- On Linux, self-voicing needs speech-dispatcher installed.
+</Aside>

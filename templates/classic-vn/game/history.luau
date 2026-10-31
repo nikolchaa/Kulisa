@@ -14,11 +14,17 @@ end
 
 function history.add(line)
     local who = line.who
-    table.insert(entries, {
+    local entry = {
         name = who and kulisa.t(who.name or who.id) or nil,
         color = who and who.color or nil,
         text = line.text,
-    })
+    }
+    -- A language switch shows the current line again: it replaces its old self.
+    if line.replay and #entries > 0 then
+        entries[#entries] = entry
+    else
+        table.insert(entries, entry)
+    end
     while #entries > config.history_size do
         table.remove(entries, 1)
     end

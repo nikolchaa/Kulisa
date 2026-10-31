@@ -445,6 +445,13 @@ up again. `kulisa.t` looks up interface text; screens rebuild on a switch. The s
 is the forced one (`KULISA_LANG`, `?lang=`), the player's choice (`settings/language`), Steam's,
 then the system's. A language can name a font, loaded the first time it is used.
 
+### Speech and accessibility
+
+`kulisa.speech` hands requests to the runtime (`SpeechRequest`, `runtime/src/speech.rs`), which uses
+the system's voice on each platform: nothing to bundle, and players keep the voice they know.
+Templates decide what to read: classic-vn reads lines, choices and the focused widget
+(`game/voice.luau`, V), and `{ alt = true }` characters are heard only while self-voicing.
+
 ### Positions that survive updates
 
 A frame is saved as `(label, statement index, statement hash, resume_after)`.
@@ -986,3 +993,4 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
 | 2026-10-31 | Store packaging: API 36 with `appCategory="game"` and predictive back off, App Bundles through bundletool without Gradle, passwords read from the environment by name so they reach no command line or log, signing keys never packed. macOS `.app` and App Store `.ipa` keep the no-Xcode-project approach (`actool`, `codesign`, `notarytool`). |
 | 2026-10-31 | Steam loads `steam_api` at startup through its flat C API instead of linking the `steamworks` crate: games without Steam need nothing, the repository holds none of Valve's files, and prebuilt players stay possible. Interfaces are found by trying versions. Cloud saves are Auto-Cloud on the data folder, which needs no code. |
 | 2026-10-31 | Translations are found by source text (with an optional speaker), not by statement, so moving lines keeps them and saves are untouched; two identical lines by one speaker share a translation. Plain text files instead of generated script files, so translators need no tools. Text inside tables built at startup is marked with `kulisa.lang.mark` and translated when drawn. |
+| 2026-10-31 | Accessibility is self-voicing through each system's own speech, as in Ren'Py, with what to read left to templates. A real screen reader tree (AccessKit) would serve desktop and mobile readers better but needs the UI exposed as a semantic tree; left for later. |

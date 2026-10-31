@@ -449,9 +449,22 @@ it from the game's text, and the story's lines, menus and character names need n
 - `kulisa.lang.list()` → `{ { code, name }, ... }`, the game's own language first (`[game] language`
   and `language_name`, default `en`, `English`).
 - `kulisa.lang.current()` → the code. `kulisa.lang.set(code)` switches now, including the line on
-  screen and every shown screen, remembers the choice and fires the `language` event.
+  screen and every shown screen, remembers the choice and fires the `language` event. The story
+  sends its current line again, with `replay = true`: games that keep a log replace the last entry.
 - The first start follows Steam's language, then the system's. `KULISA_LANG` (web: `?lang=`)
   forces one for testing.
+
+## Speech
+
+Reads text aloud with the voice the system already has, for self-voicing and the like.
+
+- `kulisa.speech.available()` → whether this system can. Linux needs speech-dispatcher (`spd-say`).
+- `kulisa.speech.say(text, { interrupt = true, volume = 1, language = current })`. Markup is left
+  out. With `interrupt = false` it waits for what is being said. `language` picks the voice where
+  the platform can (not on Windows, which uses the system's default voice).
+- `kulisa.speech.stop()`.
+- `kulisa.ui.focused_text()` → what the focused widget says, without markup, so menus can be read
+  out as the keyboard or gamepad moves through them.
 
 ## Steam
 

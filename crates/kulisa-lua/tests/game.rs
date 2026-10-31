@@ -1264,6 +1264,82 @@ kulisa.lang.set('sr')";
     assert_eq!(g.eval::<String>("t", "return kulisa.t('See [the map]')").unwrap(), "Vidi [mapu");
 }
 
+#[test]
+fn speech_goes_through_the_runtime_without_markup() {
+    use kulisa_lua::SpeechRequest::{Say, Stop};
+    let Some(r) = renderer() else { return };
+    let dir = folder(&[("main.luau", b"kulisa.display(64, 64, 'fit')")]);
+    let device = kulisa_lua::Device { speech: true, ..Default::default() };
+    let mut g = Game::with_device(Assets::dir(dir), r, device).unwrap_or_else(|e| panic!("{e}"));
+
+    assert!(g.eval::<bool>("t", "return kulisa.speech.available()").unwrap());
+    g.eval::<()>("t", "kulisa.speech.say('{b}Hi{/b} there'); kulisa.speech.say('   ')").unwrap();
+    g.eval::<()>("t", "kulisa.speech.say('Next', { interrupt = false, volume = 2, language = 'ja' })")
+        .unwrap();
+    assert_eq!(
+        g.take_speech(),
+        [
+            Say { text: "Hi there".into(), language: "en".into(), interrupt: true, volume: 1.0 },
+            Say { text: "Next".into(), language: "ja".into(), interrupt: false, volume: 1.0 },
+        ]
+    );
+    assert!(g.take_speech().is_empty(), "handed over once");
+    // Stopping drops what has not been said yet, and a script cannot flood the queue.
+    g.eval::<()>("t", "kulisa.speech.say('Gone'); kulisa.speech.stop()").unwrap();
+    assert_eq!(g.take_speech(), [Stop]);
+    g.eval::<()>("t", "for i = 1, 100 do kulisa.speech.say('x') end").unwrap();
+    assert_eq!(g.take_speech().len(), 32);
+}
+
+#[test]
+fn the_focused_widget_can_be_read_aloud() {
+    let mut g = game!("font.ttf" => FONT, "main.luau" => r##"
+        kulisa.display(64, 64, "fit")
+        kulisa.load_font("font.ttf")
+        local ui = kulisa.ui
+        ui.screen("menu", function()
+            return ui.column({ ui.button({ id = "go", autofocus = true, ui.text({ text = "{b}Go{/b}", size = 8 }) }) })
+        end, { nav = true })
+        ui.show("menu")
+    "##);
+    g.frame(0.016);
+    // A key press brings up the keyboard focus.
+    g.key("down", true);
+    g.key("down", false);
+    g.frame(0.016);
+    assert_eq!(
+        g.eval::<Option<String>>("t", "return kulisa.ui.focused_text()").unwrap().as_deref(),
+        Some("Go")
+    );
+    g.eval::<()>("t", "kulisa.ui.unfocus()").unwrap();
+    assert_eq!(g.eval::<Option<String>>("t", "return kulisa.ui.focused_text()").unwrap(), None);
+}
+
+#[test]
+fn a_language_switch_marks_the_line_it_shows_again() {
+    let id = format!("kulisa_test_replay_{}", std::process::id());
+    let toml = format!("[game]\nid = \"{id}\"\n");
+    let main = r#"
+        kulisa.display(64, 64, "fit")
+        lines = {}
+        kulisa.on("say", function(l) table.insert(lines, l.text .. ":" .. tostring(l.replay)) end)
+        kulisa.story.load()
+        kulisa.story.start()
+    "#;
+    let story = "label start:\n    \"Hi.\"\n    \"Next.\"\n";
+    let g = game!("main.luau" => main, "story/s.kulisa" => story, "lang/sr.txt" => "Hi.\n= Zdravo.\n",
+        "kulisa.toml" => toml.as_str());
+    g.eval::<()>("t", "kulisa.lang.set('sr')").unwrap();
+    g.eval::<bool>("t", "return kulisa.story.next()").unwrap();
+    let lines: Vec<String> = g.eval("t", "return lines").unwrap();
+    let first = lines[0].clone();
+    assert!(first == "Hi.:false" || first == "Zdravo.:false", "{first}");
+    assert_eq!(&lines[1..], ["Zdravo.:true", "Next.:false"]);
+    if let Ok(dir) = kulisa_platform::data_dir(&id) {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 /// Steam without a Steam client: records calls and knows one achievement and one stat.
 #[derive(Default)]
 struct FakeSteam {

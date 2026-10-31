@@ -19,11 +19,14 @@ kulisa.on("say", function(line)
     local e = {
         kind = if who then "say" else "narrate",
         text = line.text,
-        who = who and who.name,
+        who = who and kulisa.t(who.name),
         color = who and who.color,
     }
     local last = log.last()
-    if restoring and last and last.text == e.text then
+    if line.replay and last then
+        -- A language switch shows the current line again.
+        last.text, last.who = e.text, e.who
+    elseif restoring and last and last.text == e.text then
         -- After a load the current line comes again; it is in the log already.
         last.done = true
     else
@@ -35,7 +38,12 @@ end)
 
 kulisa.on("menu", function(items, caption)
     if caption then
-        log.add({ kind = "narrate", text = caption.text })
+        local last = log.last()
+        if caption.replay and last then
+            last.text = caption.text
+        else
+            log.add({ kind = "narrate", text = caption.text })
+        end
     end
     restoring = false
     play.waiting = false

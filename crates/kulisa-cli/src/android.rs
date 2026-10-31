@@ -56,6 +56,9 @@ pub fn manifest(game: &Game, icon: bool) -> String {
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
+    <queries>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+    </queries>
     <application android:label="{label}"{icon} android:hasCode="false"
         android:appCategory="game" android:enableOnBackInvokedCallback="false">
         <activity android:name="android.app.NativeActivity"
