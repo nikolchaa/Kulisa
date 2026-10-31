@@ -126,6 +126,10 @@ pub struct GameConfig {
     /// `[quality] tier`: `auto`, `low`, `medium` or `high`.
     pub quality: String,
     pub android_package: String,
+    /// `[android] keystore`, relative to the game, and `key_alias`: the release key. The
+    /// passwords come from the environment, never from this file.
+    pub android_keystore: Option<String>,
+    pub android_key_alias: Option<String>,
     pub ios_bundle_id: String,
     pub raw: Config,
 }
@@ -182,6 +186,8 @@ impl GameConfig {
             android_package: raw
                 .str("android.package")?
                 .map_or_else(|| format!("dev.kulisa.{package_part}"), str::to_string),
+            android_keystore: raw.str("android.keystore")?.map(str::to_string),
+            android_key_alias: raw.str("android.key_alias")?.map(str::to_string),
             ios_bundle_id: raw
                 .str("ios.bundle_id")?
                 .map_or_else(|| format!("dev.kulisa.{}", id.replace('_', "-")), str::to_string),

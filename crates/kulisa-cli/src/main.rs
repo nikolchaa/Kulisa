@@ -17,9 +17,10 @@ const HELP: &str = "kulisa: make and build Kulisa games
   kulisa run [GAME] [--release] [--profile P]   play it on this computer with live reload
              [--web] [--port N]                   in the browser, with live reload
              [--android] [--abi LIST]             on a connected Android device or emulator
-  kulisa build TARGET [GAME] [--release] [--out DIR] [--abi LIST] [--sim]
+  kulisa build TARGET [GAME] [--release] [--out DIR] [--abi LIST] [--sim] [--aab]
                                                 TARGET: windows, linux, macos (this computer's),
                                                 web, android, ios (on a Mac)
+                                                --aab: an App Bundle for Google Play (android)
   kulisa pack [GAME] [--out FILE]               pack the game into a .kpak
   kulisa serve [DIR] [--port N]                 serve a web build
 
@@ -28,7 +29,7 @@ The engine source is found where this tool was built, or at KULISA_ENGINE.";
 
 /// Options that take a value.
 const VALUED: &[&str] = &["--template", "--dir", "--port", "--abi", "--out", "--profile"];
-const SWITCHES: &[&str] = &["--release", "--web", "--android", "--sim"];
+const SWITCHES: &[&str] = &["--release", "--web", "--android", "--sim", "--aab"];
 
 struct Args {
     positional: Vec<String>,
@@ -428,7 +429,11 @@ fn build(a: &Args) -> Result {
         "android" => {
             let abis = a.abis("arm64-v8a");
             let abis: Vec<&str> = abis.iter().map(String::as_str).collect();
-            android::build(&game, &opts, &abis, &out.join(format!("{}.apk", game.config.id)))
+            if a.has("--aab") {
+                android::bundle(&game, &opts, &abis, &out.join(format!("{}.aab", game.config.id)))
+            } else {
+                android::build(&game, &opts, &abis, &out.join(format!("{}.apk", game.config.id)))
+            }
         }
         "ios" if cfg!(target_os = "macos") => {
             ios::build(&game, &opts, a.has("--sim"), &out.join(format!("{}.app", game.file_name())))

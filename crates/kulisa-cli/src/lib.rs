@@ -106,6 +106,20 @@ pub(crate) fn write(path: &Path, bytes: impl AsRef<[u8]>) -> Result {
     fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Copies the files under `from` into `to`, keeping their folders.
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result {
+    fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    for entry in fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?.flatten() {
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        if src.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else {
+            fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
+        }
+    }
+    Ok(())
+}
+
 /// Escapes text for XML and HTML.
 pub(crate) fn escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")

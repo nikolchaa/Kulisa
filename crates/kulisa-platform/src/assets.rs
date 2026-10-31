@@ -100,8 +100,12 @@ impl Pack {
     }
 }
 
+/// Signing keys and profiles, which must never ship inside a game.
+const SECRET_FILES: &[&str] =
+    &[".jks", ".keystore", ".p12", ".pfx", ".p8", ".pem", ".key", ".mobileprovision"];
+
 /// Whether a path in a game folder is part of the game: build output (`dist/`), hidden
-/// files (`.git`, `.DS_Store`) and editor leftovers (`~`, `.swp`, `.tmp`) are not.
+/// files (`.git`, `.DS_Store`), editor leftovers (`~`, `.swp`, `.tmp`) and signing keys are not.
 pub fn is_game_file(path: &str) -> bool {
     let path = path.replace('\\', "/");
     let mut parts = path.split('/').filter(|p| !p.is_empty());
@@ -109,7 +113,14 @@ pub fn is_game_file(path: &str) -> bool {
     if first == Some("dist") {
         return false;
     }
-    !parts.any(|p| p.starts_with('.') || p.ends_with('~') || p.ends_with(".swp") || p.ends_with(".tmp"))
+    !parts.any(|p| {
+        let lower = p.to_ascii_lowercase();
+        p.starts_with('.')
+            || p.ends_with('~')
+            || p.ends_with(".swp")
+            || p.ends_with(".tmp")
+            || SECRET_FILES.iter().any(|s| lower.ends_with(s))
+    })
 }
 
 /// Packs every game file under `dir` ([`is_game_file`]) into `.kpak` bytes (build tools;
@@ -276,6 +287,8 @@ mod tests {
         assert_eq!(pack.list(""), ["logo.bin", "main.luau", "story/a.kulisa", "story/extra/b.kulisa"]);
         assert!(is_game_file("story/dist/x.png"), "only the top-level dist folder is build output");
         assert!(!is_game_file("images/.thumbs/x.png"));
+        assert!(!is_game_file("keys/release.JKS") && !is_game_file("upload.keystore"));
+        assert!(!is_game_file("signing/AuthKey.p8") && !is_game_file("cats.mobileprovision"));
 
         // Live reload on the web compares packs.
         std::fs::write(dir.join("main.luau"), "print('bye')").unwrap();
