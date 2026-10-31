@@ -5,8 +5,27 @@ use crate::Loc;
 
 /// Words that start statements; they cannot be character names.
 pub const KEYWORDS: &[&str] = &[
-    "label", "define", "default", "jump", "call", "return", "menu", "if", "elif", "else", "scene", "show",
-    "hide", "with", "play", "stop", "pause", "lua", "pass",
+    "label",
+    "define",
+    "default",
+    "jump",
+    "call",
+    "return",
+    "menu",
+    "if",
+    "elif",
+    "else",
+    "scene",
+    "show",
+    "hide",
+    "with",
+    "play",
+    "stop",
+    "pause",
+    "lua",
+    "pass",
+    "animate",
+    "transform",
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -16,7 +35,27 @@ pub struct File {
     pub defaults: Vec<Binding>,
     /// Top-level `lua:` blocks, run once at start.
     pub init: Vec<Code>,
+    pub transforms: Vec<Transform>,
     pub labels: Vec<Label>,
+}
+
+/// `transform name:`, an animation `animate` plays on a shown image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Transform {
+    pub name: String,
+    pub loc: Loc,
+    pub steps: Vec<TransformStep>,
+    /// How many times to play; 0 forever (`repeat` with no number).
+    pub times: u32,
+}
+
+/// One line of a transform: properties reached together, or a pause when there are none.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TransformStep {
+    /// `x`, `y`, `rotation` (degrees), `scale`, `scale_x`, `scale_y`, `opacity`.
+    pub props: Vec<(String, f32)>,
+    pub time: f32,
+    pub ease: Option<String>,
 }
 
 /// `define name = expr` (constant) or `default name = expr` (saved story variable).
@@ -120,4 +159,9 @@ pub enum StmtKind {
         fade: Option<f32>,
     },
     Pause(Option<f32>),
+    /// `animate tag name`, or `animate tag` to stop.
+    Animate {
+        tag: String,
+        transform: Option<(String, Loc)>,
+    },
 }

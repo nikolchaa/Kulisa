@@ -70,6 +70,11 @@ pub enum Event {
         with: Option<String>,
     },
     With(String),
+    /// Play the `transform` on what is shown as `tag`; `None` stops what it plays.
+    Animate {
+        tag: String,
+        transform: Option<String>,
+    },
     Play {
         channel: String,
         file: String,
@@ -96,6 +101,8 @@ pub struct Shown {
     pub image: Vec<String>,
     /// Named position (`left`), resolved by the runtime for the current display.
     pub at: Option<String>,
+    /// The `transform` it plays.
+    pub anim: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -128,7 +135,12 @@ impl Stage {
         let shown = self
             .shown
             .iter()
-            .map(|s| Value::map().with("image", list(&s.image)).with("at", s.at.clone()))
+            .map(|s| {
+                Value::map()
+                    .with("image", list(&s.image))
+                    .with("at", s.at.clone())
+                    .with("anim", s.anim.clone())
+            })
             .collect::<Vec<_>>();
         let tracks = self
             .tracks
@@ -150,7 +162,11 @@ impl Stage {
             .get("shown")
             .as_list()
             .iter()
-            .map(|s| Shown { image: strings(s.get("image")), at: s.get("at").as_str().map(str::to_string) })
+            .map(|s| Shown {
+                image: strings(s.get("image")),
+                at: s.get("at").as_str().map(str::to_string),
+                anim: s.get("anim").as_str().map(str::to_string),
+            })
             .filter(|s| !s.image.is_empty())
             .collect();
         let tracks = match v.get("tracks") {
@@ -503,13 +519,21 @@ impl Vm {
                                 existing.at = at.clone();
                             }
                         }
-                        None => self.stage.shown.push(Shown { image: image.clone(), at: at.clone() }),
+                        None => {
+                            self.stage.shown.push(Shown { image: image.clone(), at: at.clone(), anim: None })
+                        }
                     }
                     return Ok(Event::Show { image, at, with });
                 }
                 Op::Hide { tag, with } => {
                     self.stage.shown.retain(|s| s.image[0] != tag);
                     return Ok(Event::Hide { tag, with });
+                }
+                Op::Animate { tag, transform } => {
+                    if let Some(shown) = self.stage.shown.iter_mut().find(|s| s.image[0] == tag) {
+                        shown.anim = transform.clone();
+                    }
+                    return Ok(Event::Animate { tag, transform });
                 }
                 Op::With(t) => return Ok(Event::With(t)),
                 Op::Play { channel, file, fade, looping } => {
@@ -723,6 +747,88 @@ impl Vm {
 }
 
 #[cfg(test)]
+mod animate_tests {
+    use super::*;
+    use crate::compile;
+
+    struct NoHost;
+    impl Host for NoHost {
+        fn define(&mut self, _: &str, _: &Chunk) -> Result<(), String> {
+            Ok(())
+        }
+        fn set_default(&mut self, _: &str, _: &Chunk) -> Result<(), String> {
+            Ok(())
+        }
+        fn eval(&mut self, _: &Chunk) -> Result<Value, String> {
+            Ok(Value::Nil)
+        }
+        fn exec(&mut self, _: &Chunk) -> Result<(), String> {
+            Ok(())
+        }
+        fn snapshot(&mut self) -> Result<Value, String> {
+            Ok(Value::Nil)
+        }
+        fn restore(&mut self, _: &Value) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    const STORY: &str = "transform bob:\n    y -20 x 5 over 0.5 out_quad\n    pause 1\n    y 0 over 0.5\n    repeat\n\ntransform pop:\n    scale 1.2\n\nlabel start:\n    show mila\n    animate mila bob\n    \"One.\"\n    animate mila\n    \"Two.\"\n";
+
+    #[test]
+    fn stages_remember_what_plays() {
+        let program = compile(&[("s.kulisa", STORY)]).unwrap_or_else(|e| panic!("{e}"));
+        let bob = &program.transforms["bob"];
+        assert_eq!(bob.times, 0);
+        assert_eq!(bob.steps.len(), 3);
+        assert_eq!(bob.steps[0].props, [("y".to_string(), -20.0), ("x".to_string(), 5.0)]);
+        assert_eq!((bob.steps[0].time, bob.steps[0].ease.as_deref()), (0.5, Some("out_quad")));
+        assert!(bob.steps[1].props.is_empty());
+        assert_eq!(program.transforms["pop"].steps[0].time, 0.0);
+        assert_eq!(program.transforms["pop"].times, 1);
+
+        let mut vm = Vm::new(Arc::new(program));
+        let mut host = NoHost;
+        vm.start(&mut host, "start").unwrap();
+        assert!(matches!(vm.next(&mut host).unwrap(), Event::Show { .. }));
+        let event = vm.next(&mut host).unwrap();
+        assert_eq!(event, Event::Animate { tag: "mila".into(), transform: Some("bob".into()) });
+        assert!(matches!(vm.next(&mut host).unwrap(), Event::Say(_)));
+        assert_eq!(vm.stage().shown[0].anim.as_deref(), Some("bob"));
+        // Through a save, and saves from before animation have none.
+        let saved = vm.stage().to_value();
+        assert_eq!(Stage::from_value(&saved).shown[0].anim.as_deref(), Some("bob"));
+        let old = Value::map()
+            .with("shown", Value::List(vec![Value::map().with("image", Value::List(vec!["a".into()]))]));
+        assert_eq!(Stage::from_value(&old).shown[0].anim, None);
+
+        assert_eq!(vm.next(&mut host).unwrap(), Event::Animate { tag: "mila".into(), transform: None });
+        assert!(matches!(vm.next(&mut host).unwrap(), Event::Say(_)));
+        assert_eq!(vm.stage().shown[0].anim, None);
+    }
+
+    #[test]
+    fn errors_name_the_line() {
+        let check = |src: &str, want: &str| {
+            let e = compile(&[("s.kulisa", src)]).unwrap_err().to_string();
+            assert!(e.contains(want), "{src}\n{e}");
+        };
+        check("transform a:\n    wiggle 3 over 1\n", "unknown property `wiggle`");
+        check("transform a:\n    scal 3 over 1\n", "did you mean `scale`");
+        check("transform a:\n    y 3 over 1 springy\n", "unknown ease `springy`");
+        check("transform a:\n    y over 1\n", "expected a number after `y`");
+        check("transform a:\n    y 1 over\n", "expected seconds");
+        check("transform a:\n    repeat 1.5\n", "whole number");
+        check("transform a:\n    y 1\n    repeat\n    y 2\n", "must be the last line");
+        check("transform a:\n\nlabel b:\n    pass\n", "expected an indented block");
+        check("transform a:\n    y 1\ntransform a:\n    y 2\n", "already defined");
+        check("transform bob:\n    y 1\nlabel s:\n    animate m bbo\n", "did you mean `bob`");
+        check("label s:\n    animate m nope\n", "unknown transform `nope`");
+        check("label s:\n    transform a:\n        y 1\n", "top level");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::compile;
@@ -885,7 +991,7 @@ label leave:
         assert!(vm.is_ended());
         assert_eq!(
             vm.stage().shown,
-            vec![Shown { image: vec!["mila".into(), "smile".into()], at: Some("left".into()) }]
+            vec![Shown { image: vec!["mila".into(), "smile".into()], at: Some("left".into()), anim: None }]
         );
     }
 
@@ -1068,7 +1174,10 @@ label leave:
         assert_eq!(next_line(&mut vm, &mut h), "!");
         let st = vm.stage().clone();
         // `show a z` (no `at`) changed the look and kept the place.
-        assert_eq!(st.shown, vec![Shown { image: vec!["a".into(), "z".into()], at: Some("left".into()) }]);
+        assert_eq!(
+            st.shown,
+            vec![Shown { image: vec!["a".into(), "z".into()], at: Some("left".into()), anim: None }]
+        );
         assert_eq!(st.tracks.len(), 1, "one-shot sounds are not stage state");
         assert_eq!(Stage::from_value(&st.to_value()), st);
         assert_eq!(next_line(&mut vm, &mut h), "done");

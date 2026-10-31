@@ -177,6 +177,7 @@ Properties (read and write unless noted):
 | `kind` | all, read-only | `group`, `sprite`, `text`, `layer`, `target`. |
 | `width`, `height` | sprites (read on all) | Size in local units. |
 | `image` | sprites | An image or path. Changing it keeps the size. |
+| `uv` | sprites | The part of the image to show: `{ u0, v0, u1, v1 }` from 0 to 1 (nil for all of it). |
 | `parallax`, `effects` | layers (`effects` also targets) | See constructors. |
 | `clear`, `texture` (read-only) | targets | See constructors. |
 | `text`, `font`, `size`, `line_height`, `color`, `wrap`, `align`, `cps`, `fade` | text | Setting `text` restarts the typewriter. |
@@ -314,6 +315,17 @@ Text markup: `{b}`, `{i}`, `{color=#hex}`, `{size=N}`, `{font=Name}`, `{wave}`, 
 `out_sine`, `in_out_sine`, `in_back`, `out_back`, `in_out_back`, `out_elastic`,
 `out_bounce`. A new tween takes over the properties it animates from older ones. The
 returned handle has `done` and `cancel()`.
+
+`kulisa.animate(node, transform, opts?)` plays a sequence: a story `transform` by name, or
+`{ steps = { { props = { y = -20 }, time = 0.5, ease = "out_quad" }, ... }, times = 1 }` (`times = 0`
+loops forever). `x`, `y` and `rotation` are offsets from where the node is, `scale`, `scale_x` and
+`scale_y` multiply, and `opacity` is absolute. `{ instant = true }` jumps to the end, and a loop
+stays put. The handle has `done` and `cancel(reset?)`, where `reset` puts the node back.
+`kulisa.story.transform(name)` gives the table.
+
+`kulisa.frames(sprite, { cols, rows, fps?, from?, to?, loop? })` shows the sprite's image as a sprite
+sheet, numbered from 1 across then down, and resizes the sprite to one frame. With `fps` it plays;
+`loop = false` stops at the end. The handle has `frame`, `done`, `show(n)` and `stop()`.
 
 Tasks are coroutines the engine resumes every frame:
 

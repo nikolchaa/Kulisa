@@ -624,6 +624,12 @@ fn get_prop(lua: &Lua, st: &State, id: NodeId, key: &str) -> mlua::Result<LuaVal
             NodeKind::Sprite(Sprite { slice: Some(s), .. }) => num(s.scale),
             _ => Ok(LuaValue::Nil),
         },
+        "uv" => match &n.kind {
+            NodeKind::Sprite(s) => lua
+                .create_sequence_from([s.uv.min.x, s.uv.min.y, s.uv.max.x, s.uv.max.y])
+                .map(LuaValue::Table),
+            _ => Ok(LuaValue::Nil),
+        },
         _ => Err(mlua::Error::runtime(format!("nodes have no property `{key}`"))),
     }
 }
@@ -719,6 +725,14 @@ fn set_prop(st: &mut State, id: NodeId, key: &str, v: LuaValue) -> mlua::Result<
             _ => {
                 return Err(mlua::Error::runtime("`image` can only be set on sprites, meshes and particles"));
             }
+        },
+        "uv" => match (&mut n.kind, &v) {
+            (NodeKind::Sprite(s), LuaValue::Table(t)) => {
+                let c = |i: usize| -> mlua::Result<f32> { number(&t.raw_get(i)?, key) };
+                s.uv = Rect { min: Vec2::new(c(1)?, c(2)?), max: Vec2::new(c(3)?, c(4)?) };
+            }
+            (NodeKind::Sprite(s), LuaValue::Nil) => s.uv = Rect::UNIT,
+            _ => return Err(mlua::Error::runtime("`uv` is {u0, v0, u1, v1} on a sprite")),
         },
         "slice" => match &mut n.kind {
             NodeKind::Sprite(s) => {
@@ -1363,6 +1377,34 @@ fn story_api(lua: &Lua) -> mlua::Result<Table> {
             rt(with_story(&shared(lua), false, |s| {
                 s.host.define_value(&name, value).map_err(|e| e.to_string())
             }))
+        })?,
+    )?;
+    // transform(name) -> { steps = { { props, time, ease }, ... }, times } for kulisa.animate.
+    s.set(
+        "transform",
+        lua.create_function(|lua, name: String| {
+            let found =
+                rt(with_story(&shared(lua), true, |s| Ok(s.vm.program().transforms.get(&name).cloned())))?;
+            let t =
+                found.ok_or_else(|| mlua::Error::runtime(format!("no transform `{name}` in the story")))?;
+            let steps = lua.create_table()?;
+            for step in &t.steps {
+                let props = lua.create_table()?;
+                for (prop, value) in &step.props {
+                    // Stories write degrees, nodes take radians.
+                    let value = if prop == "rotation" { value.to_radians() } else { *value };
+                    props.set(prop.as_str(), value)?;
+                }
+                let item = lua.create_table()?;
+                item.set("props", props)?;
+                item.set("time", step.time)?;
+                item.set("ease", step.ease.clone())?;
+                steps.raw_push(item)?;
+            }
+            let out = lua.create_table()?;
+            out.set("steps", steps)?;
+            out.set("times", t.times)?;
+            Ok(out)
         })?,
     )?;
     s.set(

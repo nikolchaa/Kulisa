@@ -1340,6 +1340,96 @@ fn a_language_switch_marks_the_line_it_shows_again() {
     }
 }
 
+#[test]
+fn transforms_animate_nodes_from_where_they_stand() {
+    let story = "transform hop:\n    y -40 rotation 90 over 0.5\n    scale 2 opacity 0.5 over 0.5\n\nlabel start:\n    \"Hi.\"\n";
+    let main = r#"
+        kulisa.display(64, 64, "fit")
+        kulisa.story.load()
+        node = kulisa.sprite({ x = 10, y = 100, scale = 2 })
+        h = kulisa.animate(node, "hop")
+    "#;
+    let mut g = game!("main.luau" => main, "story/s.kulisa" => story);
+    let at = |g: &Game| -> (f32, f32, f32, f32, f32) {
+        g.eval("t", "return node.x, node.y, node.rotation, node.scale_x, node.opacity").unwrap()
+    };
+    for _ in 0..30 {
+        g.frame(1.0 / 60.0);
+    }
+    let (x, y, r, s, o) = at(&g);
+    assert_eq!(x, 10.0, "only what the transform names moves");
+    assert!((y - 60.0).abs() < 2.0, "an offset from where it stood: {y}");
+    assert!((r - std::f32::consts::FRAC_PI_2).abs() < 0.1, "degrees in stories: {r}");
+    assert!((s - 2.0).abs() < 0.1 && (o - 1.0).abs() < 0.1, "{s} {o}");
+    for _ in 0..40 {
+        g.frame(1.0 / 60.0);
+    }
+    let (_, y, _, s, o) = at(&g);
+    assert!((y - 60.0).abs() < 0.01 && (s - 4.0).abs() < 0.01 && (o - 0.5).abs() < 0.01, "{y} {s} {o}");
+    assert!(g.eval::<bool>("t", "return h.done").unwrap());
+
+    // Instant goes straight to the end; a canceled loop can go back.
+    g.eval::<()>(
+        "t",
+        r#"
+        other = kulisa.sprite({ x = 0, y = 50 })
+        kulisa.animate(other, { steps = { { props = { x = 5 }, time = 1 }, { props = { y = 7 }, time = 1 } } }, { instant = true })
+        spin = kulisa.sprite({ y = 3 })
+        loop = kulisa.animate(spin, { steps = { { props = { y = 100 }, time = 0.1 } }, times = 0 })
+    "#,
+    )
+    .unwrap();
+    assert_eq!(g.eval::<(f32, f32)>("t", "return other.x, other.y").unwrap(), (5.0, 57.0));
+    for _ in 0..3 {
+        g.frame(1.0 / 60.0);
+    }
+    assert!(g.eval::<f32>("t", "return spin.y").unwrap() > 3.0);
+    g.eval::<()>("t", "loop.cancel(true)").unwrap();
+    assert_eq!(g.eval::<f32>("t", "return spin.y").unwrap(), 3.0);
+
+    // A loop whose node goes away ends quietly.
+    g.eval::<()>("t", "gone = kulisa.sprite({}); l2 = kulisa.animate(gone, { steps = { { props = { x = 1 }, time = 0.01 } }, times = 0 })")
+        .unwrap();
+    g.frame(0.02);
+    g.eval::<()>("t", "gone:remove()").unwrap();
+    for _ in 0..4 {
+        g.frame(0.02);
+    }
+    assert!(g.eval::<bool>("t", "return l2.done").unwrap());
+    let err = g.eval::<()>("t", "kulisa.animate(node, 'nope')").unwrap_err();
+    assert!(err.contains("no transform `nope`"), "{err}");
+    assert!(g.shown_errors().is_empty(), "{:?}", g.shown_errors());
+}
+
+#[test]
+fn sprite_sheets_show_one_frame_at_a_time() {
+    let sheet = png(8, 4);
+    let main = r#"
+        kulisa.display(64, 64, "fit")
+        node = kulisa.sprite({ image = "sheet.png" })
+        h = kulisa.frames(node, { cols = 4, rows = 2, fps = 10, from = 2, to = 3 })
+    "#;
+    let mut g = game!("main.luau" => main, "sheet.png" => sheet);
+    let uv = |g: &Game| -> Vec<f32> { g.eval("t", "return node.uv").unwrap() };
+    assert_eq!(g.eval::<(f32, f32)>("t", "return node.width, node.height").unwrap(), (2.0, 2.0));
+    assert_eq!(uv(&g), [0.25, 0.0, 0.5, 0.5]);
+    for _ in 0..7 {
+        g.frame(1.0 / 60.0);
+    }
+    assert_eq!(g.eval::<i32>("t", "return h.frame").unwrap(), 3);
+    assert_eq!(uv(&g), [0.5, 0.0, 0.75, 0.5]);
+    for _ in 0..7 {
+        g.frame(1.0 / 60.0);
+    }
+    assert_eq!(g.eval::<i32>("t", "return h.frame").unwrap(), 2, "loops within from and to");
+    g.eval::<()>("t", "h.stop(); h.show(6)").unwrap();
+    assert_eq!(uv(&g), [0.25, 0.5, 0.5, 1.0], "the second row");
+    g.eval::<()>("t", "node.uv = nil").unwrap();
+    assert_eq!(uv(&g), [0.0, 0.0, 1.0, 1.0]);
+    let err = g.eval::<()>("t", "kulisa.group({}).uv = { 0, 0, 1, 1 }").unwrap_err();
+    assert!(err.contains("`uv`"), "{err}");
+}
+
 /// Steam without a Steam client: records calls and knows one achievement and one stat.
 #[derive(Default)]
 struct FakeSteam {

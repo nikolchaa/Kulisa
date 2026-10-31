@@ -2,7 +2,7 @@
 //! every error.
 
 use crate::ast::*;
-use crate::diag::{Diagnostic, Loc};
+use crate::diag::{Diagnostic, Loc, suggest};
 use crate::lex::{Cursor, Line, LineKind, lines};
 
 struct Parser<'a> {
@@ -44,8 +44,14 @@ impl<'a> Parser<'a> {
     }
 
     fn file(&mut self) -> File {
-        let mut f =
-            File { name: self.file.into(), defines: vec![], defaults: vec![], init: vec![], labels: vec![] };
+        let mut f = File {
+            name: self.file.into(),
+            defines: vec![],
+            defaults: vec![],
+            init: vec![],
+            transforms: vec![],
+            labels: vec![],
+        };
         while let Some(j) = self.next_code() {
             let line = self.lines[j].clone();
             self.i = j + 1;
@@ -63,8 +69,10 @@ impl<'a> Parser<'a> {
                 self.binding(&line, c).map(|b| f.defaults.push(b))
             } else if c.keyword("lua") {
                 self.lua_block(&line, c).map(|code| f.init.push(code))
+            } else if c.keyword("transform") {
+                self.transform(&line, c).map(|t| f.transforms.push(t))
             } else {
-                Err(c.error("expected `label`, `define`, `default` or `lua:` here; story statements go inside a label"))
+                Err(c.error("expected `label`, `define`, `default`, `transform` or `lua:` here; story statements go inside a label"))
             };
             if let Err(e) = result {
                 self.errors.push(e);
@@ -85,6 +93,54 @@ impl<'a> Parser<'a> {
         }
         let body = self.block(line, &format!("label {name}:"))?;
         Ok(Label { name, loc: self.loc(line), body })
+    }
+
+    /// `transform name:` and its lines: `x 30 y -10 over 0.5 out_quad`, `pause 1`, `repeat [n]`.
+    fn transform(&mut self, line: &Line, mut c: Cursor) -> Result<Transform, Diagnostic> {
+        let name = c.ident(false).ok_or_else(|| c.error("expected a name, like `transform bob:`"))?;
+        if !c.eat(':') || !c.at_end() {
+            return Err(c.error(format!("expected `:` after `transform {name}`")));
+        }
+        let mut steps = Vec::new();
+        let mut times = 1;
+        let mut repeated = false;
+        while let Some(j) = self.next_code().filter(|&j| self.lines[j].indent > line.indent) {
+            let step = self.lines[j].clone();
+            self.i = j + 1;
+            let mut c = Cursor::new(self.file, &step);
+            if repeated {
+                return Err(c.error("`repeat` must be the last line of a transform"));
+            }
+            if c.keyword("repeat") {
+                repeated = true;
+                times = match c.number() {
+                    Some(n) if n >= 1.0 && n.fract() == 0.0 => n as u32,
+                    Some(_) => {
+                        return Err(
+                            c.error("`repeat` takes a whole number of times, or nothing to loop forever")
+                        );
+                    }
+                    None => 0,
+                };
+            } else if c.keyword("pause") {
+                let time = c.number().ok_or_else(|| c.error("expected seconds after `pause`"))?;
+                steps.push(TransformStep { props: Vec::new(), time, ease: None });
+            } else {
+                steps.push(transform_step(&mut c)?);
+            }
+            if !c.at_end() {
+                let rest = c.rest_str().trim().to_string();
+                return Err(c.error(format!("unexpected `{rest}` in this transform line")));
+            }
+        }
+        if steps.is_empty() {
+            return Err(Diagnostic::new(
+                self.loc(line),
+                format!("expected an indented block after `transform {name}:`, like `y -20 over 0.5`"),
+                &line.raw,
+            ));
+        }
+        Ok(Transform { name, loc: self.loc(line), steps, times })
     }
 
     fn binding(&mut self, line: &Line, mut c: Cursor) -> Result<Binding, Diagnostic> {
@@ -333,7 +389,18 @@ impl<'a> Parser<'a> {
             ensure_end(&mut c, "`pause`")?;
             return Ok(stmt(StmtKind::Pause(secs)));
         }
-        if c.keyword("label") || c.keyword("define") || c.keyword("default") {
+        if c.keyword("animate") {
+            let tag =
+                c.ident(false).ok_or_else(|| c.error("expected what to animate, like `animate mila bob`"))?;
+            let loc = c.loc();
+            let transform = c.ident(false).map(|name| (name, loc));
+            if !c.at_end() {
+                let rest = c.rest_str().trim().to_string();
+                return Err(c.error(format!("unexpected `{rest}` after `animate`")));
+            }
+            return Ok(stmt(StmtKind::Animate { tag, transform }));
+        }
+        if c.keyword("label") || c.keyword("define") || c.keyword("default") || c.keyword("transform") {
             return Err(Diagnostic::new(
                 self.loc(line),
                 "this belongs at the top level of the file, not inside a label",
@@ -499,6 +566,48 @@ impl<'a> Parser<'a> {
         }
         Ok(StmtKind::If { branches })
     }
+}
+
+/// What transforms can animate.
+const TRANSFORM_PROPS: &[&str] = &["x", "y", "rotation", "scale", "scale_x", "scale_y", "opacity"];
+
+/// `x 30 y -10 over 0.5 out_quad`.
+fn transform_step(c: &mut Cursor) -> Result<TransformStep, Diagnostic> {
+    let mut props = Vec::new();
+    while !c.keyword("over") {
+        let at = c.loc();
+        let Some(name) = c.ident(false) else {
+            if props.is_empty() {
+                return Err(c.error("expected a property, like `y -20 over 0.5`"));
+            }
+            // Properties with no `over` are set at once.
+            return Ok(TransformStep { props, time: 0.0, ease: None });
+        };
+        if !TRANSFORM_PROPS.contains(&name.as_str()) {
+            let hint = suggest(&name, TRANSFORM_PROPS.iter().copied())
+                .map(|s| format!("; did you mean `{s}`?"))
+                .unwrap_or_else(|| format!("; transforms can animate {}", TRANSFORM_PROPS.join(", ")));
+            return Err(Diagnostic::new(at, format!("unknown property `{name}`{hint}"), ""));
+        }
+        let sign = if c.eat('-') { -1.0 } else { 1.0 };
+        let value = c.number().ok_or_else(|| c.error(format!("expected a number after `{name}`")))?;
+        props.push((name, sign * value));
+        if c.at_end() {
+            return Ok(TransformStep { props, time: 0.0, ease: None });
+        }
+    }
+    if props.is_empty() {
+        return Err(c.error("expected a property before `over`, like `y -20 over 0.5`"));
+    }
+    let time = c.number().ok_or_else(|| c.error("expected seconds after `over`"))?;
+    let at = c.loc();
+    let ease = c.ident(false);
+    if let Some(name) = &ease
+        && kulisa_core::Ease::from_name(name).is_none()
+    {
+        return Err(Diagnostic::new(at, format!("unknown ease `{name}`"), ""));
+    }
+    Ok(TransformStep { props, time, ease })
 }
 
 #[cfg(test)]

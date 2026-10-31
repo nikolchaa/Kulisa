@@ -119,3 +119,65 @@ play sound "audio/thunder.ogg"
 pause 1.2
 "The lights flickered."
 ```
+
+## Animation
+
+A `transform` describes movement, and `animate` plays it on something shown:
+
+```kulisa
+transform bob:
+    y -20 over 0.5 in_out_sine
+    y 0 over 0.5 in_out_sine
+    repeat
+
+transform pop:
+    scale 1.2 rotation 5 over 0.3 out_back
+
+label start:
+    show kitty happy at left
+    animate kitty bob
+    "Kitty bounces on the spot."
+    animate kitty
+    "Now she stops."
+```
+
+Each line reaches its values together, over the time you give it, with an optional ease. Without
+`over`, they apply at once.
+
+| Line | Meaning |
+|---|---|
+| `x 30`, `y -20` | Moves that far from where it stands. |
+| `scale 1.2`, `scale_x`, `scale_y` | Times its size. |
+| `rotation 15` | Turns it, in degrees. |
+| `opacity 0.5` | How visible it is, from 0 to 1. |
+| `pause 1` | Waits. |
+| `repeat`, `repeat 3` | Last line: loops forever, or that many times. |
+
+Eases are the same as for tweens, like `out_quad`, `in_out_sine` and `out_bounce`. Animations
+are remembered in saves and rollback: a loop starts again, and a one-shot lands where it ended.
+
+## Layered characters
+
+Instead of drawing every combination of face and outfit, give a character a folder. In
+`classic-vn`:
+
+```text
+images/kitty/base.png
+images/kitty/face/default.png
+images/kitty/face/happy.png
+images/kitty/hat/crown.png
+```
+
+`show kitty happy crown` stacks the base, the happy face and the crown. A layer's `default.png`
+shows when no look is asked for, and folders stack in name order. All the images are the size of
+the base.
+
+## Sprite sheets
+
+An image can hold the frames of an animation. In `classic-vn`, name it in `game/config.luau`:
+
+```luau
+config.sheets = { ["kitty walk"] = { cols = 4, rows = 2, fps = 8 } }
+```
+
+Then `show kitty walk` plays `images/kitty walk.png`. Frames run across, then down.

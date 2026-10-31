@@ -75,6 +75,9 @@ config.transitions = {
 }
 
 -- Preference defaults (players change them in Preferences).
+-- Sprite sheets by image name: config.sheets["kitty walk"] = { cols = 4, rows = 2, fps = 8 }.
+config.sheets = {}
+
 config.prefs = {
     cps = 50, -- characters per second; 0 is instant
     auto_delay = 1.5, -- seconds after a line finishes, plus a little per character

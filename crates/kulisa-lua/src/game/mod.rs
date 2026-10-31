@@ -440,6 +440,10 @@ fn dispatch(lua: &Lua, shared: &Shared, events: Vec<Event>, seen: &Seen) -> mlua
                 let fields = [("tag", tag.into_lua(lua)?), ("with", with.into_lua(lua)?)];
                 emit(shared, "stage", stage_event(lua, "hide", &fields)?)
             }
+            Event::Animate { tag, transform } => {
+                let fields = [("tag", tag.into_lua(lua)?), ("transform", transform.into_lua(lua)?)];
+                emit(shared, "stage", stage_event(lua, "animate", &fields)?)
+            }
             Event::With(transition) => {
                 emit(shared, "stage", stage_event(lua, "with", &[("with", transition.into_lua(lua)?)])?)
             }

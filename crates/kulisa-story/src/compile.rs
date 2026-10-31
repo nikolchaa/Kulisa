@@ -95,6 +95,10 @@ pub enum Op {
         fade: Option<f32>,
     },
     Pause(Option<f32>),
+    Animate {
+        tag: String,
+        transform: Option<String>,
+    },
 }
 
 impl Op {
@@ -133,6 +137,8 @@ pub struct Program {
     pub defaults: Vec<(String, ChunkId)>,
     /// Top-level `lua:` blocks, in source order.
     pub init: Vec<ChunkId>,
+    /// `transform` animations by name.
+    pub transforms: HashMap<String, Transform>,
     /// Translated text by language code, then by [`crate::lang_key`].
     pub translations: HashMap<String, HashMap<String, Vec<TextPart>>>,
 }
@@ -251,6 +257,17 @@ impl Compiler<'_> {
                     } else {
                         self.program.defaults.push((b.name.clone(), id));
                     }
+                }
+            }
+            for t in &f.transforms {
+                if let Some(first) = self.program.transforms.get(&t.name) {
+                    let msg = format!(
+                        "transform `{}` is already defined at {}:{}",
+                        t.name, first.loc.file, first.loc.line
+                    );
+                    self.error(&t.loc, msg);
+                } else {
+                    self.program.transforms.insert(t.name.clone(), t.clone());
                 }
             }
             for code in &f.init {
@@ -447,6 +464,18 @@ impl Compiler<'_> {
             }
             StmtKind::Hide { tag, with } => {
                 Self::emit(code, Op::Hide { tag: tag.clone(), with: with.clone() });
+            }
+            StmtKind::Animate { tag, transform } => {
+                if let Some((name, loc)) = transform
+                    && !self.program.transforms.contains_key(name)
+                {
+                    let hint = suggest(name, self.program.transforms.keys().map(String::as_str))
+                        .map(|s| format!("; did you mean `{s}`?"))
+                        .unwrap_or_else(|| format!("; define it first, like `transform {name}:`"));
+                    self.error(loc, format!("unknown transform `{name}`{hint}"));
+                }
+                let transform = transform.as_ref().map(|(name, _)| name.clone());
+                Self::emit(code, Op::Animate { tag: tag.clone(), transform });
             }
             StmtKind::With(t) => {
                 Self::emit(code, Op::With(t.clone()));

@@ -66,6 +66,128 @@ local function timer(secs, f, repeating)
     return handle
 end
 
+-- Plays an animation on a node: a story `transform` by name, or { steps, times }. `x` and `y`
+-- are offsets from where the node is, `scale` multiplies, `rotation` adds, `opacity` is
+-- absolute. `opts.instant` jumps to the end (a loop just stays put). The handle has `done` and
+-- `cancel(reset)`, where `reset` puts the node back.
+function kulisa.animate(node, t, opts)
+    if type(t) == "string" then
+        t = kulisa.story.transform(t)
+    end
+    opts = opts or {}
+    local times = t.times or 1
+    local base = {
+        x = node.x, y = node.y, rotation = node.rotation, opacity = node.opacity,
+        scale_x = node.scale_x, scale_y = node.scale_y,
+    }
+    local handle = { done = false }
+    local current = nil
+    local function target(props)
+        local out = {}
+        for k, v in props do
+            if k == "x" or k == "y" or k == "rotation" then
+                out[k] = base[k] + v
+            elseif k == "scale" then
+                out.scale_x, out.scale_y = base.scale_x * v, base.scale_y * v
+            elseif k == "scale_x" or k == "scale_y" then
+                out[k] = base[k] * v
+            else
+                out[k] = v
+            end
+        end
+        return out
+    end
+    local function put(values)
+        for k, v in values do
+            node[k] = v
+        end
+    end
+    function handle.cancel(reset)
+        handle.done = true
+        if current then
+            current:cancel()
+        end
+        if reset and node:exists() then
+            put(base)
+        end
+    end
+    if opts.instant then
+        if times > 0 then
+            for _, step in t.steps do
+                put(target(step.props))
+            end
+        end
+        handle.done = true
+        return handle
+    end
+    kulisa.spawn(function()
+        local played = 0
+        while not handle.done and node:exists() and (times == 0 or played < times) do
+            for _, step in t.steps do
+                if handle.done or not node:exists() then
+                    return
+                end
+                if next(step.props) == nil then
+                    kulisa.wait(step.time)
+                elseif step.time <= 0 then
+                    put(target(step.props))
+                else
+                    current = node:tween(target(step.props), { time = step.time, ease = step.ease })
+                    kulisa.await(current)
+                end
+            end
+            played += 1
+            -- A loop with no time in it must still give the frame back.
+            coroutine.yield()
+        end
+        handle.done = true
+    end)
+    return handle
+end
+
+-- Shows a sprite sheet: the node's image as `cols` x `rows` frames, numbered from 1 across then
+-- down. `fps` plays them (`from`, `to`, `loop = false` to stop at the end). The handle has
+-- `frame`, `done`, `show(n)` and `stop()`.
+function kulisa.frames(node, opts)
+    local cols, rows = opts.cols or 1, opts.rows or 1
+    local first, last = opts.from or 1, opts.to or cols * rows
+    node.width, node.height = node.width / cols, node.height / rows
+    local handle = { frame = first, done = false }
+    function handle.show(n)
+        local i = n - 1
+        local c, r = i % cols, i // cols
+        node.uv = { c / cols, r / rows, (c + 1) / cols, (r + 1) / rows }
+        handle.frame = n
+    end
+    function handle.stop()
+        handle.done = true
+    end
+    handle.show(first)
+    if opts.fps and opts.fps > 0 then
+        kulisa.spawn(function()
+            local n = first
+            while not handle.done and node:exists() do
+                kulisa.wait(1 / opts.fps)
+                if handle.done or not node:exists() then
+                    return
+                end
+                n += 1
+                if n > last then
+                    if opts.loop == false then
+                        break
+                    end
+                    n = first
+                end
+                handle.show(n)
+            end
+            handle.done = true
+        end)
+    else
+        handle.done = true
+    end
+    return handle
+end
+
 function kulisa.after(secs, f)
     return timer(secs, f, false)
 end

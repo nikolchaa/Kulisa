@@ -430,6 +430,15 @@ line keeps its identity across sessions and edits that keep its text. The game
 keeps a seen set (and chosen menu choices) in persistent storage; `say` events
 carry `seen`, menu items `chosen`. `Vm::block_rollback` drops the history.
 
+### Transforms
+
+`transform name:` holds steps (`y -20 over 0.5 out_quad`, `pause 1`, `repeat`), checked at compile
+time; `animate tag name` plays one. The VM records the name on `Shown`, so saves and rollback keep
+it, and old saves simply have none. It emits an `animate` stage event; `kulisa.animate` (prelude,
+public API) runs the steps with tweens. Values are offsets from where the node stands, so a saved
+animation stays right on any display profile. Layered sprites and sprite sheets are template
+behaviour over `kulisa.frames` and child sprites.
+
 ### Translations
 
 `lang/<code>.txt` holds one language: a source line, then `= translation`, with `@who` when it
@@ -994,3 +1003,4 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
 | 2026-10-31 | Steam loads `steam_api` at startup through its flat C API instead of linking the `steamworks` crate: games without Steam need nothing, the repository holds none of Valve's files, and prebuilt players stay possible. Interfaces are found by trying versions. Cloud saves are Auto-Cloud on the data folder, which needs no code. |
 | 2026-10-31 | Translations are found by source text (with an optional speaker), not by statement, so moving lines keeps them and saves are untouched; two identical lines by one speaker share a translation. Plain text files instead of generated script files, so translators need no tools. Text inside tables built at startup is marked with `kulisa.lang.mark` and translated when drawn. |
 | 2026-10-31 | Accessibility is self-voicing through each system's own speech, as in Ren'Py, with what to read left to templates. A real screen reader tree (AccessKit) would serve desktop and mobile readers better but needs the UI exposed as a semantic tree; left for later. |
+| 2026-10-31 | Story animation is a small `transform` block rather than Ren'Py's ATL: steps, pause and repeat cover most of what stories do, and anything more is Luau. Layered characters are folders by convention in the template, and a layer's look is named on every `show`, so saved stages stay complete descriptions. |

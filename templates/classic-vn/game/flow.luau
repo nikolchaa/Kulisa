@@ -186,7 +186,8 @@ kulisa.on("update", function(dt)
             end
             kulisa.story.next()
         end
-    elseif state.mode:peek() == "auto" and complete then
+    elseif state.mode:peek() == "auto" and complete and not kulisa.audio.playing("voice") then
+        -- Auto-forward lets a voice line finish, then counts its delay.
         auto_timer += dt
         local chars = if state.line then #state.line.text else 0
         if auto_timer >= prefs.get("auto_delay") + chars * 0.02 then

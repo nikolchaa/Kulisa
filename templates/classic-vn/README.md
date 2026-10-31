@@ -52,10 +52,18 @@ project's scripts, art and sounds, and lists what it could not convert in `IMPOR
 - Hide the interface with H or a middle click; open the game menu with Escape, a right
   click, a long press or Android's back button. Swipe down for the history.
 
+## Accessibility
+
+Preferences has text size and a solid text box. Self-voicing (V) reads lines, choices and the
+focused button aloud (`game/voice.luau`). `define alt = Character(nil, { alt = true })` gives you
+lines only self-voicing players hear, to describe what is on screen.
+
 ## Images
 
 `scene bg kitchen` shows `images/bg kitchen.png`, `show kitty happy at left` shows
 `images/kitty happy.png` (the first word is the tag; showing `kitty neutral` replaces it).
+Layered characters are a folder (`images/kitty/base.png`, `images/kitty/face/happy.png`), and
+`config.sheets` plays sprite sheets; see the comment in `game/stage.luau`.
 Characters stand on the bottom edge; `config.sprite_scale` sets their size per tag. Crop
 character images to the character (one rectangle for all of a character's images, so changing
 expression keeps the framing). Missing images show a labelled placeholder. Positions are in
