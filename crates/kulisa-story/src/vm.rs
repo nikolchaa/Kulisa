@@ -56,6 +56,8 @@ pub enum Event {
     },
     /// Wait for the player, or `secs` if given.
     Pause(Option<f32>),
+    /// Play this video, then continue. A load or rollback onto it plays it again.
+    Movie(String),
     Scene {
         image: Vec<String>,
         with: Option<String>,
@@ -92,7 +94,7 @@ pub enum Event {
 impl Event {
     /// Whether the runtime must wait before calling [`Vm::next`] again.
     pub fn blocks(&self) -> bool {
-        matches!(self, Event::Say(_) | Event::Menu { .. } | Event::Pause(_) | Event::End)
+        matches!(self, Event::Say(_) | Event::Menu { .. } | Event::Pause(_) | Event::Movie(_) | Event::End)
     }
 }
 
@@ -403,6 +405,7 @@ impl Vm {
         Ok(match self.op()?.clone() {
             Op::Say(s) => Event::Say(self.line(host, &s)?),
             Op::Pause(secs) => Event::Pause(secs),
+            Op::Movie(file) => Event::Movie(file),
             Op::Menu { caption, choices } => {
                 let caption = caption.as_ref().map(|c| self.line(host, c)).transpose()?;
                 let mut items = Vec::new();
@@ -549,7 +552,7 @@ impl Vm {
                     self.stage.tracks.remove(&channel);
                     return Ok(Event::Stop { channel, fade });
                 }
-                Op::Say(_) | Op::Menu { .. } | Op::Pause(_) => unreachable!("handled above"),
+                Op::Say(_) | Op::Menu { .. } | Op::Pause(_) | Op::Movie(_) => unreachable!("handled above"),
             }
         }
     }

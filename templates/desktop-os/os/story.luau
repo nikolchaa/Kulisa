@@ -139,6 +139,11 @@ kulisa.on("menu", function(items, caption)
     shell.dialog({ title = mark("Choose"), buttons = buttons })
 end)
 
+kulisa.on("movie", function(file)
+    wait = nil
+    kulisa.video.cutscene(file, { on_done = kulisa.story.next })
+end)
+
 kulisa.on("pause", function(secs)
     if secs then
         wait = { kind = "delay", at = kulisa.now() + secs }

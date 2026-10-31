@@ -33,7 +33,7 @@ game there too.
 ## What goes into a build
 
 `kulisa pack` (and every build) packs the game folder into one `game.kpak`: your scripts,
-stories, images, sounds, fonts and shaders. `dist/` and dot-files stay out. The settings in
+stories, images, sounds, fonts and shaders. `dist/`, dot-files and [videos](#videos) stay out. The settings in
 `kulisa.toml` become the app's name, version, ids and orientation:
 
 ```toml
@@ -50,6 +50,20 @@ package = "com.example.cattales"
 [ios]
 bundle_id = "com.example.cattales"
 ```
+
+## Videos
+
+Videos (`.mp4`, `.m4v`, `.mov`, `.webm`) stay out of `game.kpak`, which is read into memory whole.
+Builds put them beside it, and they are read as they play. If you only run `kulisa pack`, keep them
+next to the `.kpak` yourself, at the same paths as in the game.
+
+Use MP4 with H.264 video and AAC sound, which every system plays. Each platform decodes it with its
+own decoder, so the engine stays small and phones use their hardware.
+
+Linux has no decoder every system is sure to have, so `kulisa build linux` and `kulisa run` convert
+your videos to AV1 and Ogg Vorbis with [FFmpeg](https://ffmpeg.org/download.html), on your computer.
+They keep the results in `.video-cache` in your game's folder and convert again only when a video
+changes. Players need nothing installed.
 
 ## Publishing on the web
 

@@ -253,6 +253,7 @@ pub fn build(game: &Game, opts: &Options, sim: bool, app: &Path) -> Result {
     }
     // The player looks for game.kpak next to its executable.
     write(&app.join("game.kpak"), game.pack()?)?;
+    crate::video::copy(game, app)?;
 
     match &store {
         Some((identity, profile)) => sign_for_store(app, identity, profile, &work)?,

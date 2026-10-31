@@ -16,6 +16,8 @@ pub mod icon;
 pub mod ios;
 pub mod macos;
 pub mod serve;
+mod video;
+pub use video::convert as convert_videos;
 pub mod web;
 
 pub type Result<T = ()> = std::result::Result<T, String>;

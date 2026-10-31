@@ -26,6 +26,7 @@ pub const KEYWORDS: &[&str] = &[
     "pass",
     "animate",
     "transform",
+    "movie",
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -159,6 +160,8 @@ pub enum StmtKind {
         fade: Option<f32>,
     },
     Pause(Option<f32>),
+    /// `movie "intro.mp4"`: plays a video and waits for it.
+    Movie(String),
     /// `animate tag name`, or `animate tag` to stop.
     Animate {
         tag: String,

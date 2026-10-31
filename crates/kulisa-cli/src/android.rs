@@ -17,8 +17,7 @@ const STORE_PASSWORD: &str = "KULISA_KEYSTORE_PASSWORD";
 const KEY_PASSWORD: &str = "KULISA_KEY_PASSWORD";
 const BUNDLETOOL: &str = "1.18.3";
 /// Native libraries stay uncompressed and aligned for devices with 16 KB memory pages.
-const BUNDLE_CONFIG: &str =
-    r#"{"optimizations":{"uncompressNativeLibraries":{"enabled":true,"alignment":"PAGE_ALIGNMENT_16K"}}}"#;
+const BUNDLE_CONFIG: &str = r#"{"optimizations":{"uncompressNativeLibraries":{"enabled":true,"alignment":"PAGE_ALIGNMENT_16K"}},"compression":{"uncompressedGlob":["assets/video/**"]}}"#;
 
 /// Android ABI name and Rust target for each supported architecture.
 pub const ABIS: &[(&str, &str)] = &[
@@ -255,6 +254,10 @@ fn parts(game: &Game, opts: &Options, abis: &[&str]) -> Result<Parts> {
 
     // The player reads the game from assets/game.kpak through the AssetManager.
     write(&staging.join("assets/game.kpak"), game.pack()?)?;
+    // Stored uncompressed, so the system's decoder can read them straight from the APK.
+    let videos = staging.join("assets/video");
+    let _ = fs::remove_dir_all(&videos);
+    crate::video::copy(game, &videos)?;
 
     let tools = newest(&sdk.join("build-tools"))?;
     let platform = newest(&sdk.join("platforms"))?;
@@ -299,6 +302,13 @@ pub fn build(game: &Game, opts: &Options, abis: &[&str], apk: &Path) -> Result {
         add.arg(format!("lib/{abi}/libkulisa.so"));
     }
     run(&mut add)?;
+    let videos = kulisa_platform::game_videos(&game.dir)?;
+    if !videos.is_empty() {
+        let mut add = Command::new(p.tools.join(exe("aapt")));
+        add.current_dir(&p.staging).arg("add").args(["-0", ""]).arg(&unsigned);
+        add.args(videos.iter().map(|(rel, _)| format!("assets/video/{rel}")));
+        run(&mut add)?;
+    }
     run(Command::new(p.tools.join(exe("zipalign")))
         .args(["-f", "-P", "16", "4"])
         .arg(&unsigned)

@@ -53,10 +53,11 @@ Android can be built from any of the three; iOS needs a Mac.
 <Tabs>
 	<TabItem label="Linux">
 
-The engine needs the ALSA and udev headers for sound and gamepads:
+The engine needs the ALSA and udev headers for sound and gamepads, and nasm for its video decoder.
+FFmpeg is only needed for games with videos:
 
 ```sh
-sudo apt install libasound2-dev libudev-dev
+sudo apt install libasound2-dev libudev-dev nasm ffmpeg
 ```
 
 	</TabItem>

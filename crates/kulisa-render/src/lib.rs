@@ -826,6 +826,56 @@ impl Renderer {
         self.textures.pop();
     }
 
+    /// Replaces an unpacked texture's pixels with `rgba`, every frame if need be (a video). A new
+    /// size gets a new texture under the same id.
+    pub fn update_texture(&mut self, id: TextureId, width: u32, height: u32, rgba: &[u8]) {
+        self.resize_own(id, width, height);
+        if let Some(Tex::Own(tex)) = self.textures.get(id.0 as usize) {
+            self.upload_bytes(&tex.texture, 0, 0, width, height, rgba);
+        }
+    }
+
+    /// Replaces an unpacked texture's pixels with what a `<video>` shows now.
+    #[cfg(target_arch = "wasm32")]
+    pub fn update_texture_from_video(
+        &mut self,
+        id: TextureId,
+        video: &web_sys::HtmlVideoElement,
+        width: u32,
+        height: u32,
+    ) {
+        self.resize_own(id, width, height);
+        if let Some(Tex::Own(tex)) = self.textures.get(id.0 as usize) {
+            self.queue.copy_external_image_to_texture(
+                &wgpu::CopyExternalImageSourceInfo {
+                    source: wgpu::ExternalImageSource::HTMLVideoElement(video.clone()),
+                    origin: wgpu::Origin2d::ZERO,
+                    flip_y: false,
+                },
+                wgpu::CopyExternalImageDestInfo {
+                    texture: &tex.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                    color_space: wgpu::PredefinedColorSpace::Srgb,
+                    premultiplied_alpha: true,
+                },
+                wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            );
+        }
+    }
+
+    /// Gives an unpacked texture a new size, when it needs one. Its bind group changes too.
+    fn resize_own(&mut self, id: TextureId, width: u32, height: u32) {
+        let size = UVec2::new(width, height);
+        let i = id.0 as usize;
+        if matches!(self.textures.get(i), Some(Tex::Own(t)) if t.size != size) {
+            // Render attachment usage is what copying from a web video asks of a texture.
+            self.textures[i] = Tex::Own(self.new_texture(size, cfg!(target_arch = "wasm32")));
+            self.own_copies.remove(&id);
+        }
+    }
+
     /// Releases a texture. Unpacked textures and render targets free their memory; atlas
     /// space is not reclaimed. Sprites still showing it draw white.
     pub fn free_texture(&mut self, id: TextureId) {
@@ -987,7 +1037,11 @@ impl Renderer {
     }
 
     fn upload(&self, texture: &wgpu::Texture, x: u32, y: u32, image: &Image) {
-        if image.width == 0 || image.height == 0 {
+        self.upload_bytes(texture, x, y, image.width, image.height, &image.pixels);
+    }
+
+    fn upload_bytes(&self, texture: &wgpu::Texture, x: u32, y: u32, width: u32, height: u32, pixels: &[u8]) {
+        if width == 0 || height == 0 {
             return;
         }
         self.queue.write_texture(
@@ -997,13 +1051,13 @@ impl Renderer {
                 origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
-            &image.pixels,
+            pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * image.width),
-                rows_per_image: Some(image.height),
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
             },
-            wgpu::Extent3d { width: image.width, height: image.height, depth_or_array_layers: 1 },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
     }
 

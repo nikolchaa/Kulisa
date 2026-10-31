@@ -4,7 +4,10 @@
 //! Built-in channels: `music` and `voice` play one sound at a time (a new one crossfades
 //! out the old), `sound` overlaps freely. Games add their own with [`Audio::add_channel`].
 
+pub mod pcm;
 pub mod wav;
+
+pub use pcm::{PcmHandle, PcmWriter};
 
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -100,6 +103,7 @@ enum Playing {
     Static(StaticSoundHandle),
     #[cfg(not(target_arch = "wasm32"))]
     Stream(StreamingSoundHandle<kira::sound::FromFileError>),
+    Pcm(PcmHandle),
 }
 
 impl Playing {
@@ -108,6 +112,8 @@ impl Playing {
             Playing::Static(h) => h.state(),
             #[cfg(not(target_arch = "wasm32"))]
             Playing::Stream(h) => h.state(),
+            Playing::Pcm(h) if h.audible() => PlaybackState::Playing,
+            Playing::Pcm(_) => PlaybackState::Stopped,
         }
     }
 
@@ -116,6 +122,7 @@ impl Playing {
             Playing::Static(h) => h.stop(tween),
             #[cfg(not(target_arch = "wasm32"))]
             Playing::Stream(h) => h.stop(tween),
+            Playing::Pcm(h) => h.mute(),
         }
     }
 }
@@ -219,6 +226,28 @@ where
         };
         ch.playing.push(handle);
         Ok(())
+    }
+
+    /// Starts a stream of stereo frames at `rate` per second on `channel`, for samples that
+    /// are not in a file (a video's sound).
+    pub fn play_pcm(
+        &mut self,
+        channel: &str,
+        rate: u32,
+        volume: f32,
+    ) -> Result<(PcmHandle, PcmWriter), String> {
+        let ch = self.channel(channel)?;
+        ch.playing.retain(|p| p.state() != PlaybackState::Stopped);
+        if ch.kind == ChannelKind::Single {
+            for p in &mut ch.playing {
+                p.stop(tween(0.0));
+            }
+        }
+        let (data, writer) = pcm::stream(rate, volume);
+        let shared = data.handle.share();
+        let handle = ch.track.play(data).map_err(|e| format!("audio: {e:?}"))?;
+        ch.playing.push(Playing::Pcm(handle));
+        Ok((shared, writer))
     }
 
     /// Stops everything on `channel`, fading out over `fade` seconds.
@@ -348,6 +377,33 @@ mod tests {
         assert_eq!(to_decibels(1.0), Decibels(0.0));
         assert_eq!(to_decibels(0.0), Decibels::SILENCE);
         assert!((to_decibels(0.5).0 - -6.02).abs() < 0.01);
+    }
+
+    #[test]
+    fn pushed_samples_count_as_heard_and_stay_a_clock_when_silenced() {
+        let mut a = audio();
+        let (handle, mut writer) = a.play_pcm("music", 48_000, 1.0).unwrap();
+        assert!(a.is_playing("music"));
+        assert_eq!(writer.write(&[[0.5, 0.5]; 480]), 480);
+        assert!((handle.buffered() - 0.01).abs() < 1e-6);
+        let heard = |a: &mut Audio<MockBackend>| {
+            for _ in 0..1000 {
+                a.manager.backend_mut().on_start_processing();
+                a.manager.backend_mut().process();
+            }
+            handle.position()
+        };
+        let first = heard(&mut a);
+        assert!(first > 0.0, "the mixer took samples");
+
+        // Other music takes the channel; the stream keeps counting, silently.
+        a.play("music", &blip(), PlayOptions::default()).unwrap();
+        assert_eq!(writer.write(&[[0.5, 0.5]; 480]), 480);
+        assert!(heard(&mut a) >= first);
+        assert!(
+            a.channels["music"].playing.iter().all(|p| !matches!(p, Playing::Pcm(_))) || !handle.audible()
+        );
+        handle.close();
     }
 
     #[test]

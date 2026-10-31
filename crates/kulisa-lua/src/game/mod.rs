@@ -22,6 +22,7 @@ mod speech;
 mod steam;
 mod typing;
 mod ui;
+mod video;
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -136,6 +137,7 @@ pub(crate) struct State {
     pub typing: typing::Typing,
     pub sensors: sensors::Sensors,
     pub steam: Option<Box<dyn kulisa_platform::SteamApi>>,
+    pub videos: Vec<video::Playing>,
     pub lang: lang::Lang,
     pub speech: Vec<speech::SpeechRequest>,
     pub config: GameConfig,
@@ -322,6 +324,7 @@ pub(crate) fn story_advance(lua: &Lua, shared: &Shared) -> Result<(), String> {
                     s.timer = *secs;
                     s.waiting = Waiting::Pause;
                 }
+                Event::Movie(_) => s.waiting = Waiting::Pause,
                 Event::End => s.waiting = Waiting::Ended,
                 _ => {}
             }
@@ -423,6 +426,7 @@ fn dispatch(lua: &Lua, shared: &Shared, events: Vec<Event>, seen: &Seen) -> mlua
                 emit(shared, "menu", (list, caption));
             }
             Event::Pause(secs) => emit(shared, "pause", secs),
+            Event::Movie(file) => emit(shared, "movie", file),
             Event::End => emit(shared, "end", ()),
             Event::Scene { image, with } => {
                 let fields = [("image", image.into_lua(lua)?), ("with", with.into_lua(lua)?)];
@@ -611,6 +615,7 @@ impl Game {
             typing: Default::default(),
             sensors: Default::default(),
             steam: None,
+            videos: Vec::new(),
             lang: Default::default(),
             speech: Vec::new(),
             config,
@@ -725,6 +730,7 @@ impl Game {
             }
         }
         api::finish_pending_saves(&self.state);
+        video::step(&self.state, dt);
         if let Err(e) = self.kulisa().and_then(|k| k.get::<Function>("_tick")).and_then(|f| f.call::<()>(dt))
         {
             report(&self.state, &e.to_string());
@@ -881,11 +887,14 @@ impl Game {
     pub fn suspend(&mut self) {
         let mut st = self.state.borrow_mut();
         st.flush_seen();
+        video::set_suspended(&mut st, true);
         st.renderer.suspend();
     }
 
     pub fn resume(&mut self, target: impl SurfaceTarget, width: u32, height: u32) -> Result<(), String> {
-        self.state.borrow_mut().renderer.resume(target, width, height)
+        let mut st = self.state.borrow_mut();
+        video::set_suspended(&mut st, false);
+        st.renderer.resume(target, width, height)
     }
 
     /// Opens the audio device and starts what the game already asked for. Browsers allow

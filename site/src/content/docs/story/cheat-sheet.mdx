@@ -43,6 +43,9 @@ label start:
     # Wait a second; `pause` alone waits for a click.
     pause 1.0
 
+    # Play a video and wait for it; a click skips it.
+    movie "movies/intro.mp4"
+
     # Play a transform (defined at the top level) on what is shown; alone, it stops.
     animate mila bob
     animate mila

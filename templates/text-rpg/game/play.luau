@@ -67,6 +67,11 @@ kulisa.on("pause", function(secs)
     end
 end)
 
+kulisa.on("movie", function(file)
+    play.waiting = false
+    kulisa.video.cutscene(file, { on_done = kulisa.story.next })
+end)
+
 kulisa.on("end", function()
     play.waiting = false
     play.ended:set(true)

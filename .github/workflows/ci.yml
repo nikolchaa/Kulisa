@@ -31,7 +31,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       # ALSA headers for cpal (kulisa-audio), udev headers for gilrs (gamepads).
-      - run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev
+      - run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev nasm
       - run: cargo fmt --all --check 2>&1 | tee -a ci.log
       - run: cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee -a ci.log
       - if: failure()
@@ -56,7 +56,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers libasound2-dev libudev-dev
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers libasound2-dev libudev-dev nasm ffmpeg
       - run: cargo test --workspace 2>&1 | tee -a ci.log
       - run: cargo build -p kulisa-player 2>&1 | tee -a ci.log
       - if: runner.os == 'macOS'
@@ -66,6 +66,23 @@ jobs:
           .github/scripts/macos-app-smoke.sh dist/macos/*.app 2>&1 | tee -a ci.log
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log
+
+  linux-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev nasm
+      - run: cargo build --release -p kulisa-player
+      - run: git worktree add ../base 13cfe73 && cd ../base && cargo build --release -p kulisa-player
+      - name: Report sizes
+        run: |
+          cp target/release/kulisa-player new && cp ../base/target/release/kulisa-player old
+          strip new old
+          gzip -k new old
+          echo "::notice title=Linux player size::before $(stat -c %s old) after $(stat -c %s new) stripped; gzip before $(stat -c %s old.gz) after $(stat -c %s new.gz)"
 
   ios:
     name: iOS

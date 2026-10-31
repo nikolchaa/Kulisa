@@ -12,11 +12,11 @@ mod web_speech;
 #[cfg(target_arch = "wasm32")]
 mod web_text;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub use assets::build_pack;
 #[cfg(target_arch = "wasm32")]
 pub use assets::fetch;
-pub use assets::{Assets, Pack, is_game_file, normalize};
+pub use assets::{Assets, MediaLocation, Pack, VIDEO_CACHE, is_game_file, is_video, normalize};
+#[cfg(not(target_arch = "wasm32"))]
+pub use assets::{build_pack, game_videos};
 pub use config::{CONFIG_FILE, Config, ConfigValue, GameConfig, ORIENTATIONS, QUALITY_TIERS, valid_id};
 pub use device::{
     Motion, dev_override, language_override, profile_override, quality_override, safe_area_override,

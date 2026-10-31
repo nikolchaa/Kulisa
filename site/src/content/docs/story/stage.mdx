@@ -120,6 +120,21 @@ pause 1.2
 "The lights flickered."
 ```
 
+## Video
+
+`movie` plays a video over everything and waits for it. A click, tap, key or gamepad button skips it.
+
+```kulisa
+movie "movies/intro.mp4"
+"Three years later."
+```
+
+Use **MP4 with H.264 video and AAC sound**, the one format every system plays. Its sound plays on
+the `music` channel, so it stops the music, which stays stopped afterwards. Loading a save or rolling
+back onto a `movie` plays it again from the start. Skip mode passes over videos in `classic-vn`.
+
+To play a video on a sprite, see [`kulisa.video`](https://github.com/nikolchaa/Kulisa/blob/main/docs/API.md#video).
+
 ## Animation
 
 A `transform` describes movement, and `animate` plays it on something shown:

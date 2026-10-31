@@ -1,0 +1,38 @@
+[package]
+name = "kulisa-video"
+description = "Video playback for the Kulisa engine, using each platform's own decoders."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kulisa-audio.workspace = true
+kulisa-platform.workspace = true
+log.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.8"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Media_MediaFoundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+ndk-sys = { version = "0.6", features = ["media"] }
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+objc2 = "0.5"
+objc2-foundation = { version = "0.2", features = ["NSArray", "NSString", "NSURL"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+web-sys = { version = "0.3", features = ["Document", "Element", "HtmlMediaElement", "HtmlVideoElement", "MediaError", "Window"] }
+
+# Linux has no decoder every system is sure to have, so builds convert videos for this one.
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+rav1d = { version = "1.1", default-features = false, features = ["asm", "bitdepth_8"] }
+symphonia = { version = "0.6", default-features = false, features = ["ogg", "vorbis"] }
+
+# The Linux decoder is tested everywhere it builds, without its assembly (which needs nasm).
+[target.'cfg(any(windows, target_os = "macos"))'.dev-dependencies]
+rav1d = { version = "1.1", default-features = false, features = ["bitdepth_8"] }
+symphonia = { version = "0.6", default-features = false, features = ["ogg", "vorbis"] }

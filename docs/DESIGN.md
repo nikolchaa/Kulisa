@@ -335,6 +335,31 @@ Implemented in M2 (`kulisa-audio`) on kira.
   need ALSA headers (`libasound2-dev`).
 - Music position as part of saved scene state arrives with saves (M3).
 
+### Video
+
+`kulisa-video`. Each platform decodes with what it has, so games ship one MP4 and phones use their
+hardware: Media Foundation's source reader on Windows (loaded at run time, because "N" editions leave
+it out and a game with no video must still start there), AVFoundation readers on Apple systems, NDK
+MediaCodec plus an image reader on Android, and `<video>` on the web. Linux has no decoder every system
+is sure to have (GStreamer's H.264 plugins are often missing), so `kulisa build linux` converts to AV1
+in IVF plus Ogg Vorbis with FFmpeg, and the player decodes those with rav1d and symphonia, which kira
+already brings.
+
+Natively, one thread reads a `Source` (pictures as RGBA, sound as stereo frames) and keeps three frames
+and half a second of sound ready. Sound goes through a pushed stream on the channel's kira track
+(`kulisa-audio/src/pcm.rs`), and the frames heard are the clock; without sound it is frame time. A stream
+that runs dry holds still, so the clock waits rather than skipping. Sound is padded to the video's length,
+so the clock reaches the end, and loops stay lined up. Silencing a stream (other music took the channel)
+keeps it counting. A frame is one `queue.write_texture`; on the web `copy_external_image_to_texture`.
+
+Videos stay out of the `.kpak`, which is read into memory whole. They sit beside it (the bundle's resources
+on Apple systems, stored uncompressed under `assets/video` in an APK so the system can read them by file
+descriptor, plain files on the web).
+
+`movie` is a blocking story op, so saves and rollback can land on it, and playing it again is the whole
+state. Cutscenes are prelude code over the public API, with a modal screen for the pointer and a filter in
+`kulisa.on` for the rest of the input, so templates only handle the `movie` event.
+
 ## 7. Story language and VM
 
 Implemented in M3 (`kulisa-story`; Luau host in `kulisa-lua`).
@@ -782,6 +807,7 @@ body:   the VM's save: frames, stage, story variables
   Safari). `kulisa.window.fullscreen` follows the page's state. In fullscreen the page also
   locks the screen to the game's resolved orientation (`screen.orientation.lock`, which
   browsers refuse outside fullscreen), so a landscape-only game turns sideways by itself.
+- Builds put videos beside the pack (see §6, Video).
 - Mod loading is desktop only.
 
 ### CLI, live reload and quality tiers (M9)
@@ -1004,3 +1030,4 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
 | 2026-10-31 | Translations are found by source text (with an optional speaker), not by statement, so moving lines keeps them and saves are untouched; two identical lines by one speaker share a translation. Plain text files instead of generated script files, so translators need no tools. Text inside tables built at startup is marked with `kulisa.lang.mark` and translated when drawn. |
 | 2026-10-31 | Accessibility is self-voicing through each system's own speech, as in Ren'Py, with what to read left to templates. A real screen reader tree (AccessKit) would serve desktop and mobile readers better but needs the UI exposed as a semantic tree; left for later. |
 | 2026-10-31 | Story animation is a small `transform` block rather than Ren'Py's ATL: steps, pause and repeat cover most of what stories do, and anything more is Luau. Layered characters are folders by convention in the template, and a layer's look is named on every `show`, so saved stages stay complete descriptions. |
+| 2026-10-31 | Video uses each system's decoder with a software AV1 decoder on Linux only, as Unity does (with VP8 on Linux there), rather than bundling FFmpeg like Ren'Py or Theora like Godot: developers ship one MP4, phones use hardware, and the engine grows by a few hundred KB (about 3 MB on Linux). The price is more platform code, and H.264 not being free to bundle is why Linux converts at build time. AV1 over VP9 for Linux: smaller files and it decoded faster in tests, and the choice stays internal. |

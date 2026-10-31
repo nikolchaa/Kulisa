@@ -13,6 +13,7 @@ kulisa-core.workspace = true
 kulisa-lua.workspace = true
 kulisa-platform.workspace = true
 kulisa-render.workspace = true
+kulisa-video.workspace = true
 log.workspace = true
 web-time.workspace = true
 winit.workspace = true

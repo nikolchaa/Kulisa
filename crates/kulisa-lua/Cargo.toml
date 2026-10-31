@@ -15,6 +15,7 @@ kulisa-render.workspace = true
 kulisa-story.workspace = true
 kulisa-text.workspace = true
 kulisa-ui.workspace = true
+kulisa-video.workspace = true
 log.workspace = true
 mlua.workspace = true
 web-time.workspace = true

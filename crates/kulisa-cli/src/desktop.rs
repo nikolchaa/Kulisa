@@ -60,6 +60,11 @@ pub fn build(game: &Game, opts: &Options, out: &Path) -> Result<std::path::PathB
         fs::copy(lib, out.join(name)).map_err(|e| format!("{}: {e}", lib.display()))?;
     }
     write(&out.join("game.kpak"), game.pack()?)?;
+    if cfg!(any(windows, target_os = "macos")) {
+        crate::video::copy(game, out)?;
+    } else {
+        crate::video::copy_converted(game, out)?;
+    }
     eprintln!("desktop build ready: {}", program.display());
     Ok(program)
 }

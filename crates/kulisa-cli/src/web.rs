@@ -65,6 +65,7 @@ pub fn build(game: &Game, opts: &Options, out: &Path) -> Result {
     }
     write(&out.join("index.html"), page(game, icon.is_some()))?;
     write(&out.join("game.kpak"), game.pack()?)?;
+    crate::video::copy(game, out)?;
     let size = fs::metadata(out.join("kulisa_bg.wasm")).map(|m| m.len()).unwrap_or(0);
     eprintln!("web build ready: {} ({:.1} MB wasm)", out.display(), size as f64 / 1e6);
     Ok(())

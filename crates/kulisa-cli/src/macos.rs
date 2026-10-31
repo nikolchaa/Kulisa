@@ -93,6 +93,7 @@ pub fn build(game: &Game, opts: &Options, package: Package, out: &Path) -> Resul
     write(&contents.join("Info.plist"), info_plist(game, &name, icon.is_some()))?;
     // The player also looks for game.kpak in Contents/Resources.
     write(&contents.join("Resources/game.kpak"), game.pack()?)?;
+    crate::video::copy(game, &contents.join("Resources"))?;
 
     if opts.release && identity.is_none() {
         eprintln!("warning: ad-hoc signed; other Macs warn about it (see `[macos] identity`)");

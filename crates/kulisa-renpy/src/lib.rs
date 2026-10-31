@@ -865,6 +865,22 @@ impl Converter {
             }
             return true;
         }
+        if let Some(args) = code.strip_prefix("renpy.movie_cutscene(") {
+            let name = args.trim_end_matches(')').split(',').next().unwrap_or("").trim();
+            let name = name.trim_matches(|c| c == '"' || c == '\'');
+            if !name.is_empty() && !name.contains(['[', '{']) {
+                if self.files.contains(name) {
+                    self.audio.insert(name.to_string());
+                } else {
+                    self.note(line.no, format!("the video `{name}` was not found in the game folder"));
+                }
+                self.push(indent, format!("movie \"{name}\""));
+                if !name.to_ascii_lowercase().ends_with(".mp4") {
+                    self.note(line.no, format!("`{name}` is not an MP4, which is the one format every system plays; convert it (`ffmpeg -i {name} out.mp4`) and change the `movie` line"));
+                }
+                return true;
+            }
+        }
         match expr::statement(code) {
             Ok(s) if s.is_empty() => false,
             Ok(s) => {

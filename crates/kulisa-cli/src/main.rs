@@ -406,6 +406,9 @@ fn play(a: &Args) -> Result {
         android::build(&game, &opts, &abis, &apk)?;
         return android::install_and_start(&game, &apk);
     }
+    if cfg!(all(unix, not(target_os = "macos"))) {
+        kulisa_cli::convert_videos(&game)?;
+    }
     let mut cargo = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     cargo.current_dir(&opts.engine).args(["run", "-p", "kulisa-player"]);
     if opts.release {
@@ -525,6 +528,9 @@ fn pack(a: &Args) -> Result {
     }
     fs::write(&out, game.pack()?).map_err(|e| format!("{}: {e}", out.display()))?;
     eprintln!("wrote {}", out.display());
+    if !kulisa_platform::game_videos(&game.dir)?.is_empty() {
+        eprintln!("videos stay out of the pack: keep them beside it, at the same paths as in the game");
+    }
     Ok(())
 }
 

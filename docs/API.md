@@ -711,6 +711,38 @@ Channels: `music` and `voice` (one sound at a time, crossfading) and `sound` (ov
 On the web, audio starts with the player's first click, tap or key; earlier requests for
 looping music start then.
 
+## Video
+
+Use MP4 with H.264 video and AAC sound, the one format every system plays. Videos stay out of the
+`.kpak`; builds put them beside it.
+
+- `kulisa.video.play(path, { loop, paused, volume, channel })` starts a video and returns a handle.
+  Its sound plays on `channel` (default `"music"`, which it takes over like any new sound there);
+  `channel = false` leaves the sound out. The clock follows the sound, so a slow machine drops frames
+  and the picture stays in time.
+- The handle has `image`, for any sprite (black until the first frame, then the video's size, so give
+  the sprite its own `width` and `height`), `ready` (the file has opened), `width`, `height`, `duration`,
+  `time`, `paused`, `done` and `error`.
+- `v:pause()`, `v:resume()`, `v:seek(seconds)`, `v:set_volume(v)`. `v:stop()` ends it for good and frees
+  its image: remove sprites showing it first. Finished videos keep showing their last frame until then.
+  Videos pause by themselves while a phone app is in the background.
+- `kulisa.video.cutscene(path, opts)` plays one over everything, fitted to the window with black around
+  it, and the game gets no input meanwhile. A click, tap, key or gamepad button skips it unless
+  `skippable = false`. Takes the same options, plus `on_done`, which runs once it is over. The handle has
+  `done`, `video` and `skip()`. `kulisa.video.in_cutscene()` says whether one is playing.
+
+```luau
+local v = kulisa.video.play("movies/rain.mp4", { loop = true, channel = false })
+kulisa.sprite({ image = v.image, width = 1280, height = 720 })
+
+kulisa.on("movie", function(file)
+    kulisa.video.cutscene(file, { on_done = kulisa.story.next })
+end)
+```
+
+On the web a video starts muted, as browsers require, and gets its sound with the player's first click,
+tap or key. Its volume is the channel's at that moment times `volume`.
+
 ## Story
 
 - `kulisa.story.load(files?)` compiles the given `.kulisa` files (default: every `.kulisa`
@@ -735,6 +767,7 @@ like:
 | `say` | `{ text, who, seen }`; `who` is the `Character` table (`name`, `color`, ...) plus `id`; `seen` whether the player saw this line before |
 | `menu` | `items` (`{ index, text, chosen }`, hidden choices left out; `chosen` if the player picked it before), `caption` (a line or nil) |
 | `pause` | seconds, or nil to wait for `next()` |
+| `movie` | the file of a `movie` line; the game plays it and calls `next()` (see [Video](#video)). A load or rollback onto it fires this again. |
 | `stage` | `{ kind = "scene" \| "show" \| "hide" \| "with", image, at, tag, with }` |
 | `end` | |
 | `restore` | the stage `{ scene, shown = { { image, at } }, tracks }` after rollback or load; rebuild visuals from it. The current line follows as a `say` or `menu`. |

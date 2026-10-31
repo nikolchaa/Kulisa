@@ -41,6 +41,7 @@ const EVENTS: &[&str] = &[
     "say",
     "menu",
     "pause",
+    "movie",
     "end",
     "stage",
     "restore",
@@ -1990,6 +1991,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     super::steam::install(lua, &k)?;
     super::lang::install(lua, &k)?;
     super::speech::install(lua, &k)?;
+    super::video::install(lua, &k)?;
     k.set("input", input)?;
     super::interact::install(lua, &k)?;
 

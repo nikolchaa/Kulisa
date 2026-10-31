@@ -9,4 +9,5 @@ repository.workspace = true
 
 [dependencies]
 kira.workspace = true
+rtrb = "0.4"
 log.workspace = true

@@ -202,3 +202,19 @@ fn empty_blocks_get_pass_and_menus_need_choices() {
     let out = c.convert("t.rpy", "label start:\n    window show\n    menu:\n        \"Only text\"\n");
     assert_eq!(out, "label start:\n    # Ren'Py: menu:\n    pass\n");
 }
+
+#[test]
+fn movie_cutscenes_become_movie_lines() {
+    let mut c = Converter::default();
+    c.files.insert("intro.webm".to_string());
+    let story = c.convert(
+        "script.rpy",
+        "label start:\n    $ renpy.movie_cutscene(\"intro.webm\")\n    $ renpy.movie_cutscene(\"gone.mp4\")\n    return\n",
+    );
+    assert!(story.contains("movie \"intro.webm\""), "{story}");
+    assert!(story.contains("movie \"gone.mp4\""), "{story}");
+    assert!(c.audio.contains("intro.webm"), "the file comes along");
+    let notes: Vec<&str> = c.notes.iter().map(|n| n.message.as_str()).collect();
+    assert!(notes.iter().any(|n| n.contains("ffmpeg -i intro.webm")), "{notes:?}");
+    assert!(notes.iter().any(|n| n.contains("`gone.mp4` was not found")), "{notes:?}");
+}

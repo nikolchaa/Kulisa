@@ -389,6 +389,13 @@ impl<'a> Parser<'a> {
             ensure_end(&mut c, "`pause`")?;
             return Ok(stmt(StmtKind::Pause(secs)));
         }
+        if c.keyword("movie") {
+            let file = c
+                .string()?
+                .ok_or_else(|| c.error("expected a quoted file name, like `movie \"intro.mp4\"`"))?;
+            ensure_end(&mut c, "the file name")?;
+            return Ok(stmt(StmtKind::Movie(file)));
+        }
         if c.keyword("animate") {
             let tag =
                 c.ident(false).ok_or_else(|| c.error("expected what to animate, like `animate mila bob`"))?;

@@ -36,6 +36,9 @@ impl std::fmt::Debug for Assets {
 pub struct Pack {
     index: BTreeMap<String, (usize, usize)>,
     data: Vec<u8>,
+    /// The folder the pack came from, where a build puts its videos.
+    #[cfg(not(target_arch = "wasm32"))]
+    folder: Option<PathBuf>,
 }
 
 /// Normalizes a game path, refusing anything that could escape the game.
@@ -92,12 +95,40 @@ impl Pack {
             }
             index.insert(path, (start, size));
         }
-        Ok(Pack { index, data: bytes })
+        Ok(Pack {
+            index,
+            data: bytes,
+            #[cfg(not(target_arch = "wasm32"))]
+            folder: None,
+        })
     }
 
     fn get(&self, path: &str) -> Option<&[u8]> {
         self.index.get(path).map(|&(start, len)| &self.data[start..start + len])
     }
+}
+
+/// Where a video's file is. Videos stay out of the pack, which is read into memory whole, and
+/// are read as they play.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MediaLocation {
+    #[cfg(not(target_arch = "wasm32"))]
+    File(PathBuf),
+    /// A path in the APK's assets.
+    #[cfg(target_os = "android")]
+    Asset(String),
+    /// A URL relative to the page.
+    #[cfg(target_arch = "wasm32")]
+    Url(String),
+}
+
+/// Where `kulisa run` keeps a game's videos converted for Linux. Hidden, so never packed.
+pub const VIDEO_CACHE: &str = ".video-cache";
+
+/// Whether a game file is a video.
+pub fn is_video(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    [".mp4", ".m4v", ".mov", ".webm"].iter().any(|e| lower.ends_with(e))
 }
 
 /// Signing keys and profiles, which must never ship inside a game.
@@ -123,21 +154,21 @@ pub fn is_game_file(path: &str) -> bool {
     })
 }
 
-/// Packs every game file under `dir` ([`is_game_file`]) into `.kpak` bytes (build tools;
-/// native only).
+/// Every game file under `dir` ([`is_game_file`]), as game paths and where they are, sorted.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn build_pack(dir: &Path) -> Result<Vec<u8>, String> {
+fn game_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Result<(), String> {
         let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for entry in entries {
             let path = entry.map_err(|e| e.to_string())?.path();
+            let rel = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
+            if !is_game_file(&rel) {
+                continue;
+            }
             if path.is_dir() {
                 walk(base, &path, out)?;
             } else {
-                let rel = path.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/");
-                if is_game_file(&rel) {
-                    out.push((rel, path));
-                }
+                out.push((rel, path));
             }
         }
         Ok(())
@@ -145,6 +176,22 @@ pub fn build_pack(dir: &Path) -> Result<Vec<u8>, String> {
     let mut files = Vec::new();
     walk(dir, dir, &mut files)?;
     files.sort();
+    Ok(files)
+}
+
+/// The videos under `dir`, which builds copy beside the pack (build tools; native only).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn game_videos(dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    let mut files = game_files(dir)?;
+    files.retain(|(rel, _)| is_video(rel));
+    Ok(files)
+}
+
+/// Packs every game file under `dir` except videos into `.kpak` bytes (build tools; native only).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn build_pack(dir: &Path) -> Result<Vec<u8>, String> {
+    let mut files = game_files(dir)?;
+    files.retain(|(rel, _)| !is_video(rel));
     let mut header = MAGIC.to_vec();
     header.extend_from_slice(&VERSION.to_le_bytes());
     header.extend_from_slice(&(files.len() as u32).to_le_bytes());
@@ -189,9 +236,48 @@ impl Assets {
         Ok(Assets::Pack(Arc::new(Pack::parse(bytes)?)))
     }
 
+    /// A pack read from a file in `folder`, where its videos are too.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn pack_in(bytes: Vec<u8>, folder: impl Into<PathBuf>) -> Result<Assets, String> {
+        let mut pack = Pack::parse(bytes)?;
+        pack.folder = Some(folder.into());
+        Ok(Assets::Pack(Arc::new(pack)))
+    }
+
     /// No files (a game that could not be found still gets an error view).
     pub fn empty() -> Assets {
-        Assets::Pack(Arc::new(Pack { index: BTreeMap::new(), data: Vec::new() }))
+        Assets::Pack(Arc::new(Pack {
+            index: BTreeMap::new(),
+            data: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            folder: None,
+        }))
+    }
+
+    /// Where the video at a game path is.
+    pub fn video(&self, path: &str) -> Result<MediaLocation, String> {
+        let p = normalize(path)?;
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Assets::Dir(dir) => {
+                // Linux plays conversions, which a build keeps here unless they are beside the game.
+                let converted = dir.join(VIDEO_CACHE).join(&p);
+                let cached =
+                    cfg!(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))
+                        && converted.with_extension("ivf").is_file();
+                Ok(MediaLocation::File(if cached { converted } else { dir.join(&p) }))
+            }
+            #[cfg(target_arch = "wasm32")]
+            Assets::Pack(_) => Ok(MediaLocation::Url(p)),
+            #[cfg(not(target_arch = "wasm32"))]
+            Assets::Pack(pack) => match &pack.folder {
+                Some(folder) => Ok(MediaLocation::File(folder.join(&p))),
+                #[cfg(target_os = "android")]
+                None => Ok(MediaLocation::Asset(format!("video/{p}"))),
+                #[cfg(not(target_os = "android"))]
+                None => Err(format!("`{p}`: this pack is not in a folder, so its videos cannot be found")),
+            },
+        }
     }
 
     /// The paths whose contents differ between two packs, including added and removed files

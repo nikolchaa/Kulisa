@@ -95,6 +95,7 @@ pub enum Op {
         fade: Option<f32>,
     },
     Pause(Option<f32>),
+    Movie(String),
     Animate {
         tag: String,
         transform: Option<String>,
@@ -104,7 +105,7 @@ pub enum Op {
 impl Op {
     /// Ops that wait for the player (and where checkpoints and saves happen).
     pub fn blocks(&self) -> bool {
-        matches!(self, Op::Say(_) | Op::Menu { .. } | Op::Pause(_))
+        matches!(self, Op::Say(_) | Op::Menu { .. } | Op::Pause(_) | Op::Movie(_))
     }
 }
 
@@ -490,6 +491,9 @@ impl Compiler<'_> {
             }
             StmtKind::Pause(secs) => {
                 Self::emit(code, Op::Pause(*secs));
+            }
+            StmtKind::Movie(file) => {
+                Self::emit(code, Op::Movie(file.clone()));
             }
         }
     }

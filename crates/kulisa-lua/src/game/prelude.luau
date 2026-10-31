@@ -66,6 +66,95 @@ local function timer(secs, f, repeating)
     return handle
 end
 
+-- Plays a video over everything, fitted to the window with black around it. A click, tap, key or
+-- gamepad button skips it unless `skippable = false`, and the game gets no input meanwhile. Takes
+-- the options of `kulisa.video.play`. `on_done` runs once it is over; the handle has `done`, `video`
+-- and `skip()`.
+local cutscene = nil
+local on_event = kulisa.on
+local INPUT = {
+    press = true, release = true, move = true, key = true, key_up = true, wheel = true, tap = true,
+    long_press = true, swipe = true, pinch = true, rotate = true, pad_press = true, pad_release = true,
+    pad_axis = true, text = true, preedit = true,
+}
+
+function kulisa.on(event, f)
+    if INPUT[event] and type(f) == "function" then
+        local inner = f
+        f = function(...)
+            if not cutscene then
+                inner(...)
+            end
+        end
+    end
+    return on_event(event, f)
+end
+
+function kulisa.video.cutscene(path, opts)
+    opts = opts or {}
+    local ui = kulisa.ui
+    if cutscene then
+        cutscene.skip()
+    end
+    local video = kulisa.video.play(path, opts)
+    local layer = kulisa.layer({ parallax = 0, z = 2 ^ 30 })
+    local back = kulisa.sprite({ parent = layer, tint = "#000000" })
+    local picture = kulisa.sprite({ parent = layer, image = video.image, visible = false })
+    local handle = { done = false, video = video }
+    local listeners = {}
+    cutscene = handle
+
+    local function finish()
+        if handle.done then
+            return
+        end
+        handle.done = true
+        cutscene = nil
+        for _, id in listeners do
+            kulisa.off(id)
+        end
+        ui.hide("_cutscene")
+        layer:remove()
+        video:stop()
+        if opts.on_done then
+            opts.on_done()
+        end
+    end
+    handle.skip = finish
+
+    -- A modal screen keeps the pointer from what is below it.
+    local skippable = opts.skippable ~= false
+    ui.screen("_cutscene", function()
+        return ui.box({ width = "fill", height = "fill", on_press = if skippable then finish else nil })
+    end, { z = 2 ^ 30, modal = true, nav = false, area = "screen" })
+    ui.show("_cutscene")
+
+    table.insert(listeners, on_event("update", function()
+        if video.done then
+            return finish()
+        end
+        local x, y, w, h = kulisa.screen:visible()
+        back.x, back.y, back.width, back.height = x, y, w, h
+        if video.ready and video.width > 0 then
+            local scale = math.min(w / video.width, h / video.height)
+            picture.width, picture.height = video.width * scale, video.height * scale
+            picture.x = x + (w - picture.width) / 2
+            picture.y = y + (h - picture.height) / 2
+            picture.visible = true
+        end
+    end))
+    if skippable then
+        table.insert(listeners, on_event("key", finish))
+        table.insert(listeners, on_event("pad_press", finish))
+    end
+    return handle
+end
+
+-- Whether a cutscene is playing.
+function kulisa.video.in_cutscene()
+    return cutscene ~= nil
+end
+
 -- Plays an animation on a node: a story `transform` by name, or { steps, times }. `x` and `y`
 -- are offsets from where the node is, `scale` multiplies, `rotation` adds, `opacity` is
 -- absolute. `opts.instant` jumps to the end (a loop just stays put). The handle has `done` and

@@ -744,7 +744,8 @@ fn find_game() -> Result<Assets, String> {
         if p.is_dir() {
             Ok(Assets::dir(p))
         } else {
-            Assets::pack(std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?)
+            let folder = p.parent().map_or_else(|| PathBuf::from("."), PathBuf::from);
+            Assets::pack_in(std::fs::read(&p).map_err(|e| format!("{}: {e}", p.display()))?, folder)
         }
     };
     // One dash too: macOS can pass `-psn_...` to apps it starts.
@@ -784,6 +785,7 @@ pub fn run() {
 #[cfg(target_os = "android")]
 pub fn run_android(app: AndroidApp) {
     android::set_app(&app);
+    kulisa_video::set_asset_manager(app.asset_manager().ptr().as_ptr().cast());
     use std::io::Read;
     use winit::platform::android::EventLoopBuilderExtAndroid;
     kulisa_platform::init_logging();

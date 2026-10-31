@@ -46,6 +46,15 @@ end)
 kulisa.on("pause", function()
     state.ctc:set(false)
 end)
+kulisa.on("movie", function(file)
+    state.ctc:set(false)
+    -- Skipping passes over videos too.
+    if state.mode:peek() == "skip" then
+        kulisa.after(0, kulisa.story.next)
+        return
+    end
+    kulisa.video.cutscene(file, { on_done = kulisa.story.next })
+end)
 kulisa.on("end", function()
     actions.main_menu()
 end)
