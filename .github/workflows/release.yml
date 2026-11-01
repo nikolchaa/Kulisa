@@ -1,16 +1,10 @@
 name: Release
 
 # What people download: the `kulisa` tool for each desktop and every target's player. A `v*` tag
-# publishes them; pushes that change how they are made only build and check them.
+# publishes them; the "Run workflow" button only builds and checks them.
 on:
   push:
     tags: ["v*"]
-    branches: [main]
-    paths:
-      - .github/workflows/release.yml
-      - .github/scripts/release-check.sh
-      - crates/kulisa-cli/**
-      - xtask/**
   workflow_dispatch:
 
 concurrency:
