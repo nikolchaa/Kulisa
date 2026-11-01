@@ -1,0 +1,192 @@
+name: Release
+
+# What people download: the `kulisa` tool for each desktop and every target's player. A `v*` tag
+# publishes them; pushes that change how they are made only build and check them.
+on:
+  push:
+    tags: ["v*"]
+    branches: [main]
+    paths:
+      - .github/workflows/release.yml
+      - .github/scripts/release-check.sh
+      - crates/kulisa-cli/**
+      - xtask/**
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tool:
+    name: Tool ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest }
+          # The oldest system GitHub offers: the Linux player runs where its glibc or a newer one is.
+          - { name: Linux, os: ubuntu-22.04 }
+          - { name: macOS, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev nasm
+      - if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - run: cargo xtask tool 2>&1 | tee -a ci.log
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: |
+            dist/release/*.tar.gz
+            dist/release/*.zip
+
+  web:
+    name: Player Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "21"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.129
+      - run: cargo xtask player web 2>&1 | tee -a ci.log
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-Web
+          path: dist/release/*.tar.gz
+
+  android:
+    name: Player Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android, armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask player android 2>&1 | tee -a ci.log
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-Android
+          path: dist/release/*.tar.gz
+
+  ios:
+    name: Player iOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask player ios 2>&1 | tee -a ci.log
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-iOS
+          path: dist/release/*.tar.gz
+
+  # The downloads as someone without Rust gets them: the tool unpacked somewhere else, players
+  # downloaded from a local server, games built for other systems and started on those systems.
+  check:
+    name: Check ${{ matrix.name }}
+    needs: [tool, web, android, ios]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest }
+          - { name: Linux, os: ubuntu-latest }
+          - { name: macOS, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          path: downloads
+          pattern: release-*
+          merge-multiple: true
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers xvfb libasound2t64
+      - run: .github/scripts/release-check.sh downloads 2>&1 | tee -a ci.log; exit "${PIPESTATUS[0]}"
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: check-${{ matrix.name }}
+          path: check-out/*.tar.gz
+          if-no-files-found: ignore
+
+  # What Windows packed for the other systems starts on them, the hardest way to get there.
+  cross:
+    name: Cross ${{ matrix.name }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-latest }
+          - { name: macOS, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v5
+        with:
+          name: check-Windows
+          path: windows-made
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers xvfb libasound2t64
+      - run: .github/scripts/release-check.sh --start-from windows-made 2>&1 | tee -a ci.log; exit "${PIPESTATUS[0]}"
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
+
+  publish:
+    name: Publish
+    needs: [check, cross]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      # The tool downloads players from the tag of its own version.
+      - run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          test "${GITHUB_REF_NAME}" = "v${version}" || {
+            echo "::error::the tag ${GITHUB_REF_NAME} is not the workspace version ${version}"
+            exit 1
+          }
+      - uses: actions/download-artifact@v5
+        with:
+          path: downloads
+          pattern: release-*
+          merge-multiple: true
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" downloads/* --generate-notes --title "Kulisa ${GITHUB_REF_NAME#v}"
