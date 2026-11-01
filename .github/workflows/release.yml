@@ -16,6 +16,7 @@ on:
       - .github/workflows/release.yml
       - .github/scripts/release-check.sh
       - .github/scripts/ios-sim-smoke.sh
+      - .github/scripts/macos-app-smoke.sh
   workflow_dispatch:
 
 concurrency:

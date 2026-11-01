@@ -15,8 +15,8 @@ case "$(uname -s)" in
 esac
 export RUST_LOG=info
 
-# Starts a program from another folder, so it must find the game on its own, and checks it is
-# still running after a while and that the game came up.
+# Starts a program from another folder, so it must find the game on its own, and checks the game
+# came up and that it stays running. A busy runner can take a while to start it.
 start_game() {
     local program=$1 status=0 log pid
     log=$(mktemp)
@@ -26,9 +26,14 @@ start_game() {
         (cd "${TMPDIR:-/tmp}" && exec "$program") > "$log" 2>&1 &
     fi
     pid=$!
-    sleep 15
+    for _ in $(seq 60); do
+        grep -q "hello from Luau" "$log" && break
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
+    sleep 5
     if ! kill -0 "$pid" 2>/dev/null; then
-        echo "error: $program is not running after 15 s"
+        echo "error: $program is not running"
         status=1
     fi
     pkill -f "$(basename "$program")" 2>/dev/null || kill "$pid" 2>/dev/null || true
@@ -38,6 +43,9 @@ start_game() {
     if ! grep -q "hello from Luau" "$log"; then
         echo "error: \"hello from Luau\" is not in the log of $program"
         status=1
+    fi
+    if [ "$status" != 0 ]; then
+        echo "::notice title=Log of the game::$(tail -n 25 "$log" | cut -c1-200 | awk '{ printf "%s%%0A", $0 }')"
     fi
     return "$status"
 }
@@ -152,17 +160,16 @@ test -s "$work/smoke/dist/linux/THIRD-PARTY-LICENSES.txt"
 test -s "$work/smoke/dist/macos/Smoke Test.app/Contents/Resources/game.kpak"
 test -s "$work/smoke/dist/macos/Smoke Test.app/Contents/Resources/THIRD-PARTY-LICENSES.txt"
 
-case "$host" in
-    windows)
-        mkdir -p check-out
-        cp "$work/smoke/dist/Smoke Test-linux.tar.gz" "$work/smoke/dist/Smoke Test-macos.tar.gz" check-out/
-        ;;
-    macos)
-        # The downloaded iOS player, in a simulator, for the only system that can.
-        "$kulisa" build ios "$work/smoke" --sim
-        mkdir -p dist/ios
-        cp -R "$work/smoke/dist/ios/Smoke Test.app" dist/ios/Kulisa.app
-        .github/scripts/ios-sim-smoke.sh
-        ;;
-esac
+if [ "$host" = windows ]; then
+    mkdir -p check-out
+    cp "$work/smoke/dist/Smoke Test-linux.tar.gz" "$work/smoke/dist/Smoke Test-macos.tar.gz" check-out/
+fi
 start_here
+# The downloaded iOS player, in a simulator, for the only system that can. Last, as a simulator
+# keeps the runner busy.
+if [ "$host" = macos ]; then
+    "$kulisa" build ios "$work/smoke" --sim
+    mkdir -p dist/ios
+    cp -R "$work/smoke/dist/ios/Smoke Test.app" dist/ios/Kulisa.app
+    .github/scripts/ios-sim-smoke.sh
+fi
