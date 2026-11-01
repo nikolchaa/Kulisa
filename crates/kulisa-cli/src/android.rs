@@ -264,6 +264,7 @@ fn parts(game: &Game, opts: &Options, abis: &[&str]) -> Result<Parts> {
 
     // The player reads the game from assets/game.kpak through the AssetManager.
     write(&staging.join("assets/game.kpak"), game.pack()?)?;
+    crate::write_licenses(&staging.join("assets"))?;
     // Stored uncompressed, so the system's decoder can read them straight from the APK.
     let videos = staging.join("assets/video");
     let _ = fs::remove_dir_all(&videos);
@@ -307,7 +308,11 @@ pub fn build(game: &Game, opts: &Options, abis: &[&str], apk: &Path) -> Result {
     run(&mut p.link(&unsigned))?;
     // Paths inside the APK are relative to the working directory.
     let mut add = Command::new(p.tools.join(exe("aapt")));
-    add.current_dir(&p.staging).arg("add").arg(&unsigned).arg("assets/game.kpak");
+    add.current_dir(&p.staging)
+        .arg("add")
+        .arg(&unsigned)
+        .arg("assets/game.kpak")
+        .arg(format!("assets/{}", crate::LICENSES_FILE));
     for abi in abis {
         add.arg(format!("lib/{abi}/libkulisa.so"));
     }

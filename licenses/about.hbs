@@ -1,0 +1,24 @@
+
+Open-source software inside Kulisa
+==================================
+
+Games made with Kulisa contain the software below. Each crate's source is at
+https://crates.io/crates/NAME/VERSION. Files under the MPL-2.0 can be had in source form there, and
+Kulisa uses them unchanged.
+
+{{#each overview}}
+{{{name}}}: {{count}}
+{{/each}}
+
+{{#each licenses}}
+--------------------------------------------------------------------------------
+{{{name}}}
+
+Used by:
+{{#each used_by}}
+  {{crate.name}} {{crate.version}}
+{{/each}}
+
+{{{text}}}
+
+{{/each}}

@@ -183,6 +183,16 @@ impl Options {
     }
 }
 
+/// The licences of what a player is made of, which go wherever a player goes. `cargo xtask
+/// licenses` makes the file.
+const THIRD_PARTY_LICENSES: &str = include_str!("../THIRD-PARTY-LICENSES.txt");
+pub(crate) const LICENSES_FILE: &str = "THIRD-PARTY-LICENSES.txt";
+
+/// Puts the licence list into a folder that ships.
+pub(crate) fn write_licenses(dir: &Path) -> Result {
+    write(&dir.join(LICENSES_FILE), THIRD_PARTY_LICENSES)
+}
+
 pub fn run(cmd: &mut Command) -> Result {
     eprintln!("> {cmd:?}");
     let status = cmd.status().map_err(|e| format!("failed to run {:?}: {e}", cmd.get_program()))?;

@@ -86,6 +86,7 @@ pub fn build(game: &Game, opts: &Options, target: &str, out: &Path) -> Result<Pa
         fs::copy(lib, out.join(name)).map_err(|e| format!("{}: {e}", lib.display()))?;
     }
     write(&out.join("game.kpak"), game.pack()?)?;
+    crate::write_licenses(out)?;
     if target == "windows" {
         crate::video::copy(game, out)?;
     } else {

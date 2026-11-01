@@ -34,6 +34,10 @@ jobs:
       - run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev nasm
       - run: cargo fmt --all --check 2>&1 | tee -a ci.log
       - run: cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tee -a ci.log
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
+      - run: cargo xtask licenses --check 2>&1 | tee -a ci.log; exit "${PIPESTATUS[0]}"
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log
 

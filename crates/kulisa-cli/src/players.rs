@@ -7,11 +7,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sha2::{Digest, Sha256};
+
 use crate::{Engine, Options, Result, android, desktop, ios, macos, run, tar, web};
 
 /// Where releases are downloaded from; `KULISA_RELEASES` points somewhere else (a mirror, tests).
 const RELEASES: &str = "https://github.com/nikolchaa/Kulisa/releases/download";
 const RELEASES_VAR: &str = "KULISA_RELEASES";
+/// A released tool knows its players' archives, as `name=sha256;name=sha256`, and takes no others.
+const SUMS_VAR: &str = "KULISA_PLAYER_SUMS";
+const PLAYER_SUMS: Option<&str> = option_env!("KULISA_PLAYER_SUMS");
 /// Every target with a player of its own.
 pub const TARGETS: &[&str] = &["windows", "linux", "macos", "web", "android", "ios"];
 
@@ -30,6 +35,29 @@ pub fn files(target: &str) -> &'static [&'static str] {
 /// The archive of one target's player in a release.
 pub fn archive_name(target: &str) -> String {
     format!("kulisa-player-{target}.tar.gz")
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// An error unless `bytes` are the archive `name` that `sums` lists. Without `sums` (a tool that
+/// is no release's) anything goes.
+fn verify(sums: Option<&str>, name: &str, bytes: &[u8]) -> Result {
+    let Some(sums) = sums else {
+        return Ok(());
+    };
+    let want = sums.split(';').find_map(|entry| entry.strip_prefix(name)?.strip_prefix('='));
+    let want = want.ok_or_else(|| format!("this kulisa has no checksum for {name}"))?;
+    let got = sha256(bytes);
+    if got == want {
+        Ok(())
+    } else {
+        Err(format!(
+            "the checksum of the downloaded {name} is wrong, so it was not used; try again \
+             (expected {want}, got {got})"
+        ))
+    }
 }
 
 /// The folder this computer keeps downloads in.
@@ -70,6 +98,11 @@ pub fn released(tool: &Path, target: &str) -> Result<PathBuf> {
     let archive = partial.join("player.tar.gz");
     run(Command::new("curl").args(["-fL", "--progress-bar", "-o"]).arg(&archive).arg(&url))
         .map_err(|e| format!("could not download {url}: {e}"))?;
+    let bytes = fs::read(&archive).map_err(|e| format!("{}: {e}", archive.display()))?;
+    if let Err(e) = verify(PLAYER_SUMS, &archive_name(target), &bytes) {
+        let _ = fs::remove_dir_all(&partial);
+        return Err(e);
+    }
     run(Command::new("tar").arg("xzf").arg(&archive).arg("-C").arg(&partial))?;
     fs::remove_file(&archive).map_err(|e| e.to_string())?;
     if !whole(&partial) {
@@ -121,27 +154,53 @@ pub fn package(opts: &Options, target: &str, out: &Path) -> Result {
         }
         other => return Err(format!("no player for `{other}`; targets: {}", TARGETS.join(", "))),
     }
+    crate::write_licenses(&folder)?;
     let archive = out.join(archive_name(target));
     tar::pack(&folder, "", &|_| true, &archive)?;
     eprintln!("player ready: {}", archive.display());
     Ok(())
 }
 
+/// Reads the release's player archives in `dir` for the tool to remember, and unpacks this
+/// computer's into `out`.
+fn ready_players(dir: &Path, host: &str, out: &Path) -> Result<String> {
+    let mut sums = Vec::new();
+    for target in TARGETS {
+        let name = archive_name(target);
+        let bytes = fs::read(dir.join(&name)).map_err(|e| format!("{}: {e}", dir.join(&name).display()))?;
+        sums.push(format!("{name}={}", sha256(&bytes)));
+    }
+    let folder = out.join(host);
+    let _ = fs::remove_dir_all(&folder);
+    fs::create_dir_all(&folder).map_err(|e| format!("{}: {e}", folder.display()))?;
+    run(Command::new("tar").arg("xzf").arg(dir.join(archive_name(host))).arg("-C").arg(&folder))?;
+    Ok(sums.join(";"))
+}
+
 /// Compiles this computer's download from a release into `out`: the `kulisa` tool, the templates
-/// and this computer's player, so a new game runs before anything else is downloaded.
-pub fn package_tool(opts: &Options, out: &Path) -> Result {
+/// and this computer's player, so a new game runs before anything else is downloaded. With
+/// `ready`, a folder holding every target's archive, the tool checks what it downloads against
+/// those; a release is made that way.
+pub fn package_tool(opts: &Options, out: &Path, ready: Option<&Path>) -> Result {
     let Engine::Source(root) = &opts.engine else {
         return Err("releases are made from the engine's source".into());
     };
     let host = desktop::host();
-    package(opts, host, out)?;
+    let sums = match ready {
+        Some(dir) => ready_players(dir, host, out)?,
+        None => {
+            package(opts, host, out)?;
+            String::new()
+        }
+    };
+    let env: &[(&str, &str)] = if ready.is_some() { &[(SUMS_VAR, &sums)] } else { &[] };
 
     let folder = out.join("kulisa");
     let _ = fs::remove_dir_all(&folder);
     let tool = if host == "macos" {
-        macos::compile(opts, root, "kulisa-cli", "kulisa", true)?
+        macos::compile(opts, root, "kulisa-cli", "kulisa", true, env)?
     } else {
-        run(&mut opts.cargo(root, "kulisa-cli", &["--bin", "kulisa"]))?;
+        run(opts.cargo(root, "kulisa-cli", &["--bin", "kulisa"]).envs(env.iter().copied()))?;
         let name = if host == "windows" { "kulisa.exe" } else { "kulisa" };
         root.join("target").join(opts.profile_dir()).join(name)
     };
@@ -151,6 +210,7 @@ pub fn package_tool(opts: &Options, out: &Path) -> Result {
         sign_ad_hoc(&folder.join(name))?;
     }
     copy_file(&root.join("LICENSE"), &folder.join("LICENSE"))?;
+    crate::write_licenses(&folder)?;
     crate::copy_game(&opts.engine.templates(), &folder.join("templates"))?;
     crate::copy_tree(&out.join(host), &folder.join("players").join(host))?;
 
@@ -178,6 +238,26 @@ mod tests {
             assert!(!files(target).is_empty(), "{target}");
         }
         assert!(archive_name("web").ends_with(".tar.gz"));
+    }
+
+    #[test]
+    fn downloads_must_match_their_checksum() {
+        let good = sha256(b"player");
+        assert_eq!(good.len(), 64);
+        let sums = format!("a.tar.gz={};b.tar.gz={good}", sha256(b"other"));
+        assert!(verify(Some(&sums), "b.tar.gz", b"player").is_ok());
+        assert!(verify(Some(&sums), "b.tar.gz", b"changed").unwrap_err().contains("checksum"));
+        assert!(verify(Some(&sums), "a.tar.gz", b"player").is_err());
+        assert!(verify(Some(&sums), "c.tar.gz", b"player").unwrap_err().contains("no checksum"));
+        assert!(verify(None, "c.tar.gz", b"anything").is_ok());
+    }
+
+    #[test]
+    fn the_licence_list_holds_what_cargo_does_not_show() {
+        for name in ["Kulisa", "symphonia-core", "Roblox Corporation", "wasi-libc", "Mozilla Public License"]
+        {
+            assert!(crate::THIRD_PARTY_LICENSES.contains(name), "{name}");
+        }
     }
 
     #[test]

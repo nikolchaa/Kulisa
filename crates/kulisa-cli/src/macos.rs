@@ -53,10 +53,21 @@ pub fn info_plist(game: &Game, executable: &str, icon: bool) -> String {
     )
 }
 
-/// Compiles a program for this computer, or for both architectures joined with `lipo`.
-pub fn compile(opts: &Options, root: &Path, package: &str, bin: &str, universal: bool) -> Result<PathBuf> {
-    let build =
-        |args: &[&str]| run(opts.cargo(root, package, args).env("MACOSX_DEPLOYMENT_TARGET", MIN_MACOS));
+/// Compiles a program for this computer, or for both architectures joined with `lipo`. `env` is
+/// for the compiler.
+pub fn compile(
+    opts: &Options,
+    root: &Path,
+    package: &str,
+    bin: &str,
+    universal: bool,
+    env: &[(&str, &str)],
+) -> Result<PathBuf> {
+    let build = |args: &[&str]| {
+        let mut cargo = opts.cargo(root, package, args);
+        cargo.env("MACOSX_DEPLOYMENT_TARGET", MIN_MACOS).envs(env.iter().copied());
+        run(&mut cargo)
+    };
     if !universal {
         build(&["--bin", bin])?;
         return Ok(root.join("target").join(opts.profile_dir()).join(bin));
@@ -78,7 +89,7 @@ pub fn player(opts: &Options, universal: bool) -> Result<PathBuf> {
         Engine::Released(tool) => Ok(players::released(tool, "macos")?.join(players::files("macos")[0])),
         Engine::Source(root) => {
             desktop::compiles_here("macos")?;
-            compile(opts, root, "kulisa-player", PLAYER, universal)
+            compile(opts, root, "kulisa-player", PLAYER, universal, &[])
         }
     }
 }
@@ -110,6 +121,7 @@ pub fn build(game: &Game, opts: &Options, package: Package, out: &Path) -> Resul
     write(&contents.join("Info.plist"), info_plist(game, &name, icon.is_some()))?;
     // The player also looks for game.kpak in Contents/Resources.
     write(&contents.join("Resources/game.kpak"), game.pack()?)?;
+    crate::write_licenses(&contents.join("Resources"))?;
     crate::video::copy(game, &contents.join("Resources"))?;
 
     if !can_sign {

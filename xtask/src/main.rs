@@ -6,7 +6,8 @@
 //!   cargo xtask ios-app [--sim] [--release]        build an iOS .app into dist/ios (macOS only)
 //!   cargo xtask pack [--out FILE]                  pack a game folder into a .kpak
 //!   cargo xtask player TARGET [--out DIR]          a release's player for TARGET
-//!   cargo xtask tool [--out DIR]                   a release's download for this computer
+//!   cargo xtask tool [--out DIR] [--players DIR]   a release's download for this computer
+//!   cargo xtask licenses [--check]                 the list of third-party licenses
 //!
 //! The first four take `--game DIR`, the game to bundle (default `demos/smoke`). Releases go to
 //! `dist/release`.
@@ -14,6 +15,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use kulisa_cli::{Engine, Game, Options, Profile, Result, android, ios, players, serve, web};
 
@@ -26,9 +28,10 @@ fn main() {
         Some("pack") => pack(&args[1..]),
         Some("player") => player(&args[1..]),
         Some("tool") => tool(&args[1..]),
+        Some("licenses") => licenses(&args[1..]),
         _ => Err("usage: cargo xtask web [--release] [--serve [PORT]] | apk [--release] [--abi LIST] | \
                   ios-app [--sim] [--release] | pack [--out FILE] (all take --game DIR) | \
-                  player TARGET [--out DIR] | tool [--out DIR]"
+                  player TARGET [--out DIR] | tool [--out DIR] [--players DIR] | licenses [--check]"
             .into()),
     };
     if let Err(e) = result {
@@ -69,7 +72,44 @@ fn player(args: &[String]) -> Result {
 
 fn tool(args: &[String]) -> Result {
     let (opts, out) = release_setup(args)?;
-    players::package_tool(&opts, &out)
+    players::package_tool(&opts, &out, option(args, "--players")?.map(Path::new))
+}
+
+/// Writes the list games and downloads ship with, or with `--check` fails if it is out of date.
+fn licenses(args: &[String]) -> Result {
+    let root = root();
+    let text = |path: &str| {
+        fs::read_to_string(root.join(path))
+            .map(|t| t.replace("\r\n", "\n"))
+            .map_err(|e| format!("{path}: {e}"))
+    };
+    let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".into());
+    let status = Command::new(&cargo).current_dir(&root).args(["fetch", "--locked"]).status();
+    status.map_err(|e| e.to_string())?;
+    let about = "target/third-party-licenses.txt";
+    let generated = Command::new(&cargo)
+        .current_dir(&root)
+        .args(["about", "generate", "--locked", "--offline", "-c", "licenses/about.toml"])
+        .args(["-o", about, "licenses/about.hbs"])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !generated.status.success() {
+        return Err(format!(
+            "cargo about failed (install it with `cargo install cargo-about --locked --features cli`):\n{}",
+            String::from_utf8_lossy(&generated.stderr)
+        ));
+    }
+    let list =
+        format!("Kulisa\n======\n\n{}\n{}\n{}", text("LICENSE")?, text(about)?, text("licenses/extra.txt")?);
+
+    let file = "crates/kulisa-cli/THIRD-PARTY-LICENSES.txt";
+    if !args.iter().any(|a| a == "--check") {
+        fs::write(root.join(file), list).map_err(|e| format!("{file}: {e}"))?;
+        eprintln!("wrote {file}");
+    } else if text(file)? != list {
+        return Err(format!("{file} is out of date: run `cargo xtask licenses`"));
+    }
+    Ok(())
 }
 
 fn web_task(args: &[String]) -> Result {
