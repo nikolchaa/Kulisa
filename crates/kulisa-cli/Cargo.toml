@@ -12,6 +12,7 @@ name = "kulisa"
 path = "src/main.rs"
 
 [dependencies]
+flate2 = "1"
 image.workspace = true
 kulisa-platform.workspace = true
 kulisa-renpy.workspace = true

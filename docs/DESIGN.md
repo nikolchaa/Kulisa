@@ -822,13 +822,30 @@ versions, orientations) and the web page (title, background) from it, and script
 `kulisa.config`.
 
 **CLI.** `kulisa-cli` is a library plus the `kulisa` binary and depends only on
-`kulisa-platform`: it drives cargo in the engine's source tree (found where the tool was
-built, or `KULISA_ENGINE`). `kulisa new NAME --template T` copies `templates/T` and sets
-the id and title; `kulisa run` is `cargo run -p kulisa-player -- --dev GAME` (or `--web`:
-build, then a dev server; `--android`: APK, `adb install`, start); `kulisa build
-windows|linux|macos|web|android|ios` puts results in `GAME/dist/TARGET` (desktop: the
-player renamed after the game with `game.kpak` beside it). Packs, the watcher and the dev
-server skip `dist/`, hidden files and editor leftovers.
+`kulisa-platform`. `kulisa new NAME --template T` copies `templates/T` and sets the id and
+title; `kulisa run` starts the player with `--dev GAME` (or `--web`: build, then a dev server;
+`--android`: APK, `adb install`, start); `kulisa build windows|linux|macos|web|android|ios`
+puts results in `GAME/dist/TARGET` (desktop: the player renamed after the game with
+`game.kpak` beside it). Packs, the watcher and the dev server skip `dist/`, hidden files and
+editor leftovers.
+
+**Where players come from** (`crates/kulisa-cli/src/players.rs`). The player knows nothing about
+a game until it reads `game.kpak`, so one build of it serves every game. A released tool sits in
+a folder with `templates/` and this computer's player in `players/`. It uses the players beside
+it, then those in the per-user cache, and otherwise downloads
+`kulisa-player-TARGET.tar.gz` from the GitHub release of its own version (`KULISA_RELEASES`
+points elsewhere). A tool without templates beside it, or with `KULISA_ENGINE` set, works from
+the engine's source tree and compiles players with cargo, so engine development has not changed.
+`cargo xtask tool` and `cargo xtask player TARGET` make the release files with the `dist` cargo
+profile (fat LTO, stripped); `.github/workflows/release.yml` runs them, checks the results on all
+three desktops with no Rust on the PATH, starts what Windows packed for Linux and macOS on those
+systems, and publishes on a `v*` tag. The Linux tool and player are built on the oldest runner
+for the sake of glibc.
+
+Two things used to happen at compile time and now happen to the finished file, so they need no
+compiler: `pe.rs` adds the icon as a new resource section in the Windows program and marks it as
+a GUI program (no console window) for anything but a debug build from source. `tar.rs` writes
+Linux and macOS builds made on Windows as archives, the only way to keep their executable mark.
 
 **Live reload.** Development runs watch the game. Desktop polls file sizes and times every
 250 ms (no OS watcher dependency) and reports changes once they settle for 150 ms; the web
@@ -1031,3 +1048,5 @@ Screenshots come from the headless tests (`KULISA_SHOTS`) into `docs/media/`.
 | 2026-10-31 | Accessibility is self-voicing through each system's own speech, as in Ren'Py, with what to read left to templates. A real screen reader tree (AccessKit) would serve desktop and mobile readers better but needs the UI exposed as a semantic tree; left for later. |
 | 2026-10-31 | Story animation is a small `transform` block rather than Ren'Py's ATL: steps, pause and repeat cover most of what stories do, and anything more is Luau. Layered characters are folders by convention in the template, and a layer's look is named on every `show`, so saved stages stay complete descriptions. |
 | 2026-10-31 | Video uses each system's decoder with a software AV1 decoder on Linux only, as Unity does (with VP8 on Linux there), rather than bundling FFmpeg like Ren'Py or Theora like Godot: developers ship one MP4, phones use hardware, and the engine grows by 100 to 300 KB (2.9 MB on Linux). The price is more platform code, and H.264 not being free to bundle is why Linux converts at build time. AV1 over VP9 for Linux: smaller files and it decoded faster in tests, and the choice stays internal. |
+| 2026-11-01 | Released tools use ready-made players, one per target, downloaded once per version on first use and with this computer's in the tool's own download, as Godot's export templates do, rather than shipping them all (over 100 MB unpacked) or building on a server. Any computer can then build Windows, Linux, macOS and web. Android keeps the SDK's build-tools and a JDK: a packager of our own would have to write binary manifests and resource tables and sign, and App Bundles need Java's bundletool anyway. |
+| 2026-11-01 | The Windows icon is written into the finished program by our own resource-section code, replacing the build script that needed `llvm-rc` or `rc.exe`. There is one code path whether a player was compiled or downloaded, and it runs on any computer. Builds for players also became GUI programs: they used to open a console window. |

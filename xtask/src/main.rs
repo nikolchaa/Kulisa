@@ -5,14 +5,17 @@
 //!   cargo xtask apk [--release] [--abi LIST]       build an Android APK into dist/android
 //!   cargo xtask ios-app [--sim] [--release]        build an iOS .app into dist/ios (macOS only)
 //!   cargo xtask pack [--out FILE]                  pack a game folder into a .kpak
+//!   cargo xtask player TARGET [--out DIR]          a release's player for TARGET
+//!   cargo xtask tool [--out DIR]                   a release's download for this computer
 //!
-//! Every command takes `--game DIR`, the game to bundle (default `demos/smoke`).
+//! The first four take `--game DIR`, the game to bundle (default `demos/smoke`). Releases go to
+//! `dist/release`.
 
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use kulisa_cli::{Game, Options, Result, android, ios, serve, web};
+use kulisa_cli::{Engine, Game, Options, Profile, Result, android, ios, players, serve, web};
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -21,8 +24,11 @@ fn main() {
         Some("apk") => apk(&args[1..]),
         Some("ios-app") => ios_app(&args[1..]),
         Some("pack") => pack(&args[1..]),
+        Some("player") => player(&args[1..]),
+        Some("tool") => tool(&args[1..]),
         _ => Err("usage: cargo xtask web [--release] [--serve [PORT]] | apk [--release] [--abi LIST] | \
-                  ios-app [--sim] [--release] | pack [--out FILE]; all take --game DIR"
+                  ios-app [--sim] [--release] | pack [--out FILE] (all take --game DIR) | \
+                  player TARGET [--out DIR] | tool [--out DIR]"
             .into()),
     };
     if let Err(e) = result {
@@ -45,8 +51,25 @@ fn option<'a>(args: &'a [String], flag: &str) -> Result<Option<&'a str>> {
 
 fn setup(args: &[String]) -> Result<(Game, Options)> {
     let dir = option(args, "--game")?.map_or_else(|| root().join("demos/smoke"), PathBuf::from);
-    let opts = Options { engine: root(), release: args.iter().any(|a| a == "--release") };
-    Ok((Game::open(&dir)?, opts))
+    let profile = if args.iter().any(|a| a == "--release") { Profile::Release } else { Profile::Debug };
+    Ok((Game::open(&dir)?, Options { engine: Engine::Source(root()), profile }))
+}
+
+/// How releases are built, and the folder they go to.
+fn release_setup(args: &[String]) -> Result<(Options, PathBuf)> {
+    let out = option(args, "--out")?.map_or_else(|| root().join("dist/release"), PathBuf::from);
+    Ok((Options { engine: Engine::Source(root()), profile: Profile::Dist }, out))
+}
+
+fn player(args: &[String]) -> Result {
+    let (opts, out) = release_setup(args)?;
+    let target = args.first().ok_or("cargo xtask player TARGET [--out DIR]")?;
+    players::package(&opts, target, &out)
+}
+
+fn tool(args: &[String]) -> Result {
+    let (opts, out) = release_setup(args)?;
+    players::package_tool(&opts, &out)
 }
 
 fn web_task(args: &[String]) -> Result {

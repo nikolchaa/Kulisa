@@ -6,7 +6,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use kulisa_cli::{Game, Options, Result, android, desktop, engine_root, ios, macos, run, serve, web};
+use kulisa_cli::{
+    Engine, Game, Options, Profile, Result, android, copy_game, desktop, ios, macos, players, run, serve,
+    strip_verbatim, web,
+};
 
 const HELP: &str = "kulisa: make and build Kulisa games
 
@@ -19,8 +22,8 @@ const HELP: &str = "kulisa: make and build Kulisa games
              [--android] [--abi LIST]             on a connected Android device or emulator
   kulisa build TARGET [GAME] [--release] [--out DIR] [--abi LIST] [--sim] [--aab]
                                                 [--universal] [--notarize]
-                                                TARGET: windows, linux, macos (this computer's),
-                                                web, android, ios (on a Mac)
+                                                TARGET: windows, linux, macos, web, android,
+                                                ios (on a Mac)
                                                 --aab: an App Bundle for Google Play (android)
                                                 --universal: Apple silicon and Intel (macos)
                                                 --notarize: send to Apple's notary service (macos)
@@ -29,7 +32,8 @@ const HELP: &str = "kulisa: make and build Kulisa games
   kulisa serve [DIR] [--port N]                 serve a web build
 
 GAME is a game folder (default: the current folder). Builds go to GAME/dist/TARGET.
-The engine source is found where this tool was built, or at KULISA_ENGINE.";
+Released tools download each player once. A tool built from the engine's source compiles
+them from where it was built, or from KULISA_ENGINE.";
 
 /// Options that take a value.
 const VALUED: &[&str] = &["--template", "--dir", "--port", "--abi", "--out", "--profile"];
@@ -75,7 +79,8 @@ impl Args {
     }
 
     fn options(&self) -> Result<Options> {
-        Ok(Options { engine: strip_verbatim(engine_root()?), release: self.has("--release") })
+        let profile = if self.has("--release") { Profile::Release } else { Profile::Debug };
+        Ok(Options { engine: Engine::locate()?, profile })
     }
 
     fn port(&self) -> Result<u16> {
@@ -84,15 +89,6 @@ impl Args {
 
     fn abis(&self, default: &str) -> Vec<String> {
         self.get("--abi").unwrap_or(default).split(',').map(str::to_string).collect()
-    }
-}
-
-/// Windows `canonicalize` gives `\\?\C:\...`, which some tools (cargo, aapt) refuse.
-fn strip_verbatim(p: PathBuf) -> PathBuf {
-    let s = p.to_string_lossy();
-    match s.strip_prefix(r"\\?\") {
-        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
-        _ => p,
     }
 }
 
@@ -131,7 +127,7 @@ fn main() {
 }
 
 fn templates() -> Result<Vec<String>> {
-    let dir = engine_root()?.join("templates");
+    let dir = Engine::locate()?.templates();
     let mut names: Vec<String> = fs::read_dir(&dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .flatten()
@@ -210,23 +206,6 @@ fn set_values(toml: &str, section: &str, values: &[(&str, String)]) -> String {
     out.join("\n") + "\n"
 }
 
-fn copy_dir(from: &Path, to: &Path) -> Result {
-    fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
-    for entry in fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?.flatten() {
-        let name = entry.file_name();
-        if !kulisa_platform::is_game_file(&name.to_string_lossy()) {
-            continue;
-        }
-        let (src, dst) = (entry.path(), to.join(&name));
-        if src.is_dir() {
-            copy_dir(&src, &dst)?;
-        } else {
-            fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
-        }
-    }
-    Ok(())
-}
-
 /// Copies `template` to `dest` (which must be new or empty) and names the game `title`.
 fn create_game(template: &str, dest: &Path, title: &str) -> Result {
     let available = templates()?;
@@ -236,7 +215,7 @@ fn create_game(template: &str, dest: &Path, title: &str) -> Result {
     if dest.exists() && fs::read_dir(dest).map(|mut d| d.next().is_some()).unwrap_or(true) {
         return Err(format!("{} already exists and is not empty", dest.display()));
     }
-    copy_dir(&engine_root()?.join("templates").join(template), dest)?;
+    copy_game(&Engine::locate()?.templates().join(template), dest)?;
     edit_config(dest, |toml| set_identity(toml, &id_from(title), title))
 }
 
@@ -409,19 +388,29 @@ fn play(a: &Args) -> Result {
     if cfg!(all(unix, not(target_os = "macos"))) {
         kulisa_cli::convert_videos(&game)?;
     }
-    let mut cargo = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-    cargo.current_dir(&opts.engine).args(["run", "-p", "kulisa-player"]);
-    if opts.release {
-        cargo.arg("--release");
-    }
-    cargo.arg("--").arg("--dev").arg(&game.dir);
+    let mut player = match &opts.engine {
+        Engine::Source(root) => {
+            let mut cargo = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+            cargo.current_dir(root).args(["run", "-p", "kulisa-player"]);
+            if opts.profile == Profile::Release {
+                cargo.arg("--release");
+            }
+            cargo.arg("--");
+            cargo
+        }
+        Engine::Released(tool) => {
+            let host = desktop::host();
+            Command::new(players::released(tool, host)?.join(players::files(host)[0]))
+        }
+    };
+    player.arg("--dev").arg(&game.dir);
     if let Some(p) = a.get("--profile") {
-        cargo.env("KULISA_PROFILE", p);
+        player.env("KULISA_PROFILE", p);
     }
-    if let Some(lib) = desktop::steam_library(&game)? {
-        cargo.env("KULISA_STEAM_API", lib);
+    if let Some(lib) = desktop::steam_library(&game, desktop::host())? {
+        player.env("KULISA_STEAM_API", lib);
     }
-    run(&mut cargo)
+    run(&mut player)
 }
 
 fn build(a: &Args) -> Result {
@@ -430,16 +419,11 @@ fn build(a: &Args) -> Result {
     let opts = a.options()?;
     let out = a.get("--out").map_or_else(|| game.dir.join("dist").join(target), PathBuf::from);
     match target {
-        "macos" if target == desktop::host() => {
+        "macos" => {
             let package = macos::Package { universal: a.has("--universal"), notarize: a.has("--notarize") };
             macos::build(&game, &opts, package, &out).map(|_| ())
         }
-        "windows" | "linux" | "macos" if target == desktop::host() => {
-            desktop::build(&game, &opts, &out).map(|_| ())
-        }
-        "windows" | "linux" | "macos" => {
-            Err(format!("{target} builds are made on {target} (this computer runs {})", desktop::host()))
-        }
+        "windows" | "linux" => desktop::build(&game, &opts, target, &out).map(|_| ()),
         "web" => web::build(&game, &opts, &out),
         "android" => {
             let abis = a.abis("arm64-v8a");

@@ -1,11 +1,11 @@
-//! The web build: the player compiled to wasm (Luau built against a wasi-sdk sysroot with
-//! wasm exceptions, see docs/DESIGN.md risk 1), wasm-bindgen glue, a page and the game pack.
+//! The web build: the player (wasm and its wasm-bindgen glue), a page and the game pack. From
+//! source, Luau is built against a wasi-sdk sysroot with wasm exceptions (docs/DESIGN.md risk 1).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Game, Options, Result, escape, fetch, icon, run, write};
+use crate::{Engine, Game, Options, Result, escape, fetch, icon, players, run, write};
 
 const WASI_SDK: &str = "34";
 const WASM_BINDGEN: &str = "0.2.129";
@@ -23,8 +23,15 @@ fn wasi_sdk(engine: &Path) -> Result<(PathBuf, PathBuf)> {
     Ok((sysroot, rt))
 }
 
-/// Builds the web player for `game` into `out` (page, wasm, glue, `game.kpak`).
-pub fn build(game: &Game, opts: &Options, out: &Path) -> Result {
+/// The folder with the web player's files.
+pub fn player(opts: &Options) -> Result<PathBuf> {
+    match &opts.engine {
+        Engine::Released(tool) => players::released(tool, "web"),
+        Engine::Source(root) => compile(opts, root),
+    }
+}
+
+fn compile(opts: &Options, engine: &Path) -> Result<PathBuf> {
     let version = Command::new("wasm-bindgen").arg("--version").output();
     match version {
         Ok(o) if String::from_utf8_lossy(&o.stdout).contains(WASM_BINDGEN) => {}
@@ -35,7 +42,7 @@ pub fn build(game: &Game, opts: &Options, out: &Path) -> Result {
         }
     }
 
-    let (sysroot, rt) = wasi_sdk(&opts.engine)?;
+    let (sysroot, rt) = wasi_sdk(engine)?;
     let s = sysroot.display().to_string().replace('\\', "/");
     let cxxflags = [
         "--target=wasm32-wasip1".to_string(),
@@ -48,16 +55,30 @@ pub fn build(game: &Game, opts: &Options, out: &Path) -> Result {
     ]
     .join(" ");
     run(opts
-        .cargo_player(&["--lib", "--target", "wasm32-unknown-unknown"])
+        .cargo_player(engine, &["--lib", "--target", "wasm32-unknown-unknown"])
         .env("WASI_SYSROOT", &sysroot)
         .env("WASI_CLANG_RT", &rt)
-        .env("LUAU_CXXFLAGS", cxxflags))?;
+        .env("LUAU_CXXFLAGS", cxxflags)
+        // Stripping here takes what wasm-bindgen reads; it leaves out the names itself.
+        .env("CARGO_PROFILE_DIST_STRIP", "false"))?;
 
-    let wasm = opts.engine.join("target/wasm32-unknown-unknown").join(opts.profile()).join("kulisa.wasm");
+    let wasm = engine.join("target/wasm32-unknown-unknown").join(opts.profile_dir()).join("kulisa.wasm");
+    let out = engine.join("target/web-player").join(opts.profile_dir());
     run(Command::new("wasm-bindgen")
         .args(["--target", "web", "--no-typescript", "--out-dir"])
-        .arg(out)
+        .arg(&out)
         .arg(&wasm))?;
+    Ok(out)
+}
+
+/// Builds `game` for the web into `out` (page, player, `game.kpak`).
+pub fn build(game: &Game, opts: &Options, out: &Path) -> Result {
+    let player = player(opts)?;
+    fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    for file in players::files("web") {
+        let from = player.join(file);
+        fs::copy(&from, out.join(file)).map_err(|e| format!("{}: {e}", from.display()))?;
+    }
     let icon = icon::load(game)?;
     if let Some(img) = &icon {
         write(&out.join("icon.png"), icon::png(img, 192))?;

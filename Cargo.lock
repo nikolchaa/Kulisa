@@ -1326,6 +1326,7 @@ dependencies = [
 name = "kulisa-cli"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "image",
  "kulisa-platform",
  "kulisa-renpy",

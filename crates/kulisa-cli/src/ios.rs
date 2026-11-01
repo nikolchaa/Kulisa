@@ -1,5 +1,5 @@
-//! iOS app bundle without an Xcode project: cargo builds the `kulisa-player` binary, which goes
-//! into a `.app` next to an Info.plist made from `kulisa.toml`, a compiled asset catalog and a
+//! iOS app bundle without an Xcode project: the `kulisa-player` binary (ready-made or built with
+//! cargo) goes into a `.app` next to an Info.plist made from `kulisa.toml`, a compiled asset catalog and a
 //! privacy manifest. Signed for the App Store and zipped as an `.ipa` with `[ios] identity` and
 //! `provisioning_profile`; ad-hoc signed otherwise, which is enough for the simulator. macOS
 //! hosts only.
@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Game, Options, Result, escape, icon, run, write};
+use crate::{Engine, Game, Options, Result, escape, icon, players, run, write};
 
 /// Keep in sync with IPHONEOS_DEPLOYMENT_TARGET in .cargo/config.toml.
 const MIN_IOS: &str = "15.0";
@@ -225,20 +225,30 @@ fn sign_for_store(app: &Path, identity: &str, profile: &Path, work: &Path) -> Re
     Ok(())
 }
 
+/// The player for devices or the simulator.
+pub fn player(opts: &Options, sim: bool) -> Result<PathBuf> {
+    match &opts.engine {
+        Engine::Released(tool) => {
+            let file = players::files("ios")[sim as usize];
+            Ok(players::released(tool, "ios")?.join(file))
+        }
+        Engine::Source(root) => {
+            let target = if sim { "aarch64-apple-ios-sim" } else { "aarch64-apple-ios" };
+            run(&mut opts.cargo_player(root, &["--bin", EXECUTABLE, "--target", target]))?;
+            Ok(root.join("target").join(target).join(opts.profile_dir()).join(EXECUTABLE))
+        }
+    }
+}
+
 /// Builds `game` into the app bundle `app` (`Name.app`), for the simulator when `sim`.
 pub fn build(game: &Game, opts: &Options, sim: bool, app: &Path) -> Result {
-    let (target, platform, sdk) = if sim {
-        ("aarch64-apple-ios-sim", "iPhoneSimulator", "iphonesimulator")
-    } else {
-        ("aarch64-apple-ios", "iPhoneOS", "iphoneos")
-    };
+    let (platform, sdk) = if sim { ("iPhoneSimulator", "iphonesimulator") } else { ("iPhoneOS", "iphoneos") };
     let store = if sim { None } else { store_signing(game)? };
     let tools = toolchain(sdk)?;
-    run(&mut opts.cargo_player(&["--bin", EXECUTABLE, "--target", target]))?;
+    let bin = player(opts, sim)?;
 
-    let work = opts.engine.join("target/ios-package").join(&game.config.id);
+    let work = opts.work_dir("ios-package")?.join(&game.config.id);
     fs::create_dir_all(&work).map_err(|e| e.to_string())?;
-    let bin = opts.engine.join("target").join(target).join(opts.profile()).join(EXECUTABLE);
     let _ = fs::remove_dir_all(app);
     fs::create_dir_all(app).map_err(|e| e.to_string())?;
     fs::copy(&bin, app.join(EXECUTABLE)).map_err(|e| format!("{}: {e}", bin.display()))?;
@@ -259,13 +269,13 @@ pub fn build(game: &Game, opts: &Options, sim: bool, app: &Path) -> Result {
         Some((identity, profile)) => sign_for_store(app, identity, profile, &work)?,
         // The simulator refuses unsigned arm64 apps; an ad-hoc signature is enough there.
         None => {
-            if opts.release && !sim {
+            if opts.shipping() && !sim {
                 eprintln!("warning: ad-hoc signed; devices refuse it (see `[ios] identity`)");
             }
             run(Command::new("codesign").args(["--force", "--sign", "-", "--timestamp=none"]).arg(app))?
         }
     }
-    eprintln!("iOS app ready: {} ({target})", app.display());
+    eprintln!("iOS app ready: {} ({sdk})", app.display());
     Ok(())
 }
 

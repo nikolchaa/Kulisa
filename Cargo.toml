@@ -42,3 +42,10 @@ winit = "0.30"
 # Upstream main until the wasm32-unknown-unknown heap-dump fix is released (then drop this).
 [patch.crates-io]
 mlua = { git = "https://github.com/mlua-rs/mlua", rev = "ff96ed786295cae96f43ef1372bd22be0fbf7866" }
+
+# The players the releases ship: smaller and a little faster, for much slower builds.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = true

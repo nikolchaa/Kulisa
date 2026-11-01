@@ -1,13 +1,14 @@
 //! macOS app bundle: the player in a `.app` next to an Info.plist made from `kulisa.toml`, the
 //! game and its icon. Signed with the game's Developer ID (`[macos] identity`), and notarized
-//! when asked; ad-hoc signed otherwise, which runs here but makes other Macs warn. macOS hosts
-//! only.
+//! when asked; ad-hoc signed otherwise, which runs here but makes other Macs warn. Other
+//! computers can package a released player but not sign it: the app keeps the player's own
+//! ad-hoc signature, and goes out as an archive from Windows, whose folders cannot mark a program.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Game, Options, Result, escape, icon, run, write};
+use crate::{Engine, Game, Options, Result, desktop, escape, icon, players, run, tar, write};
 
 const MIN_MACOS: &str = "11.0";
 const PLAYER: &str = "kulisa-player";
@@ -52,22 +53,34 @@ pub fn info_plist(game: &Game, executable: &str, icon: bool) -> String {
     )
 }
 
-/// The player for this computer, or both architectures joined with `lipo`.
-fn player(opts: &Options, universal: bool) -> Result<PathBuf> {
-    let build = |args: &[&str]| run(opts.cargo_player(args).env("MACOSX_DEPLOYMENT_TARGET", MIN_MACOS));
+/// Compiles a program for this computer, or for both architectures joined with `lipo`.
+pub fn compile(opts: &Options, root: &Path, package: &str, bin: &str, universal: bool) -> Result<PathBuf> {
+    let build =
+        |args: &[&str]| run(opts.cargo(root, package, args).env("MACOSX_DEPLOYMENT_TARGET", MIN_MACOS));
     if !universal {
-        build(&["--bin", PLAYER])?;
-        return Ok(opts.engine.join("target").join(opts.profile()).join(PLAYER));
+        build(&["--bin", bin])?;
+        return Ok(root.join("target").join(opts.profile_dir()).join(bin));
     }
     let mut lipo = Command::new("lipo");
     lipo.arg("-create");
     for target in ["aarch64-apple-darwin", "x86_64-apple-darwin"] {
-        build(&["--bin", PLAYER, "--target", target])?;
-        lipo.arg(opts.engine.join("target").join(target).join(opts.profile()).join(PLAYER));
+        build(&["--bin", bin, "--target", target])?;
+        lipo.arg(root.join("target").join(target).join(opts.profile_dir()).join(bin));
     }
-    let joined = opts.engine.join("target").join(opts.profile()).join(format!("{PLAYER}-universal"));
+    let joined = root.join("target").join(opts.profile_dir()).join(format!("{bin}-universal"));
     run(lipo.arg("-output").arg(&joined))?;
     Ok(joined)
+}
+
+/// The player: ready-made (always for both architectures), or compiled.
+pub fn player(opts: &Options, universal: bool) -> Result<PathBuf> {
+    match &opts.engine {
+        Engine::Released(tool) => Ok(players::released(tool, "macos")?.join(players::files("macos")[0])),
+        Engine::Source(root) => {
+            desktop::compiles_here("macos")?;
+            compile(opts, root, "kulisa-player", PLAYER, universal)
+        }
+    }
 }
 
 /// Builds `game` into `out/Name.app`, returns the app. A notarized app also gets a zip to share.
@@ -77,7 +90,11 @@ pub fn build(game: &Game, opts: &Options, package: Package, out: &Path) -> Resul
     if package.notarize && (identity.is_none() || notary.is_none()) {
         return Err("--notarize needs `identity` and `notary_profile` under [macos] in kulisa.toml".into());
     }
-    let steam = crate::desktop::steam_library(game)?;
+    let can_sign = cfg!(target_os = "macos");
+    if package.notarize && !can_sign {
+        return Err("--notarize needs a Mac".into());
+    }
+    let steam = desktop::steam_library(game, "macos")?;
     let built = player(opts, package.universal)?;
 
     let name = game.file_name();
@@ -95,10 +112,15 @@ pub fn build(game: &Game, opts: &Options, package: Package, out: &Path) -> Resul
     write(&contents.join("Resources/game.kpak"), game.pack()?)?;
     crate::video::copy(game, &contents.join("Resources"))?;
 
-    if opts.release && identity.is_none() {
+    if !can_sign {
+        eprintln!("warning: not signed, which takes a Mac; Macs warn about it until it is");
+    } else if opts.shipping() && identity.is_none() {
         eprintln!("warning: ad-hoc signed; other Macs warn about it (see `[macos] identity`)");
     }
     let sign = |path: &Path| {
+        if !can_sign {
+            return Ok(());
+        }
         let mut sign = Command::new("codesign");
         sign.arg("--force");
         match identity {
@@ -130,6 +152,11 @@ pub fn build(game: &Game, opts: &Options, package: Package, out: &Path) -> Resul
         zip_app()?;
     }
     eprintln!("macOS app ready: {}", app.display());
+    if cfg!(windows) {
+        let archive = out.with_file_name(format!("{name}-macos.tar.gz"));
+        tar::pack(&app, &format!("{name}.app"), &|p| p.contains("/Contents/MacOS/"), &archive)?;
+        eprintln!("ship this archive, which keeps the app's program runnable: {}", archive.display());
+    }
     Ok(app)
 }
 

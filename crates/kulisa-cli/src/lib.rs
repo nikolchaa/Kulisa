@@ -1,7 +1,7 @@
-//! Builds Kulisa games for every platform from the engine's source: the player is compiled
-//! with cargo, the game is packed into a `.kpak`, and the platform's package (web page, APK,
-//! iOS app, desktop folder) is assembled from the game's `kulisa.toml`. The `kulisa` command
-//! and the engine's `cargo xtask` both use this.
+//! Builds Kulisa games for every platform: the player is a ready-made one or compiled from the
+//! engine's source (see [`players`]), the game is packed into a `.kpak`, and the platform's
+//! package (web page, APK, iOS app, desktop folder) is assembled from the game's `kulisa.toml`.
+//! The `kulisa` command and the engine's `cargo xtask` both use this.
 
 use std::env;
 use std::fs;
@@ -15,25 +15,66 @@ pub mod desktop;
 pub mod icon;
 pub mod ios;
 pub mod macos;
+mod pe;
+pub mod players;
 pub mod serve;
+mod tar;
 mod video;
 pub use video::convert as convert_videos;
 pub mod web;
 
 pub type Result<T = ()> = std::result::Result<T, String>;
 
-/// The engine's source tree (the cargo workspace with `crates/kulisa-player`): `KULISA_ENGINE`,
-/// or the tree this tool was built from.
-pub fn engine_root() -> Result<PathBuf> {
-    let built = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let root = env::var_os("KULISA_ENGINE").map(PathBuf::from).unwrap_or(built);
-    if root.join("crates/kulisa-player/Cargo.toml").is_file() {
-        Ok(fs::canonicalize(&root).unwrap_or(root))
-    } else {
-        Err(format!(
-            "the Kulisa engine source was not found at {}; set KULISA_ENGINE to its folder",
-            root.display()
-        ))
+/// Where this tool gets its players and templates.
+#[derive(Clone, Debug)]
+pub enum Engine {
+    /// The engine's source tree (the cargo workspace with `crates/kulisa-player`): players are
+    /// compiled.
+    Source(PathBuf),
+    /// The folder of a released tool: players are ready-made.
+    Released(PathBuf),
+}
+
+impl Engine {
+    /// `KULISA_ENGINE`, the release this tool came in (its templates are beside it), or the tree
+    /// it was built from.
+    pub fn locate() -> Result<Engine> {
+        if let Some(root) = env::var_os("KULISA_ENGINE") {
+            return Self::source(root.into());
+        }
+        let exe = env::current_exe().and_then(fs::canonicalize).map(strip_verbatim);
+        if let Some(dir) = exe.ok().and_then(|e| e.parent().map(Path::to_path_buf))
+            && dir.join("templates").is_dir()
+        {
+            return Ok(Engine::Released(dir));
+        }
+        Self::source(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
+    }
+
+    fn source(root: PathBuf) -> Result<Engine> {
+        if root.join("crates/kulisa-player/Cargo.toml").is_file() {
+            Ok(Engine::Source(strip_verbatim(fs::canonicalize(&root).unwrap_or(root))))
+        } else {
+            Err(format!(
+                "the Kulisa engine source was not found at {}; set KULISA_ENGINE to its folder",
+                root.display()
+            ))
+        }
+    }
+
+    pub fn templates(&self) -> PathBuf {
+        match self {
+            Engine::Source(root) | Engine::Released(root) => root.join("templates"),
+        }
+    }
+}
+
+/// Windows `canonicalize` gives `\\?\C:\...`, which some tools (cargo, aapt) refuse.
+pub fn strip_verbatim(p: PathBuf) -> PathBuf {
+    let s = p.to_string_lossy();
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if !rest.starts_with("UNC") => PathBuf::from(rest),
+        _ => p,
     }
 }
 
@@ -73,26 +114,72 @@ impl Game {
     }
 }
 
+/// The cargo profile players are compiled with.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Profile {
+    Debug,
+    Release,
+    /// What releases ship: smaller and slower to build.
+    Dist,
+}
+
 /// How to build the player.
 #[derive(Clone, Debug)]
 pub struct Options {
-    pub engine: PathBuf,
-    pub release: bool,
+    pub engine: Engine,
+    pub profile: Profile,
 }
 
 impl Options {
-    pub fn profile(&self) -> &'static str {
-        if self.release { "release" } else { "debug" }
+    /// The folder under `target` that the profile builds into.
+    pub fn profile_dir(&self) -> &'static str {
+        match self.profile {
+            Profile::Debug => "debug",
+            Profile::Release => "release",
+            Profile::Dist => "dist",
+        }
     }
 
-    /// `cargo build -p kulisa-player` in the engine tree, plus `args`.
-    pub fn cargo_player(&self, args: &[&str]) -> Command {
+    /// Whether this build is for players of the game, not for working on it.
+    pub fn shipping(&self) -> bool {
+        self.profile != Profile::Debug || matches!(self.engine, Engine::Released(_))
+    }
+
+    /// `cargo build -p package` in the engine tree `root`, plus `args`.
+    pub fn cargo(&self, root: &Path, package: &str, args: &[&str]) -> Command {
         let mut cargo = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-        cargo.current_dir(&self.engine).args(["build", "-p", "kulisa-player"]).args(args);
-        if self.release {
-            cargo.arg("--release");
+        cargo.current_dir(root).args(["build", "-p", package]).args(args);
+        match self.profile {
+            Profile::Debug => {}
+            Profile::Release => {
+                cargo.arg("--release");
+            }
+            Profile::Dist => {
+                cargo.args(["--profile", "dist"]);
+            }
         }
         cargo
+    }
+
+    /// `cargo build -p kulisa-player` in the engine tree `root`, plus `args`.
+    pub fn cargo_player(&self, root: &Path, args: &[&str]) -> Command {
+        self.cargo(root, "kulisa-player", args)
+    }
+
+    /// A folder for what a build makes along the way.
+    pub fn work_dir(&self, name: &str) -> Result<PathBuf> {
+        Ok(match &self.engine {
+            Engine::Source(root) => root.join("target").join(name),
+            Engine::Released(_) => players::cache_dir()?.join("work").join(name),
+        })
+    }
+
+    /// A folder for tools a build downloads.
+    pub fn tools_dir(&self) -> Result<PathBuf> {
+        Ok(match &self.engine {
+            Engine::Source(root) => root.join(".tools"),
+            Engine::Released(_) => players::cache_dir()?.join("tools"),
+        })
     }
 }
 
@@ -116,6 +203,24 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result {
         let (src, dst) = (entry.path(), to.join(entry.file_name()));
         if src.is_dir() {
             copy_tree(&src, &dst)?;
+        } else {
+            fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Copies the game files under `from` into `to`, leaving out builds and hidden files.
+pub fn copy_game(from: &Path, to: &Path) -> Result {
+    fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    for entry in fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?.flatten() {
+        let name = entry.file_name();
+        if !kulisa_platform::is_game_file(&name.to_string_lossy()) {
+            continue;
+        }
+        let (src, dst) = (entry.path(), to.join(&name));
+        if src.is_dir() {
+            copy_game(&src, &dst)?;
         } else {
             fs::copy(&src, &dst).map_err(|e| format!("{}: {e}", src.display()))?;
         }

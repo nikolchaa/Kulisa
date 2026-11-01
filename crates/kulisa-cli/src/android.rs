@@ -1,5 +1,5 @@
-//! Android without Gradle: the NDK builds `libkulisa.so`, SDK build-tools package it into a
-//! NativeActivity APK (manifest from `kulisa.toml`), or bundletool into an App Bundle for
+//! Android without Gradle: `libkulisa.so` (ready-made or built with the NDK), SDK build-tools
+//! package it into a NativeActivity APK (manifest from `kulisa.toml`), or bundletool into an App Bundle for
 //! Google Play. Signed with the game's release key (`[android] keystore`), or for APKs a debug
 //! key when it has none.
 
@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::{Game, Options, Result, escape, icon, run, write};
+use crate::{Engine, Game, Options, Result, escape, icon, players, run, write};
 
 /// The keystore password. Tools read it from the environment by name, so it never appears on
 /// a command line or in the build log.
@@ -169,15 +169,15 @@ fn release_key(game: &Game) -> Result<Option<ReleaseKey>> {
     Ok(Some(ReleaseKey { keystore, alias, key_password }))
 }
 
-/// bundletool, downloaded into the engine's `.tools` on first use.
-fn bundletool(engine: &Path) -> Result<PathBuf> {
-    let jar = engine.join(".tools").join(format!("bundletool-all-{BUNDLETOOL}.jar"));
+/// bundletool, downloaded into `tools` on first use.
+fn bundletool(tools: &Path) -> Result<PathBuf> {
+    let jar = tools.join(format!("bundletool-all-{BUNDLETOOL}.jar"));
     if !jar.is_file() {
         let url = format!(
             "https://github.com/google/bundletool/releases/download/{BUNDLETOOL}/bundletool-all-{BUNDLETOOL}.jar"
         );
         let part = jar.with_extension("part");
-        fs::create_dir_all(engine.join(".tools")).map_err(|e| e.to_string())?;
+        fs::create_dir_all(tools).map_err(|e| e.to_string())?;
         run(Command::new("curl").args(["-fsSL", "-o"]).arg(&part).arg(url))?;
         fs::rename(&part, &jar).map_err(|e| e.to_string())?;
     }
@@ -214,10 +214,16 @@ impl Parts {
     }
 }
 
-/// Builds the player for `abis` and the game's resources.
-fn parts(game: &Game, opts: &Options, abis: &[&str]) -> Result<Parts> {
-    let sdk = sdk()?;
-    let ndk = ndk(&sdk)?;
+/// `libkulisa.so` for `abi`: ready-made, or compiled with the NDK.
+pub fn library(opts: &Options, abi: &str) -> Result<PathBuf> {
+    let &(_, target) = ABIS.iter().find(|(a, _)| *a == abi).ok_or(format!("unknown ABI {abi}"))?;
+    let root = match &opts.engine {
+        Engine::Released(tool) => {
+            return Ok(players::released(tool, "android")?.join(abi).join("libkulisa.so"));
+        }
+        Engine::Source(root) => root,
+    };
+    let ndk = ndk(&sdk()?)?;
     let host = if cfg!(windows) {
         "windows-x86_64"
     } else if cfg!(target_os = "macos") {
@@ -226,27 +232,31 @@ fn parts(game: &Game, opts: &Options, abis: &[&str]) -> Result<Parts> {
         "linux-x86_64"
     };
     let bin = ndk.join("toolchains/llvm/prebuilt").join(host).join("bin");
-    let work = opts.engine.join("target").join("android");
+    // The NDK names armv7 compilers armv7a-linux-androideabi.
+    let prefix = target.replace("armv7-", "armv7a-");
+    let clang = |suffix: &str| {
+        let name = format!("{prefix}{MIN_SDK}-{suffix}");
+        bin.join(if cfg!(windows) { format!("{name}.cmd") } else { name })
+    };
+    let env_target = target.replace('-', "_");
+    run(opts
+        .cargo_player(root, &["--lib", "--target", target])
+        .env(format!("CARGO_TARGET_{}_LINKER", env_target.to_uppercase()), clang("clang"))
+        .env(format!("CC_{env_target}"), clang("clang"))
+        .env(format!("CXX_{env_target}"), clang("clang++"))
+        .env(format!("AR_{env_target}"), bin.join(exe("llvm-ar"))))?;
+    Ok(root.join("target").join(target).join(opts.profile_dir()).join("libkulisa.so"))
+}
+
+/// Gets the player for `abis` and makes the game's resources.
+fn parts(game: &Game, opts: &Options, abis: &[&str]) -> Result<Parts> {
+    let sdk = sdk()?;
+    let work = opts.work_dir("android")?;
     let staging = work.join("apk");
     let _ = fs::remove_dir_all(&staging);
 
     for abi in abis {
-        let &(_, target) = ABIS.iter().find(|(a, _)| a == abi).ok_or(format!("unknown ABI {abi}"))?;
-        // The NDK names armv7 compilers armv7a-linux-androideabi.
-        let prefix = target.replace("armv7-", "armv7a-");
-        let clang = |suffix: &str| {
-            let name = format!("{prefix}{MIN_SDK}-{suffix}");
-            bin.join(if cfg!(windows) { format!("{name}.cmd") } else { name })
-        };
-        let env_target = target.replace('-', "_");
-        run(opts
-            .cargo_player(&["--lib", "--target", target])
-            .env(format!("CARGO_TARGET_{}_LINKER", env_target.to_uppercase()), clang("clang"))
-            .env(format!("CC_{env_target}"), clang("clang"))
-            .env(format!("CXX_{env_target}"), clang("clang++"))
-            .env(format!("AR_{env_target}"), bin.join(exe("llvm-ar"))))?;
-
-        let so = opts.engine.join("target").join(target).join(opts.profile()).join("libkulisa.so");
+        let so = library(opts, abi)?;
         let dir = staging.join("lib").join(abi);
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         fs::copy(&so, dir.join("libkulisa.so")).map_err(|e| format!("{}: {e}", so.display()))?;
@@ -327,7 +337,7 @@ pub fn build(game: &Game, opts: &Options, abis: &[&str], apk: &Path) -> Result {
                 .args(["--key-pass", &format!("env:{}", key.key_password)]);
         }
         None => {
-            if opts.release {
+            if opts.shipping() {
                 eprintln!("warning: signed with the debug key; stores refuse it (see `[android] keystore`)");
             }
             sign.arg(debug_keystore(&p.work)?).args(["--ks-pass", "pass:android"]);
@@ -343,7 +353,7 @@ pub fn bundle(game: &Game, opts: &Options, abis: &[&str], aab: &Path) -> Result 
     let key = release_key(game)?.ok_or(
         "an App Bundle needs a release key: set `keystore` and `key_alias` under [android] in kulisa.toml",
     )?;
-    let tool = bundletool(&opts.engine)?;
+    let tool = bundletool(&opts.tools_dir()?)?;
     let p = parts(game, opts, abis)?;
 
     // A bundle module is a zip of the proto-format app with the manifest in its own folder.

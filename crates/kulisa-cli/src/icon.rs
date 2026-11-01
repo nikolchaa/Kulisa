@@ -1,5 +1,5 @@
 //! The app icon for every package, made from one square PNG in the game (`[game] icon` in
-//! `kulisa.toml`, default `icon.png`): a Windows `.ico`, a macOS `.icns`, the Android launcher
+//! `kulisa.toml`, default `icon.png`): a Windows program's icon, a macOS `.icns`, the Android launcher
 //! icon, the iOS asset catalog's icon and the web page's icons.
 
 use std::io::Cursor;
@@ -82,28 +82,9 @@ pub fn icns(img: &DynamicImage) -> Vec<u8> {
     out
 }
 
-/// A Windows `.ico` with PNG images from 16 to 256 pixels.
-pub fn ico(img: &DynamicImage) -> Vec<u8> {
-    const SIZES: [u32; 6] = [16, 24, 32, 48, 64, 256];
-    let images: Vec<Vec<u8>> = SIZES.iter().map(|&s| png(img, s)).collect();
-    let mut out = Vec::new();
-    out.extend_from_slice(&[0, 0, 1, 0]);
-    out.extend_from_slice(&(SIZES.len() as u16).to_le_bytes());
-    let mut offset = 6 + 16 * SIZES.len() as u32;
-    for (size, data) in SIZES.iter().zip(&images) {
-        // 0 stands for 256.
-        let side = if *size >= 256 { 0 } else { *size as u8 };
-        out.extend_from_slice(&[side, side, 0, 0]);
-        out.extend_from_slice(&1u16.to_le_bytes());
-        out.extend_from_slice(&32u16.to_le_bytes());
-        out.extend_from_slice(&(data.len() as u32).to_le_bytes());
-        out.extend_from_slice(&offset.to_le_bytes());
-        offset += data.len() as u32;
-    }
-    for data in images {
-        out.extend_from_slice(&data);
-    }
-    out
+/// A Windows program's icon: PNG images from 16 to 256 pixels, with their sizes.
+pub fn windows_images(img: &DynamicImage) -> Vec<(u32, Vec<u8>)> {
+    [16, 24, 32, 48, 64, 256].map(|size| (size, png(img, size))).to_vec()
 }
 
 #[cfg(test)]
@@ -111,15 +92,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ico_holds_every_size() {
+    fn windows_images_hold_every_size() {
         let img = DynamicImage::new_rgba8(300, 300);
-        let ico = ico(&img);
-        assert_eq!(&ico[..6], &[0, 0, 1, 0, 6, 0]);
-        // The last entry is 256 (written as 0); its PNG data starts where it says.
-        let entry = 6 + 16 * 5;
-        assert_eq!(ico[entry], 0);
-        let at = u32::from_le_bytes(ico[entry + 12..entry + 16].try_into().unwrap()) as usize;
-        assert_eq!(&ico[at + 1..at + 4], b"PNG");
+        let images = windows_images(&img);
+        assert_eq!(images.iter().map(|(s, _)| *s).collect::<Vec<_>>(), [16, 24, 32, 48, 64, 256]);
+        assert_eq!(&images[5].1[1..4], b"PNG");
         let small = image::load_from_memory(&png(&img, 120)).unwrap();
         assert_eq!((small.width(), small.height()), (120, 120));
     }
