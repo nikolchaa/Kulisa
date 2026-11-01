@@ -133,7 +133,7 @@ jobs:
           pattern: release-*
           merge-multiple: true
       - if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers xvfb libasound2t64
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers xvfb libasound2t64 libxkbcommon-x11-0
       - run: .github/scripts/release-check.sh downloads 2>&1 | tee -a ci.log; exit "${PIPESTATUS[0]}"
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log
@@ -161,7 +161,7 @@ jobs:
           name: check-Windows
           path: windows-made
       - if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers xvfb libasound2t64
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers xvfb libasound2t64 libxkbcommon-x11-0
       - run: .github/scripts/release-check.sh --start-from windows-made 2>&1 | tee -a ci.log; exit "${PIPESTATUS[0]}"
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log

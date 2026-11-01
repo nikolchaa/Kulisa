@@ -15,9 +15,9 @@ esac
 export RUST_LOG=info
 
 # Starts a program from another folder, so it must find the game on its own, and checks it is
-# still running after a while. A log to look at is optional: Windows games have no console.
+# still running after a while and that the game came up.
 start_game() {
-    local program=$1 want_log=$2 status=0 log pid
+    local program=$1 status=0 log pid
     log=$(mktemp)
     if [ "$host" = linux ]; then
         (cd /tmp && exec xvfb-run -a "$program") > "$log" 2>&1 &
@@ -34,7 +34,7 @@ start_game() {
     wait "$pid" 2>/dev/null || true
     echo "--- log of $program ---"
     tail -n 30 "$log"
-    if [ "$want_log" = yes ] && ! grep -q "hello from Luau" "$log"; then
+    if ! grep -q "hello from Luau" "$log"; then
         echo "error: \"hello from Luau\" is not in the log of $program"
         status=1
     fi
@@ -44,9 +44,9 @@ start_game() {
 if [ "$1" = --start-from ]; then
     tar xzf "$2/Smoke Test-$host.tar.gz" -C "$2"
     if [ "$host" = macos ]; then
-        start_game "$PWD/$2/Smoke Test.app/Contents/MacOS/Smoke Test" yes
+        start_game "$PWD/$2/Smoke Test.app/Contents/MacOS/Smoke Test"
     else
-        start_game "$PWD/$2/Smoke Test/Smoke Test" yes
+        start_game "$PWD/$2/Smoke Test/Smoke Test"
     fi
     exit 0
 fi
@@ -55,7 +55,8 @@ downloads=$(cd "$1" && pwd)
 work=$(mktemp -d)
 mkdir -p "$work/unpacked"
 case "$host" in
-    windows) (cd "$work/unpacked" && tar xf "$(cygpath -w "$downloads/kulisa-windows.zip")") ;;
+    # Windows' own tar: it reads zips, and the one from Git cannot take a path with a drive.
+    windows) (cd "$work/unpacked" && /c/Windows/System32/tar.exe xf "$(cygpath -w "$downloads/kulisa-windows.zip")") ;;
     *) tar xzf "$downloads/kulisa-$host.tar.gz" -C "$work/unpacked" ;;
 esac
 kulisa="$work/unpacked/kulisa/kulisa"
@@ -67,11 +68,16 @@ if command -v cargo > /dev/null; then
     echo "error: cargo is still on the PATH"
     exit 1
 fi
-python=$(command -v python3 || command -v python)
-"$python" -m http.server 8765 --directory "$downloads" > /dev/null 2>&1 &
+# Windows can have a `python3` that only offers to install Python.
+python=python3
+python3 --version > /dev/null 2>&1 || python=python
+"$python" -m http.server 8765 --directory "$downloads" > "$work/server.log" 2>&1 &
 server=$!
 trap 'kill "$server" 2>/dev/null || true' EXIT
-sleep 2
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    curl -fs -o /dev/null http://127.0.0.1:8765/ && break
+    sleep 1
+done
 export KULISA_RELEASES=http://127.0.0.1:8765
 
 "$kulisa" templates
@@ -98,10 +104,10 @@ case "$host" in
     windows)
         mkdir -p check-out
         cp "$work/smoke/dist/Smoke Test-linux.tar.gz" "$work/smoke/dist/Smoke Test-macos.tar.gz" check-out/
-        start_game "$work/smoke/dist/windows/Smoke Test.exe" no
+        start_game "$work/smoke/dist/windows/Smoke Test.exe"
         ;;
     linux)
-        start_game "$work/smoke/dist/linux/Smoke Test" yes
+        start_game "$work/smoke/dist/linux/Smoke Test"
         ;;
     macos)
         .github/scripts/macos-app-smoke.sh "$work/smoke/dist/macos/Smoke Test.app"
