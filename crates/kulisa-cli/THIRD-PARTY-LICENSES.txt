@@ -31,7 +31,7 @@ Games made with Kulisa contain the software below. Each crate's source is at
 https://crates.io/crates/NAME/VERSION. Files under the MPL-2.0 can be had in source form there, and
 Kulisa uses them unchanged.
 
-MIT License: 322
+MIT License: 309
 BSD 3-Clause "New" or "Revised" License: 31
 Apache License 2.0: 12
 Mozilla Public License 2.0: 12
@@ -6147,19 +6147,6 @@ MIT License
 
 Used by:
   mlua-sys 0.13.0
-  kulisa-audio 0.1.0
-  kulisa-cli 0.1.0
-  kulisa-core 0.1.0
-  kulisa-lua 0.1.0
-  kulisa-platform 0.1.0
-  kulisa-player 0.1.0
-  kulisa-render 0.1.0
-  kulisa-renpy 0.1.0
-  kulisa-runtime 0.1.0
-  kulisa-story 0.1.0
-  kulisa-text 0.1.0
-  kulisa-ui 0.1.0
-  kulisa-video 0.1.0
   atomig-macro 0.4.0
   block2 0.5.1
   block2 0.6.2
