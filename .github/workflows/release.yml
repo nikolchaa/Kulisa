@@ -1,10 +1,21 @@
 name: Release
 
 # What people download: the `kulisa` tool for each desktop and every target's player. A `v*` tag
-# publishes them; the "Run workflow" button only builds and checks them.
+# publishes them. A change to how they are packed, or the "Run workflow" button, only builds and
+# checks them. (GitHub does not apply `paths` to tags.)
 on:
   push:
     tags: ["v*"]
+    branches: [main]
+    paths:
+      - Cargo.toml
+      - crates/kulisa-cli/**
+      - xtask/**
+      - install/**
+      - licenses/**
+      - .github/workflows/release.yml
+      - .github/scripts/release-check.sh
+      - .github/scripts/ios-sim-smoke.sh
   workflow_dispatch:
 
 concurrency:
@@ -20,16 +31,16 @@ defaults:
     shell: bash
 
 jobs:
-  tool:
-    name: Tool ${{ matrix.name }}
+  desktop:
+    name: Player ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { name: Windows, os: windows-latest }
+          - { name: Windows, os: windows-latest, target: windows }
           # The oldest system GitHub offers: the Linux player runs where its glibc or a newer one is.
-          - { name: Linux, os: ubuntu-22.04 }
-          - { name: macOS, os: macos-latest }
+          - { name: Linux, os: ubuntu-22.04, target: linux }
+          - { name: macOS, os: macos-latest, target: macos }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -39,15 +50,13 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev nasm
       - if: runner.os == 'macOS'
         run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
-      - run: cargo xtask tool 2>&1 | tee -a ci.log
+      - run: cargo xtask player ${{ matrix.target }} 2>&1 | tee -a ci.log
       - if: failure()
         run: .github/scripts/annotate-errors.sh ci.log
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.name }}
-          path: |
-            dist/release/*.tar.gz
-            dist/release/*.zip
+          name: release-player-${{ matrix.name }}
+          path: dist/release/*.tar.gz
 
   web:
     name: Player Web
@@ -69,7 +78,7 @@ jobs:
         run: .github/scripts/annotate-errors.sh ci.log
       - uses: actions/upload-artifact@v4
         with:
-          name: release-Web
+          name: release-player-Web
           path: dist/release/*.tar.gz
 
   android:
@@ -86,7 +95,7 @@ jobs:
         run: .github/scripts/annotate-errors.sh ci.log
       - uses: actions/upload-artifact@v4
         with:
-          name: release-Android
+          name: release-player-Android
           path: dist/release/*.tar.gz
 
   ios:
@@ -103,14 +112,49 @@ jobs:
         run: .github/scripts/annotate-errors.sh ci.log
       - uses: actions/upload-artifact@v4
         with:
-          name: release-iOS
+          name: release-player-iOS
           path: dist/release/*.tar.gz
+
+  # After the players, as the tool remembers their checksums and takes no other files.
+  tool:
+    name: Tool ${{ matrix.name }}
+    needs: [desktop, web, android, ios]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest }
+          - { name: Linux, os: ubuntu-22.04 }
+          - { name: macOS, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq libasound2-dev libudev-dev nasm
+      - if: runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - uses: actions/download-artifact@v5
+        with:
+          path: ready
+          pattern: release-player-*
+          merge-multiple: true
+      - run: cargo xtask tool --players ready 2>&1 | tee -a ci.log; exit "${PIPESTATUS[0]}"
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-tool-${{ matrix.name }}
+          path: |
+            dist/release/*.tar.gz
+            dist/release/*.zip
 
   # The downloads as someone without Rust gets them: the tool unpacked somewhere else, players
   # downloaded from a local server, games built for other systems and started on those systems.
   check:
     name: Check ${{ matrix.name }}
-    needs: [tool, web, android, ios]
+    needs: tool
     strategy:
       fail-fast: false
       matrix:
@@ -181,6 +225,35 @@ jobs:
           path: downloads
           pattern: release-*
           merge-multiple: true
+      - run: |
+          cp install/install.sh install/install.ps1 downloads/
+          (cd downloads && sha256sum -- * > SHA256SUMS)
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" downloads/* --generate-notes --title "Kulisa ${GITHUB_REF_NAME#v}"
+        run: |
+          # `v1.0.0-rc.1` is a pre-release, which `releases/latest` does not point to.
+          case "$GITHUB_REF_NAME" in
+              *-*) kind=--prerelease ;;
+              *) kind=--latest ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" downloads/* "$kind" --generate-notes --title "Kulisa ${GITHUB_REF_NAME#v}"
+
+  # What was published, downloaded from GitHub the way people get it.
+  published:
+    name: Published ${{ matrix.name }}
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest }
+          - { name: Linux, os: ubuntu-latest }
+          - { name: macOS, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -yq mesa-vulkan-drivers xvfb libasound2t64 libxkbcommon-x11-0
+      - run: .github/scripts/release-check.sh --published "$GITHUB_REF_NAME" 2>&1 | tee -a ci.log; exit "${PIPESTATUS[0]}"
+      - if: failure()
+        run: .github/scripts/annotate-errors.sh ci.log
