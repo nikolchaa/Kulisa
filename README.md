@@ -96,23 +96,28 @@ preferences, all of it editable Luau.
 
 ## Quick start
 
-You need [Rust](https://rustup.rs) (stable). There are no prebuilt releases yet; the `kulisa`
-tool builds games from the engine source.
+Install the `kulisa` tool. You need no compiler.
+
+```powershell
+irm https://github.com/nikolchaa/Kulisa/releases/latest/download/install.ps1 | iex   # Windows
+```
 
 ```sh
-git clone https://github.com/nikolchaa/Kulisa
-cd Kulisa
-cargo install --path crates/kulisa-cli
+curl -fsSL https://github.com/nikolchaa/Kulisa/releases/latest/download/install.sh | sh   # Linux, macOS
+```
 
+Then, in a new terminal:
+
+```sh
 kulisa new "Cat Tales" --dir cat-tales   # from the classic-vn template
 cd cat-tales
 kulisa run                               # play it here, with live reload
 kulisa run --web                         # or in the browser
-kulisa build web                         # or android, ios, and windows/linux/macos
+kulisa build web                         # or windows, linux, macos, android, ios
 ```
 
-Builds land in `cat-tales/dist/<target>`. Desktop builds are made on that desktop, Android
-needs the Android SDK and NDK, iOS a Mac with Xcode. `kulisa help` lists everything, including `kulisa import` for Ren'Py projects.
+Builds land in `cat-tales/dist/<target>`. Any computer can build for Windows, Linux, macOS and the
+web, Android needs the Android SDK tools and a JDK, iOS a Mac with Xcode. `kulisa help` lists everything, including `kulisa import` for Ren'Py projects.
 
 ## Templates and demos
 
@@ -148,8 +153,8 @@ cargo run -p kulisa-player -- demos/parallax
 ## Status
 
 Kulisa is young. The engine, the `kulisa` tool, three templates and four demos work on all six
-platforms, and CI builds and tests every commit. The API can still change between versions,
-and there are no prebuilt releases yet. [docs/DESIGN.md](docs/DESIGN.md) has the milestones,
+platforms, and CI builds and tests every commit. The API can still change between versions.
+[docs/DESIGN.md](docs/DESIGN.md) has the milestones,
 the architecture and the reasons behind each decision.
 
 ## Repository

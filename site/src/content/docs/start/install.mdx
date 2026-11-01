@@ -5,33 +5,27 @@ description: Install the kulisa tool and the toolchains for the platforms you wa
 
 import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
 
-Kulisa is one command-line tool, `kulisa`, that makes, runs and builds games. There are no
-prebuilt downloads yet: you build the tool from the engine's source, and it builds your games
-from that same source.
+Kulisa is one command-line tool, `kulisa`, that makes, runs and builds games. Download it and
+you are ready: you need no compiler.
 
 <Steps>
 
-1. **Install Rust.** Get the stable toolchain from [rustup.rs](https://rustup.rs). On Windows,
-   rustup also asks for the Visual Studio C++ build tools; install them.
+1. **Install the tool.** This downloads it, checks its checksum and adds it to your `PATH`.
 
-2. **Get the engine.**
+   <Tabs>
+   	<TabItem label="Windows">
+   	```powershell
+   	irm https://github.com/nikolchaa/Kulisa/releases/latest/download/install.ps1 | iex
+   	```
+   	</TabItem>
+   	<TabItem label="Linux and macOS">
+   	```sh
+   	curl -fsSL https://github.com/nikolchaa/Kulisa/releases/latest/download/install.sh | sh
+   	```
+   	</TabItem>
+   </Tabs>
 
-   ```sh
-   git clone https://github.com/nikolchaa/Kulisa
-   cd Kulisa
-   ```
-
-3. **Install the tool.**
-
-   ```sh
-   cargo install --path crates/kulisa-cli
-   ```
-
-   The first build takes a few minutes. Keep the `Kulisa` folder: `kulisa` remembers where it
-   was built and uses that source for every game. If you move it, set `KULISA_ENGINE` to the
-   new place.
-
-4. **Check it works.**
+2. **Open a new terminal**, which sees the new `PATH`, and check it works.
 
    ```sh
    kulisa templates
@@ -41,14 +35,54 @@ from that same source.
 
 </Steps>
 
+<Aside type="note" title="Rather download it yourself?">
+Get [Windows](https://github.com/nikolchaa/Kulisa/releases/latest/download/kulisa-windows.zip),
+[Linux](https://github.com/nikolchaa/Kulisa/releases/latest/download/kulisa-linux.tar.gz) (x86-64) or
+[macOS](https://github.com/nikolchaa/Kulisa/releases/latest/download/kulisa-macos.tar.gz) (Apple silicon
+and Intel), and compare it with
+[SHA256SUMS](https://github.com/nikolchaa/Kulisa/releases/latest/download/SHA256SUMS). Unpack it, keep the
+`kulisa` folder whole and add it to your `PATH`. The tool is not code-signed yet, so Windows SmartScreen may
+ask you to confirm with **More info**, then **Run anyway**, and a Mac refuses a browser's download until you
+clear its mark: `xattr -dr com.apple.quarantine kulisa`.
+</Aside>
+
 That is everything you need to make games and play them on this computer. Continue with
-[Your first game](../first-game/), and come back here when you want to build for other
-platforms.
+[Your first game](../first-game/).
 
 ## Other platforms
 
-Desktop builds are made on that desktop: Windows builds on Windows, and so on. The web and
-Android can be built from any of the three; iOS needs a Mac.
+**Windows, Linux, macOS and the web** need nothing more, and any computer can build any of them.
+The first build for a platform downloads its player, once for each version of Kulisa.
+
+**Linux builds of games with videos** need [FFmpeg](https://ffmpeg.org/download.html) on the
+computer that builds them, to convert the videos.
+
+**Android** needs the Android SDK with **build-tools** and a **platform** (Android Studio's SDK
+Manager or `sdkmanager`), and a JDK. Kulisa finds the SDK through `ANDROID_HOME`, or the default
+Android Studio location on Windows. No Gradle is involved.
+
+**iOS** needs a Mac with Xcode, which signs and packages the app.
+
+<Aside type="tip" title="Browsers">
+Web builds run in Chrome or Edge 137+, Firefox 131+ and Safari 18.4+, with WebGPU where the
+browser has it and WebGL2 everywhere else.
+</Aside>
+
+## From source
+
+Working on the engine itself, or on a system without a download? Build the tool from the source,
+and it compiles players from that same source. This needs [Rust](https://rustup.rs) (stable). On
+Windows, rustup also asks for the Visual Studio C++ build tools.
+
+```sh
+git clone https://github.com/nikolchaa/Kulisa
+cd Kulisa
+cargo install --path crates/kulisa-cli
+```
+
+Keep the `Kulisa` folder: `kulisa` remembers where it was built. If you move it, set
+`KULISA_ENGINE` to the new place. From source, desktop builds are compiled on that desktop, and
+each platform needs its toolchain:
 
 <Tabs>
 	<TabItem label="Linux">
@@ -79,10 +113,8 @@ downloads the WASI SDK sysroot it needs into the engine's `.tools` folder.
 rustup target add aarch64-linux-android x86_64-linux-android
 ```
 
-Install the Android SDK with **build-tools**, a **platform** and the **NDK** (Android
-Studio's SDK Manager or `sdkmanager`), and a JDK. Kulisa finds the SDK through `ANDROID_HOME`
-(or the default Android Studio location on Windows) and the NDK inside it or through
-`ANDROID_NDK_HOME`. No Gradle is involved.
+Install the **NDK** beside the SDK tools above. Kulisa finds it inside the SDK or through
+`ANDROID_NDK_HOME`.
 
 `x86_64` is for the emulator; phones use `arm64-v8a`.
 
@@ -97,8 +129,3 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
 	</TabItem>
 </Tabs>
-
-<Aside type="tip" title="Browsers">
-Web builds run in Chrome or Edge 137+, Firefox 131+ and Safari 18.4+, with WebGPU where the
-browser has it and WebGL2 everywhere else.
-</Aside>
